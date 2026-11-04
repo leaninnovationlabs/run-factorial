@@ -17,9 +17,6 @@
 [![E2B](https://img.shields.io/badge/sandbox-E2B-FF8800?style=flat)](https://e2b.dev)
 [![Website](https://img.shields.io/badge/website-runfactorial.com-E8703A?style=flat)](https://www.runfactorial.com)
 [![Docs](https://img.shields.io/badge/docs-runfactorial.com%2Fdocs-E8703A?style=flat)](https://www.runfactorial.com/docs)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/leaninnovationlabs/run-factorial)
-[![Stars](https://img.shields.io/github/stars/leaninnovationlabs/run-factorial?style=flat&logo=github&label=stars)](https://github.com/leaninnovationlabs/run-factorial/stargazers)
-[![Last sync](https://img.shields.io/github/last-commit/leaninnovationlabs/run-factorial?style=flat&label=last%20sync)](https://github.com/leaninnovationlabs/run-factorial/commits/main)
 
 **The assembly line for AI software delivery.**
 
@@ -35,9 +32,11 @@
 
 </div>
 
-**This repository is a read-only mirror.** A person syncs the code from a private repository
-by hand. This repository takes no issues or pull requests. The documentation is at
-[www.runfactorial.com/docs](https://www.runfactorial.com/docs).
+> [!NOTE]
+> We build Run-Factorial in a private repository and publish its code here. This repository
+> does not accept issues or pull requests. To report a security problem, follow
+> [SECURITY.md](SECURITY.md). The documentation is at
+> [runfactorial.com/docs](https://www.runfactorial.com/docs).
 
 A person writes a request as a GitHub issue, adds the label `factorial:new`, and assigns an
 owner. The ADLC orchestrator admits the ticket and walks it through the process that the
