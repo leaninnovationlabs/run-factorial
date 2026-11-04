@@ -1,0 +1,127 @@
+#!/command/with-contenv sh
+# The only root step: turn the configuration and the volume into files and directories the
+# service users own. The configuration is a read-only mount of the settings (compose's secret, or
+# a plain `docker run`'s -v), or FACTORIAL_* variables with FACTORIAL_MASTER_KEY among them (an
+# ECS task, whose secrets ECS injects into the environment), never both: a master key in the
+# environment beside the mount stops it. A mount is copied, not read in place, because a
+# bind-mounted 0600 file keeps its host owner, which the unprivileged users here may not be able
+# to read. GitHub credentials are each project's, in the database.
+set -eu
+. /etc/factorial/database.sh
+contenv=/run/s6/container_environment
+newline='
+'
+
+# Decided here, while the URL is still in the environment; every later script reads the answer.
+rm -f "$factorial_database_address_file"
+address="$(factorial_database_address "${FACTORIAL_DATABASE_URL:-}")"
+if [ -n "$address" ]; then
+  printf '%s\n' "$address" > "$factorial_database_address_file"
+  FACTORIAL_IMAGE_DATABASE=external
+else
+  FACTORIAL_IMAGE_DATABASE=internal
+fi
+printf '%s' "$FACTORIAL_IMAGE_DATABASE" > "$contenv/FACTORIAL_IMAGE_DATABASE"
+
+# The host goes into the database URL env.sh exports, and a loopback one would name a server
+# nobody starts: db-ready would wait out its minute.
+database_host="${FACTORIAL_IMAGE_DATABASE_HOST:-}"
+if [ -n "$database_host" ]; then
+  case "$database_host" in
+    *[!A-Za-z0-9.-]* | localhost | 127.*)
+      echo "factorial: FACTORIAL_IMAGE_DATABASE_HOST=$database_host is not the name of the compose service the database runs in" >&2
+      exit 1
+      ;;
+  esac
+  if factorial_external_database; then
+    echo "factorial: FACTORIAL_IMAGE_DATABASE_HOST names the image's own database, and FACTORIAL_DATABASE_URL an external one" >&2
+    exit 1
+  fi
+fi
+
+# Every service starts from $contenv and an agent run inherits it, so the variables become the
+# file the mount would have been, and leave it; the log level, the log format and the mode stay.
+# A value is written single-quoted, which .env reads literally but for `${`, which it still
+# expands, so none may hold a quote, a backslash, a line break or `${`. The retired deployment
+# App's variables, which a task definition may still pass, go into no file.
+rm -f "$contenv"/FACTORIAL_GITHUB__*
+# A mount (the file, not one an earlier start of this container wrote) cannot be replaced, and
+# install's failure, "Device or resource busy", names no cause.
+if [ -e "$contenv/FACTORIAL_MASTER_KEY" ] &&
+  awk '$5 == "/run/secrets/factorial.env" { found = 1 } END { exit !found }' /proc/self/mountinfo; then
+  passed=""
+  for file in "$contenv"/FACTORIAL_*; do
+    case "${file##*/}" in
+      FACTORIAL_LOG_LEVEL | FACTORIAL_LOG_FORMAT | FACTORIAL_IMAGE_DATABASE | FACTORIAL_IMAGE_DATABASE_HOST) ;;
+      *) passed="$passed ${file##*/}" ;;
+    esac
+  done
+  echo "factorial: /run/secrets/factorial.env is mounted, and the environment also holds${passed}, which every agent run would inherit: put each setting in factorial.env, and pass none with -e or --env-file; see https://www.runfactorial.com/docs/customize-setup/#troubleshoot" >&2
+  exit 1
+fi
+if [ -e "$contenv/FACTORIAL_MASTER_KEY" ]; then
+  install -d -m 0700 /run/secrets
+  install -m 0600 /dev/null /run/secrets/factorial.env
+  for file in "$contenv"/FACTORIAL_*; do
+    name="${file##*/}"
+    case "$name" in
+      FACTORIAL_LOG_LEVEL | FACTORIAL_LOG_FORMAT | FACTORIAL_IMAGE_DATABASE | FACTORIAL_IMAGE_DATABASE_HOST) continue ;;
+      *)
+        value="$(cat "$file")"
+        case "$value" in
+          *"'"* | *\\* | *"$newline"* | *'${'*)
+            echo "factorial: $name holds a quote, a backslash, a line break or \${" >&2
+            exit 1
+            ;;
+        esac
+        printf "%s='%s'\n" "$name" "$value" >> /run/secrets/factorial.env
+        ;;
+    esac
+    rm "$file"
+  done
+fi
+# The task role's credentials and the task's ECS endpoints are the orchestrator's, never an agent's.
+rm -f "$contenv"/AWS_CONTAINER_CREDENTIALS_* "$contenv"/AWS_CONTAINER_AUTHORIZATION_TOKEN* "$contenv"/ECS_CONTAINER_METADATA_URI* "$contenv"/ECS_AGENT_URI
+
+if [ ! -r /run/secrets/factorial.env ]; then
+  echo "factorial: /run/secrets/factorial.env is missing: mount it, or pass the settings as FACTORIAL_* variables with FACTORIAL_MASTER_KEY among them; see https://www.runfactorial.com/docs/customize-setup/#settings" >&2
+  exit 1
+fi
+# The mounts keep whatever the host file sharing presents, and Docker Desktop lets any user read
+# a bind-mounted file whatever mode it shows. Only this script reads them, so their directory
+# is closed to every other user, the assistant's above all.
+chmod 0700 /run/secrets
+install -o factorial -g factorial -m 0400 /run/secrets/factorial.env /app/.env
+install -d -o factorial -g factorial -m 0700 /run/factorial
+# On the image's own database the install is stand-alone and names no E2B deployment, which the
+# managed sandbox needs: the reaper fences by that name, so it is generated once, kept in /data
+# and appended to /app/.env. An external database is a deployment (ECS) whose operator sets the
+# name; the script is not run there, and never replaces a name the file holds.
+if ! factorial_external_database; then
+  sh /etc/factorial/e2b-deployment.sh /app/.env /data/e2b-deployment
+fi
+if [ -s /run/secrets/gitlab-ca.pem ]; then
+  install -o factorial -g factorial -m 0444 /run/secrets/gitlab-ca.pem /run/factorial/gitlab-ca.pem
+fi
+if [ -s /run/secrets/bedrock.token ]; then
+  install -o factorial -g factorial -m 0400 /run/secrets/bedrock.token /run/factorial/bedrock.token
+fi
+if factorial_runs_postgres; then
+  install -d -o postgres -g postgres -m 0700 /data/postgres
+  install -d -o postgres -g postgres -m 0755 /run/postgresql
+fi
+install -d -o factorial -g factorial -m 0700 /data/runs /data/runs/claude_cli /data/runs/codex_cli /data/runs/e2b
+# The assistant's user does not read /app/.env. Its own .env keeps only what a turn needs: the API
+# token it asks the API for its credential and its read-only GitHub access with, the database URL
+# (on RDS no other file it can read holds it), the external URL the dashboard's origin derives
+# from, its own settings, and the terminal's idle-park time. It holds no master key, so every
+# stored secret is opaque to it, and it refuses to start with one. The volume may predate
+# /data/assistant, so it is made here, as /data/runs is.
+install -d -o factorial-assistant -g factorial-assistant -m 0700 /run/factorial-assistant /data/assistant
+# The images before the uid pin gave factorial-assistant a dynamic uid, so a volume they wrote
+# holds files under /data/assistant that the pinned user cannot open. No older task still writes
+# here: a deploy stops the old task before it starts this one (minimum healthy 0%).
+find /data/assistant -xdev \( ! -user factorial-assistant -o ! -group factorial-assistant \) -exec chown -h factorial-assistant:factorial-assistant {} +
+{ grep -E '^[[:space:]]*(export[[:space:]]+)?(FACTORIAL_API_TOKEN|FACTORIAL_DATABASE_URL|FACTORIAL_AUTH__EXTERNAL_URL|FACTORIAL_LOG_LEVEL|FACTORIAL_TERMINAL__IDLE_PARK_AFTER|FACTORIAL_ASSISTANT__[A-Z0-9_]+)[[:space:]]*=' /run/secrets/factorial.env || [ $? -eq 1 ]; } > /run/factorial-assistant/.env
+chown factorial-assistant:factorial-assistant /run/factorial-assistant/.env
+chmod 0400 /run/factorial-assistant/.env

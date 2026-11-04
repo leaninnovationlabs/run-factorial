@@ -1,0 +1,992 @@
+/**
+ * factory board — the board at 40,000 feet.
+ *
+ * The one rule everything else follows: NOTHING ON THIS BOARD MOVES. A square of the screen is
+ * a fixed position, and what changes between modes is which ticket that position shows. So the
+ * lanes are plain CSS grids of fixed cells — no transforms, no absolute positioning, no pixel
+ * arithmetic in the components — and the only animated property in the file is `background-color`.
+ *
+ * A mode change is two beats. Positions whose appearance changes get `data-fading`, which drives
+ * them to the muted tone over `--fb-dissolve`; the new layout is committed underneath while they
+ * are all muted; then the attribute is dropped and they settle into their new colour over the
+ * longer `--fb-settle`. Muted is the universal midpoint, so a position that gains a ticket and
+ * one that loses one both pass through the same tone and neither pops.
+ *
+ * Every slot is an element, empty ones included. That costs a couple of thousand spans, and buys
+ * the thing the design needs: occupancy is just another appearance, so re-ranking the bands can
+ * empty a position without anything mounting or unmounting.
+ *
+ * Every colour is an ADS token (`theme/tokens.css`), so both themes come from the same rules: the
+ * lanes and the heat ramp are chart colours, the tiers and the ink are role tokens.
+ */
+
+/* Every root that reads a `--fb-*` token carries the block, because none of them is inside
+   another: the instrument strip and the issue list are SIBLINGS of the board rather than
+   children. And `.factory-board__frame` is the board's PANEL, which wraps the board but is not it:
+   the title line in its header reads `--fb-select`, and the board div that declares the tokens is
+   a descendant of that header's sibling rather than an ancestor of it.
+
+   A token declared on `.factory-board` alone would resolve to nothing in the other three — an
+   invisible legend swatch, an unpainted lane dot.
+
+   Everything here is a custom property; nothing in it lays anything out. */
+.factory-board,
+.factory-board__frame,
+.factory-board__instruments,
+.factory-board__list {
+  /* Density. The only two the switch touches; everything else is derived. `Board` overrides both
+     inline from the chosen density, so these are `DEFAULT_DENSITY`'s pair — the size everything
+     outside the board itself is measured at before one frame is drawn. */
+  --fb-node: 6px;
+  --fb-gap: 2px;
+  /* A floor, not the width: at every density the switch offers, ten nodes are already wider than
+     this, so the column hugs its node group and the `max` only matters if the nodes ever shrink
+     below the longest lane name ("Admitted", "Retrying"). Whichever side wins, every lane gets
+     the same number — uneven columns would break the row scan. */
+  --fb-lane-min: 3.75rem;
+  --fb-lane-width: max(calc(10 * var(--fb-node) + 9 * var(--fb-gap)), var(--fb-lane-min));
+  --fb-lane-gap: 0.6rem;
+  /* One issue-list row. `list.ts`'s `ROW_PX` is the same number in px, and `tokens.test.ts`
+     asserts it: the paging counts rows, so a drift here silently pages short. */
+  --fb-row: 1.625rem;
+  /* Wide enough for the longest project name at the gutter's own size. It fits because this
+     route takes the whole window (`components/shell/routes.tsx`); on a reading-width page the
+     board and the issue list together would have had to take it out of here.
+     `factory-board__gutter-name` ellipsises anything longer either way. */
+  --fb-gutter: 8.5rem;
+
+  /* Three visual tiers: a match keeps its status colour, a non-match mutes, a slot is fainter
+     still but never invisible — an empty slot is information too. The gap between the second
+     tier and the third has to be wide, because the lattice of empties is the background every
+     real ticket is read against, and at this size a background that competes reads as noise. */
+  --fb-empty: var(--ds-background-neutral);
+  --fb-muted: var(--ds-background-neutral-pressed);
+  /* A fourth tier, quieter than all three: the outline of a slot in a band no project occupies.
+     Drawn rather than filled, because "no ticket here" and "no project here" are different
+     statements and a fill of any weight would make the second read as the first. */
+  --fb-vacant: var(--ds-border);
+
+  /* The page's own ground — the shell's `bg-surface-sunken` — for the one thing on this board that
+     has to repaint it: the sticky lane headings. The panel under them is unpainted on purpose, so
+     what they slide over is the shell itself. */
+  --fb-ground: var(--ds-surface-sunken);
+
+  /* A recessed surface, for the two read-only boxes on the instrument strip: not raised, because a
+     box that reads as raised is claiming to be a control. */
+  --fb-inset: var(--ds-background-neutral);
+
+  /* Selection: the same token the process graph and every selected control use, so a selection
+     means one thing across the app. Neutral (decision 50), which is why no lane may be the
+     neutral ink. */
+  --fb-select: var(--ds-border-selected);
+  --fb-reticle-amplitude: 3px;
+  /* How far a pip reaches outside the node group it brackets: `Reticle.tsx`'s `RETICLE_PAD`,
+     which is where it starts, plus the amplitude above, which is how far it then pulses. The
+     board reserves this on its own right edge — a reticle is drawn outside the box it selects,
+     so without it the pips on the last lane hang over the end of the scroller and the board
+     grows a scrollbar whose whole travel is six pixels of empty paper. `tokens.test.ts` keeps
+     the three numbers together. */
+  --fb-reticle-room: 6px;
+
+  /* One colour per lane, from `status.ts`'s `BOARD_LANE_TOKEN` (`tokens.test.ts` holds the two
+     together). `gate`, `error` and `retrying` keep the yellow / red / orange that mean the same
+     thing on every other screen, and `running` is the blue of work in progress.
+
+     `done` and `admitted` are deliberately the SAME neutral. Between them they are most of the
+     board — a healthy factory finishes far more than it is working on — and colouring both of
+     them is spending the eye's attention on the two states nobody needs to act on. The column
+     each sits in is what tells them apart, and the columns are already far apart. */
+  --fb-admitted: var(--ds-chart-neutral);
+  --fb-running: var(--ds-chart-information);
+  --fb-gate: var(--ds-chart-yellow-bold);
+  --fb-error: var(--ds-chart-danger);
+  --fb-retrying: var(--ds-chart-orange-bold);
+  /* Written as the token, not as its value, so the two cannot drift apart by accident. */
+  --fb-done: var(--fb-admitted);
+
+  /* The retry ramp. Band 0 is quieter than a muted node: in shade mode a clean ticket is the
+     background against which the retries have to show. */
+  --fb-heat-0: var(--ds-background-neutral-hovered);
+  --fb-heat-1: var(--ds-chart-yellow-bold);
+  --fb-heat-2: var(--ds-chart-orange-bold);
+  --fb-heat-3: var(--ds-chart-danger);
+
+  /* Out fast, back in slower: the eye needs longer to read the new arrangement than to accept
+     that the old one has gone. `Board.tsx` holds the matching millisecond values. */
+  --fb-dissolve: 110ms;
+  --fb-settle: 170ms;
+  /* Per-lane stagger, so the change reads as a sweep down the pipeline rather than one flat
+     blink. Six lanes at 8ms stays well inside the fade itself. */
+  --fb-sweep: 8ms;
+}
+
+/* A focus lands on a deliberate click, so it can be brisk — the reader already knows what they
+   asked for. The slower default above is for changes that can arrive from a hover, where this
+   speed would feel twitchy. `Board.tsx` holds the matching millisecond values. */
+.factory-board[data-pace="click"] {
+  --fb-dissolve: 45ms;
+  --fb-settle: 70ms;
+  --fb-sweep: 3ms;
+}
+
+/* The board's own box. `max-content` rather than the block's default fill, so it is exactly as
+   wide as the widest band and its padding therefore trails the last lane instead of sitting at
+   the right-hand end of whatever is holding it — which is what puts the pip room in the scrolled
+   region on a window too narrow to show the whole board.
+
+   The only layout in the token block's neighbourhood, and deliberately so: it moves no square.
+   `--fb-reticle-room` is paper the reticle is drawn ON, not spacing between anything. */
+.factory-board {
+  width: max-content;
+  padding-right: var(--fb-reticle-room);
+}
+
+/* --- lane headings ---------------------------------------------------------------------- */
+
+/* Frozen. The board scrolls vertically when there are more projects than the panel is tall, and a
+   column heading that scrolled away would take the meaning of five hundred squares with it — the
+   lanes are the only thing on this board that says what a column IS.
+
+   Sticky rather than a separate fixed strip, so it still moves SIDEWAYS with the board: a heading
+   that stayed put horizontally would sit over the wrong column the moment the board was scrolled
+   across. The paint is the shell's own ground class, applied in `Board.tsx`. */
+.factory-board__lanes {
+  position: sticky;
+  top: 0;
+  /* Opaque, and exactly the shell's ground: a sticky strip has to repaint what passes under it. */
+  background-color: var(--fb-ground);
+  /* Above the squares and above the reticle, both of which are positioned boxes that would
+     otherwise paint over the heading as they pass under it. */
+  z-index: 2;
+  display: flex;
+  gap: var(--fb-lane-gap);
+  /* The band's gutter is a flex child, so the first lane starts one flex gap past it. The
+     headings have to clear both or every label sits one gap to the left of its lane. */
+  margin-left: calc(var(--fb-gutter) + var(--fb-lane-gap));
+  margin-bottom: 0.3rem;
+}
+
+/* The heading is a PAIR of controls — the name focuses the column, the caret ranks the project
+   rows by it — so this is the box that holds them at the column's width, and the two children
+   carry the type and the states between them. */
+.factory-board__lane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.15rem;
+  width: var(--fb-lane-width);
+  flex: none;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.factory-board__lane-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  /* So the name truncates inside the column rather than pushing the caret off the end. */
+  min-width: 0;
+  /* No inline padding: the heading's first glyph has to sit on the same vertical as the first
+     square of the column beneath it, and the lane cell below draws its group flush left. Any
+     padding here and every label reads as one nudge right of its own lane. */
+  padding: 0.1rem 0;
+  border-radius: 0.25rem;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ds-text-subtle);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.factory-board__lane-pick:hover,
+.factory-board__lane-pick:focus-visible {
+  color: inherit;
+  background-color: var(--ds-background-neutral-subtle-hovered);
+}
+
+.factory-board__lane-head[data-focused] .factory-board__lane-pick {
+  color: var(--fb-select);
+  font-weight: 600;
+}
+
+/* Dimmer than the name until it is on: an unused sort caret above every column is six marks
+   competing with the six words that say what the columns are. */
+/* A 24px target (WCAG 2.2 target size) around a 12px glyph: the mark stays small, the place a
+   hand can land does not. */
+.factory-board__lane-sort {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  color: var(--ds-text-subtlest);
+  transition: color 120ms ease;
+}
+
+.factory-board__lane-sort:hover,
+.factory-board__lane-sort:focus-visible {
+  color: inherit;
+}
+
+.factory-board__lane-sort[data-on] {
+  color: var(--fb-select);
+}
+
+/* Still truncates: the column is wide enough for every name the lane set has today, but a longer
+   one added later must shorten rather than widen its column out of step with the rest — widening
+   it would cost the same dead space in all six.
+
+   Check any change to this against the DARK theme, which is the binding case: `theme/dark.css`
+   sets `--font-body` to Saira at `font-stretch: 125%`, so a heading renders wider there than in
+   light, which declares no family and falls through to the system sans. A name that fits in dark
+   fits everywhere. */
+.factory-board__lane-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factory-board__lane-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- bands ------------------------------------------------------------------------------ */
+
+.factory-board__bands {
+  display: flex;
+  flex-direction: column;
+  /* Tight enough that the six bands read as one field of tickets rather than six separate
+     charts, and still clear of the band above: the gutter is two lines of text, so the gap has
+     to stay wider than the leading inside it. */
+  gap: 0.75rem;
+}
+
+/* Centred, not top-aligned: the gutter is two lines of text and the node groups are a short
+   grid, so aligning their tops left the project label sitting visibly below its own row. Every
+   band is the same height regardless, the row count being board-wide. */
+.factory-board__band {
+  display: flex;
+  align-items: center;
+  gap: var(--fb-lane-gap);
+}
+
+/* A `button`: clicking a project focuses its whole row. Hence the reset. */
+.factory-board__gutter {
+  width: var(--fb-gutter);
+  flex: none;
+  /* Right padding is the visible gap between a project's name and its first square, so it is
+     real spacing. The left is only the hover target's overhang behind right-aligned text, so it
+     is kept to the minimum that stops the highlight cropping the longest name. */
+  padding: 0.1rem 0.75rem 0.1rem 0.15rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: none;
+  text-align: right;
+  line-height: 1.25;
+  cursor: pointer;
+  transition:
+    opacity var(--fb-settle) ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.factory-board__gutter:hover,
+.factory-board__gutter:focus-visible {
+  background-color: var(--ds-background-neutral-subtle-hovered);
+}
+
+/* The project ranked into this band can change, so the label crosses over while the board is
+   muted — the same beat as the slots, and never read mid-swap. */
+.factory-board__gutter[data-fading] {
+  opacity: 0.25;
+  transition-duration: var(--fb-dissolve);
+}
+
+.factory-board__gutter-name {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factory-board__gutter-count {
+  display: block;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-text-subtlest);
+}
+
+/* Naming the focus in cyan rather than boxing it: the pips on the board say WHERE the focus is,
+   these two say WHAT it is. Declared after both base rules so source order matches specificity. */
+.factory-board__gutter[data-focused] .factory-board__gutter-name {
+  color: var(--fb-select);
+  font-weight: 600;
+}
+
+.factory-board__gutter[data-focused] .factory-board__gutter-count {
+  color: var(--fb-select);
+}
+
+/* --- lanes and slots --------------------------------------------------------------------- */
+
+/* A `button`: clicking a node group focuses that one project-and-lane cell. Hence the reset.
+   It is as wide as its heading so the columns line up, but that makes it wider than the squares
+   it holds — which is why the group inside, not this, is what gets drawn around. */
+.factory-board__lane {
+  display: flex;
+  justify-content: flex-start;
+  width: var(--fb-lane-width);
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* The node group itself: ten columns of fixed cells, and the box every mark is measured from. */
+.factory-board__group {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(10, var(--fb-node));
+  grid-auto-rows: var(--fb-node);
+  gap: var(--fb-gap);
+}
+
+/* The reticle is an SVG overlay on the node group, absolutely positioned so it changes no
+   geometry — this board's whole contract is that a square never moves. `overflow: visible` lets
+   the pips pulse outward past their own viewBox.
+   `position: relative` on the slots keeps them painting above nothing and below the pips: all
+   three are positioned boxes, so DOM order decides. */
+.factory-board__reticle {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.factory-board__reticle-corner {
+  fill: var(--fb-select);
+  --reticle-reach: var(--fb-reticle-amplitude);
+  /* Three beats and then still (WCAG 2.2.2): the pips stay, only the motion stops. */
+  animation: reticle-pulse var(--motion-pulse) ease-in-out 3;
+  /* Set per reticle by `Reticle.tsx`, negative, so one mounting late joins the beat already
+     running instead of starting its own. The four pips describe one rectangle and have to
+     breathe as one. */
+  animation-delay: var(--fb-reticle-delay, 0ms);
+}
+
+/* A faint hover cue, now that the cell has no background of its own. Drawn on the group rather
+   than on the button, so it wraps the squares and not the empty width beside them. An outline,
+   because it is the one box property that changes no layout. */
+.factory-board__lane:hover .factory-board__group {
+  outline: 1px solid var(--ds-border);
+  outline-offset: 3px;
+}
+
+/* A cell holding no issues is not a target — the same statement the vacant bands make, and for
+   the same reason: a hover cue promises a selection, and an empty group has none to make.
+   Matched on `aria-disabled` rather than `:disabled`, because the theme draws an inset border on
+   a disabled BUTTON so it still reads as a control, and this cell is as wide as its node group:
+   that border came out as a box tight around the nodes. See `Band.tsx`. */
+.factory-board__lane[aria-disabled] {
+  pointer-events: none;
+  cursor: default;
+}
+
+.factory-board__slot {
+  position: relative;
+  border-radius: 1px;
+  background-color: var(--look, var(--fb-empty));
+  transition: background-color var(--fb-settle) ease;
+  transition-delay: calc(var(--fb-lane, 0) * var(--fb-sweep));
+}
+
+/* Outline, no fill. An inset shadow rather than a border because the slots are grid cells of an
+   exact size and a border would grow them: this draws inside the box the lattice already gives.
+   A vacant slot never carries a look: it holds no ticket in any mode, so it has nothing to
+   crossfade. */
+.factory-board__slot--vacant {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--fb-vacant);
+}
+
+/* Nothing here is a control: no cursor, no hover, no focus. The band positions still line up with
+   the real ones above, because they are built out of the same three boxes. */
+.factory-board__band--vacant {
+  pointer-events: none;
+}
+
+.factory-board__gutter-blank {
+  width: var(--fb-gutter);
+  flex: none;
+}
+
+/* Every appearance a ticket can take, as the one value the slot, the row's swatch and the
+   legend's key all paint from — so none of the three can show a shade the others do not. An
+   element with no look falls back to its own base colour. */
+[data-look="admitted"] {
+  --look: var(--fb-admitted);
+}
+[data-look="running"] {
+  --look: var(--fb-running);
+}
+[data-look="gate"] {
+  --look: var(--fb-gate);
+}
+[data-look="error"] {
+  --look: var(--fb-error);
+}
+[data-look="retrying"] {
+  --look: var(--fb-retrying);
+}
+[data-look="done"] {
+  --look: var(--fb-done);
+}
+[data-look="muted"] {
+  --look: var(--fb-muted);
+}
+[data-look="heat-0"] {
+  --look: var(--fb-heat-0);
+}
+[data-look="heat-1"] {
+  --look: var(--fb-heat-1);
+}
+[data-look="heat-2"] {
+  --look: var(--fb-heat-2);
+}
+[data-look="heat-3"] {
+  --look: var(--fb-heat-3);
+}
+
+/* Painted directly, so it outranks the look: while fading, a slot is muted whatever it holds.
+   This is the midpoint both directions pass through. */
+.factory-board__slot[data-fading] {
+  background-color: var(--fb-muted);
+  transition-duration: var(--fb-dissolve);
+}
+
+.factory-board__slot:hover {
+  box-shadow: 0 0 0 1px var(--ds-border-bold);
+}
+
+/* A square with no ticket in it is the lattice, not a mark. It takes no hover ring and no
+   tooltip, and the pointer falls through to the cell underneath — which is still a target when
+   that cell holds something, so clicking the space around a square keeps selecting the cell. */
+.factory-board__slot:not([data-ticket]) {
+  pointer-events: none;
+}
+
+/* --- the mode bar ------------------------------------------------------------------------ */
+
+/* A row now that the buttons sit above the board rather than beside it. `flex: 1` on each, so
+   the four are equal: they are one scale of the same question, and an uneven set would suggest
+   one of them mattered more. */
+/* A `fieldset`, for its grouping, so its user-agent box is reset. */
+.factory-board__bar {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.4rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Label on the left, figures on the right — one row, not a heading over a caption. The four
+   buttons then make two columns down the strip: the names, and the numbers they measure. */
+/* Layout only: `Pressable` draws the edge, the ground and the pressed state. */
+.factory-board__mode {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.55rem;
+}
+
+.factory-board__mode-label {
+  flex: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* The live figures: what the current selection adds up to for this button's metric, over the
+   worst single ticket in it.
+
+   A two-column grid — the labels, then the figures — rather than two stacked rows, because the
+   thing being aligned crosses the rows: TOTAL over MAX in one column, and their two figures in
+   another, so the eye reads four totals down the strip and four maxima under them. Rows of a flex
+   column could only ever line each row up against itself.
+
+   The grid is pushed to the right edge of the button, but each cell's content starts at the LEFT
+   of its column: the boxes are already sized to match line for line (`ModeBar`'s `widthsFor`
+   measures both strings and `Metric` applies the answer), so what makes them stack is a common
+   starting point. End-aligning them instead would hang TIME's `2h` off the right of `1h 30m` and
+   put its hour box over the other line's minutes.
+
+   The labels are the exception and pull to the end of their own column, so they sit against the
+   figures they name rather than hanging off the far side of the widest one.
+
+   Set tight, because this is one readout rather than four lines of copy. Tabular figures because
+   these numbers change under a stationary cursor — the focus moves, or a threshold does — and
+   proportional digits would make the whole column twitch while it updated. */
+.factory-board__mode-figures {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: end;
+  justify-items: start;
+  align-content: center;
+  align-items: center;
+  column-gap: 0.3rem;
+  row-gap: 0.1rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Which of the two a figure is. Quieter and smaller than either — it is the same word on all four
+   buttons, so it has to be readable without ever being what the eye lands on. */
+.factory-board__mode-key {
+  justify-self: end;
+  color: var(--ds-text-subtlest);
+}
+
+/* The sum is the answer; the max is what the answer has to be read against, so it is quieter. */
+.factory-board__mode-total {
+  color: inherit;
+}
+
+.factory-board__mode-max {
+  color: var(--ds-text-subtle);
+}
+
+/* A focus can land on a node group holding nothing, and four buttons reading "$0.00 over $0.00"
+   would look like an answer rather than an empty set. Spans both columns, and stays two lines
+   tall whatever it says, so the strip cannot change height when the reader clicks an empty cell. */
+.factory-board__mode-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  /* Exactly the two figure lines it stands in for, gap included. */
+  min-height: calc(2 * 1.15em + 0.1rem);
+  color: var(--ds-text-subtlest);
+}
+
+/* --- the stage: board and issue list, side by side ----------------------------------------- */
+
+/* Two frames, not one flow. The board is a picture and the list is rows of text, and a reader
+   scanning between them needs to know where each ends — run together they read as one object
+   whose right-hand end happens to be words.
+
+   `min-width: 0` on the board frame is what keeps the list from being pushed off screen: the
+   frame wraps a horizontal scroller, and without it the scroller's content width wins the flex
+   negotiation and the list is shoved past the viewport. */
+/* Takes the height the page's fill layout leaves under the instruments, and hands all of it to
+   both frames, so they end level at the foot of the window. A floor below which the page scrolls
+   instead: a board squeezed to one band is not a board. */
+.factory-board__stage {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 24rem;
+  gap: 0.75rem;
+}
+
+/* Both sections are the same construction — frame, titled header, body — so the pair reads as
+   two views of one thing rather than as a picture that happens to have a list next to it.
+
+   Only the LAYOUT is here. The frame, the rule under the header and the type are the classes
+   `components/ui/Panel.tsx` uses, applied in the JSX, so these two sections are the same object
+   as every panel on the ticket and project pages.
+
+   With one departure from `Panel`, in the JSX rather than here: neither section paints a ground.
+   The board is a field of small marks read against the page, and a raised white sheet under it
+   made the marks read as a chart on paper rather than as the factory itself; the list beside it
+   matches so the pair still reads as one construction. Being unpainted rather than painted the
+   shell's colour is what keeps them matching — there is no second copy of the page's background
+   to drift. Only the title band keeps `bg-white`, so the frames still say where they begin. */
+.factory-board__panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Shrinks to the board rather than stretching past it: the board is a fixed-width picture, and
+   a frame that grew to fill the row put a band of empty paper to the right of the last lane. The
+   issue list is the flexible one now, so that width goes somewhere it is read. */
+.factory-board__frame {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Asymmetric on purpose, and not by the amount it looks like. The space left of a project name
+   is this padding PLUS the gutter's own 0.15rem; on the right the board has already taken
+   `--fb-reticle-room` out of its own box, so the two edges of the picture end up a few pixels
+   apart rather than the 0.25rem written here. The extra is spent on the right on purpose: a pip
+   pressed against the frame reads as a clipped one. */
+.factory-board__frame-body {
+  /* Takes the height the panel was given and hands it to the scroller, which is what the board
+     measures itself against when it works out how many bands the panel has room for. */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.6rem 0.4rem 0.6rem 0.35rem;
+}
+
+/* The board is the one thing on the page that is allowed to be wider than its frame. */
+.factory-board__scroll {
+  height: 100%;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+/* --- the instrument strip ------------------------------------------------------------------ */
+
+/* Totals, then the four metric buttons, then the key that explains their shading — left to right
+   in the order a reader needs them: what the whole is, what to measure it by, what the colours
+   will mean. */
+.factory-board__instruments {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+}
+
+/* Not a control: no hover, no cursor, no border that suggests it can be pressed. It is the
+   denominator every figure on the buttons beside it is a part of. */
+.factory-board__stats {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.05rem;
+  flex: none;
+  min-width: 7.5rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 0.375rem;
+  background-color: var(--fb-inset);
+}
+
+.factory-board__stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.factory-board__stat-value {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.factory-board__stat-label {
+  font-size: 0.75rem;
+  color: var(--ds-text-subtle);
+}
+
+/* --- the heat legend ---------------------------------------------------------------------- */
+
+/* Always mounted, only faded — see `HeatLegend`. Reserving the space costs nothing here and
+   stops the button that turns shading on from moving out from under the cursor hovering it. */
+/* Two by two, not four down.
+   
+   Stacked, the four ranges were five lines of text and the tallest thing in the strip — they, and
+   not the buttons they explain, were setting the row's height. Paired, the key is three lines and
+   the buttons decide again. The ramp still reads in order: top-left, top-right, bottom-left,
+   bottom-right, the way the swatches themselves are laid out on the board. */
+.factory-board__legend {
+  display: grid;
+  /* Equal halves of a FIXED box, not `auto` columns.
+     
+     The labels are the metric's own numbers, so they change width with the metric — "3 +" for
+     retries against "$1.00 – $3.00" for cost — and `auto` columns passed that straight into the
+     flex row: hovering a button resized the key, which resized the four buttons, one of which
+     was moving under the cursor. Sized in `rem` so it still tracks the type scale; a label wider
+     than its half ellipsises rather than pushing anything. */
+  grid-template-columns: repeat(2, 1fr);
+  width: 14.5rem;
+  align-content: center;
+  flex: none;
+  gap: 0.1rem 0.6rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.375rem;
+  background-color: var(--fb-inset);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-text-subtlest);
+  /* For the placeholder, which is laid OVER the ramp rather than swapped for it. */
+  position: relative;
+}
+
+/* Centred over the whole box, so it is placed by the ramp underneath it rather than by a number
+   somebody has to keep in step. */
+.factory-board__legend-idle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.factory-board__legend[data-on="true"] {
+  opacity: 1;
+}
+
+.factory-board__legend-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.factory-board__legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Names what the numbers below it are — the one thing four shades and four ranges cannot say.
+   Spans both columns, and leads rather than trails: a caption under a 2×2 grid reads as a fifth
+   entry in it. */
+.factory-board__legend-caption {
+  grid-column: 1 / -1;
+  order: -1;
+  margin-bottom: 0.1rem;
+  font-weight: 600;
+}
+
+/* Hidden, not removed. `visibility` keeps the bands' boxes, so the ramp goes on setting the
+   legend's height while it is not being read — which is what makes picking a metric a change of
+   contents rather than a change of size, and stops everything below the strip shifting. */
+.factory-board__legend[data-on="false"] .factory-board__legend-band,
+.factory-board__legend[data-on="false"] .factory-board__legend-caption {
+  visibility: hidden;
+}
+
+.factory-board__legend-swatch {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 1px;
+  background-color: var(--look);
+}
+
+/* The line under a panel's title, saying what the two controls are currently doing to it. It has
+   a second state: the selection colour the moment a metric or a focus is on, the same one the
+   pips and the focused gutter take, so what is set is legible from the title row of either
+   panel without having to find the controls that set it. */
+.factory-board__note {
+  color: var(--ds-text-subtlest);
+  transition: color 120ms ease;
+}
+
+.factory-board__note[data-on] {
+  color: var(--fb-select);
+}
+
+/* --- the issue list ------------------------------------------------------------------------- */
+
+/* Takes whatever the board leaves, down to a readable row. A basis of zero, not `auto`: with its
+   longest title as its basis the list would ask for more than the row has and the two frames
+   would shrink together, taking a pixel from the board — enough for a scrollbar under a picture
+   whose whole contract is that nothing in it moves. */
+.factory-board__list {
+  flex: 1 1 0%;
+  min-width: 22rem;
+}
+
+/* The measured box. `overflow: hidden`, not `auto`, and that is the point rather than an
+   oversight: the page size is measured from this element, so it holds exactly the rows that fit
+   and there is never anything to scroll. A scrollbar here would mean `list.ts` had gone wrong. */
+.factory-board__list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* One line per ticket, and every part of it sized so that line cannot become two. The whole
+   point of the compaction is how many rows fit at once. */
+/* A FIXED height, not a padded one. `list.ts` divides the box by `--fb-row` to decide how many
+   rows a page holds, so the row has to be exactly that tall or the list pages one short, or one
+   row into a scrollbar it is not supposed to have. `tokens.test.ts` holds the two together. */
+.factory-board__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  box-sizing: border-box;
+  height: var(--fb-row);
+  padding: 0 0.7rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.factory-board__row + .factory-board__row {
+  border-top: 1px solid var(--ds-border);
+}
+
+/* The row whose square was clicked on the board. Cyan, the same as everything else that means
+   "this is what you selected" — and on the TEXT rather than as a filled band, because the row's
+   own swatch is already carrying a colour and a second background here would be two things
+   claiming the same line. Declared before `:hover`, which is more specific and must still win:
+   a marked row has to answer the cursor like any other. */
+.factory-board__row[data-selected] {
+  color: var(--fb-select);
+}
+
+.factory-board__row:hover {
+  background-color: var(--ds-background-neutral-subtle-hovered);
+}
+
+/* The lane, as the colour it is on the board: the same look as the square the row came from, so
+   the two can never disagree — under a metric's ramp as much as under the lanes. */
+.factory-board__row-lane {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 1px;
+  background-color: var(--look, var(--fb-muted));
+}
+
+/* The number and the title, as one link: the row's keyboard stop and its flexible gap. */
+.factory-board__row-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.factory-board__row-key {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.factory-board__row-link:hover .factory-board__row-key {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Takes the width the number gave up, which makes it the row's flexible gap as well as its title:
+   a ticket with no stored title renders this empty and the metric and project still sit at the
+   right edge. `min-width: 0` is what lets it shrink below its text and elide — without it the flex
+   base size is the whole title and the row overflows instead. */
+.factory-board__row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--ds-text-subtle);
+}
+
+/* The ticket's figure for the shading metric. Read down the column rather than across the row —
+   which is what `tabular-nums` is for — and set in the row's own ink rather than dimmed like the
+   project beside it: it is the number the reader turned the metric on to see. */
+.factory-board__row-metric {
+  flex: none;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-text-subtle);
+}
+
+/* Dim and last, so it costs the issue number nothing until the row is tight for room. */
+.factory-board__row-project {
+  flex: none;
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--ds-text-subtlest);
+}
+
+/* Every span that carries the row's text when the row is the selected one. Placed after their own
+   base rules so source order follows specificity: each of them sets a colour, and a more specific
+   rule declared earlier would lose to it. */
+.factory-board__row[data-selected] .factory-board__row-key,
+.factory-board__row[data-selected] .factory-board__row-title,
+.factory-board__row[data-selected] .factory-board__row-metric,
+.factory-board__row[data-selected] .factory-board__row-project {
+  color: var(--fb-select);
+}
+
+/* `Board.tsx` also skips the dissolve entirely under this query, so the layout commits at once
+   rather than sitting muted for a beat with nothing animating. */
+/* --- narrow screens ------------------------------------------------------------------------- */
+
+/* Below the tablet width one row holds neither the strip nor the two frames. The strip wraps —
+   the totals and the key share a line, the four buttons take the next two, two by two — and the
+   list goes under the board instead of beside it, each frame keeping its own scroll. The window
+   alone decides where anything goes, so the no-move rule still holds. */
+@media (max-width: 47.9375rem) {
+  .factory-board__instruments {
+    flex-wrap: wrap;
+  }
+
+  .factory-board__legend {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+
+  .factory-board__bar {
+    order: 1;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* Half a phone's width is too little for a name and two figures side by side: the name goes
+     above them. */
+  .factory-board__mode {
+    flex-basis: calc(50% - 0.2rem);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.2rem;
+  }
+
+  .factory-board__mode-figures {
+    justify-content: start;
+  }
+
+  .factory-board__stage {
+    flex-direction: column;
+    min-height: 40rem;
+  }
+
+  .factory-board__frame,
+  .factory-board__list {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* A phone draws the list alone (`OverviewPage`), and a row there is pressed by a thumb: a
+     touch target's height, and the type at the body's size. `list.ts`'s `ROW_PX_TOUCH` is the
+     same number in px, held by `tokens.test.ts`. */
+  .factory-board__list {
+    --fb-row: 2.75rem;
+  }
+
+  .factory-board__row {
+    font-size: 0.875rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .factory-board__slot,
+  .factory-board__gutter,
+  .factory-board__legend {
+    transition: none;
+  }
+
+  .factory-board__reticle-corner {
+    animation: none;
+  }
+}

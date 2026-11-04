@@ -1,0 +1,480 @@
+/**
+ * Stage chrome shared by flow graphs: the lattice, the edge fade, and the small labels. Every
+ * colour is an ADS token, so both themes come from these rules; the node kinds are chart colours
+ * and a node's tone is `status.ts`'s role for it.
+ */
+
+.flow-grid-field {
+  /* The stage's own background. A node that has not run yet is painted with it rather than left
+     hollow, so the lattice does not show through the middle of the shape. */
+  --flow-surface: var(--ds-surface);
+  --flow-grid-line: color-mix(in srgb, currentColor 3%, transparent);
+  /* Opaque, not translucent: the arrow head overlaps the last few units of its own tail, and two
+     translucent layers composite to a third, darker colour that reads as a separate object stuck
+     on the end. Mixed against the surface, head and tail are the one colour they draw as. */
+  --flow-edge: color-mix(in srgb, currentColor 35%, var(--flow-surface));
+  --flow-label: var(--ds-text-subtlest);
+  /* A caption's VALUES, against `--flow-label`'s terms. A fact has to be read rather than
+     sensed, so it takes ink of its own — the same distinction `.flow-node-label` makes against
+     the outline it sits under. */
+  --flow-fact-value: var(--ds-text);
+  --flow-node-entry: var(--ds-icon-subtle);
+  --flow-node-agent: var(--ds-chart-information);
+  --flow-node-human-gate: var(--ds-chart-yellow-bold);
+  --flow-node-action: var(--ds-chart-orange-bold);
+  --flow-node-check: var(--ds-chart-teal-bold);
+  /* The done node is the one node whose colour is a verdict, so it takes the green the `done`
+     lozenge takes (`status.ts`'s `success` role) — the lozenge and the node sit on the same
+     header and have to agree. It reaches this fill only when the ticket is actually standing on
+     it; until then the node is unvisited and draws as an outline like every step ahead of it. */
+  --flow-node-terminal: var(--ds-chart-success);
+  --flow-node-muted: var(--ds-icon-disabled);
+  /* The graph's ink: a pending node's outline, a completed node's fill, and the node labels.
+     The lighter annotations — the attempt count and the gate's person icon — take `--flow-edge`
+     instead, so they sit at the weight of the arrows rather than of the nodes. The one exception
+     is the gate the ticket is sitting on, whose icon takes the gate's own colour. */
+  --flow-node-outline: var(--ds-icon-subtle);
+  --flow-node-error: var(--ds-chart-danger);
+  /* A rejection is a decision somebody made, not a fault, so it keeps the discovery role the
+     lozenge gives a rejected attempt (decision 50) rather than folding into the error red beside
+     it. */
+  --flow-node-rejected: var(--ds-chart-discovery);
+  --flow-select: var(--ds-border-selected);
+  /* How far each reticle corner travels along its own diagonal. The tempo is the app's
+     (`--motion-pulse`), shared with the board. */
+  --flow-reticle-amplitude: 4px;
+  /* Selection reticle enter and exit. It fades up from `--flow-reticle-enter-scale` on select,
+     and fades back out to it on deselect, so the marks always close in on the node they mean
+     and open away from it when they let go. */
+  --flow-reticle-transition: 0.12s;
+  --flow-reticle-enter-scale: 1.3;
+  /* How long a node takes to grow into, or out of, its emphasised size. Short enough to read as
+     the node itself changing rather than as an animation playing. */
+  --flow-resize-duration: 0.12s;
+  /* The stage's entrance, in two halves that are deliberately NOT one animation: the lattice
+     zooms out from `--flow-grid-enter-scale` while it fades up, and the graph fades up while it
+     rises from `--flow-graph-enter-offset` below where it lands. They are on different elements
+     with their own durations so either can be retimed, dropped, or pointed somewhere else without
+     touching the other — the whole point being to tune the pair against each other by eye.
+
+     The graph starts a beat after the grid rather than with it, so the two read as one thing
+     arriving on a stage that is already settling rather than as two things starting at once.
+
+     The lattice zooms by its BACKGROUND-SIZE rather than by a transform, because a transform
+     would take the edge mask with it: the fade at the stage's borders would zoom too, and the
+     entrance would read as the whole panel growing rather than as a grid resolving. Which is also
+     why the lattice is positioned from its centre — a tiled background scales about its own
+     origin, and the default top-left one would have drawn the lines in towards the corner rather
+     than in towards the middle of the stage. */
+  --flow-grid-cell: 1.5rem;
+  --flow-grid-enter-scale: 2.4;
+  --flow-grid-enter-duration: 0.2s;
+  /* Positive is BELOW the resting position, the graph rising into it. */
+  --flow-graph-enter-offset: 32px;
+  --flow-graph-enter-duration: 0.2s;
+  --flow-graph-enter-delay: 0.05s;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  min-height: 18rem;
+  color: inherit;
+}
+
+.flow-grid-field__lattice {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--flow-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--flow-grid-line) 1px, transparent 1px);
+  background-size: var(--flow-grid-cell) var(--flow-grid-cell);
+  /* See `--flow-grid-enter-scale`: the tile scales about this point, so the zoom has to be
+     centred here or it plays as a slide. */
+  background-position: center center;
+  /* `backwards`, not `both`: it holds the first keyframe until the animation starts, which is
+     what stops a frame of the finished stage flashing before the entrance plays. Holding the LAST
+     one afterwards would be redundant — each animation ends on the element's own resting style —
+     and would leave a permanent `translate` on the graph below, and with it a containing block
+     nothing here asked for. */
+  animation: flow-grid-in var(--flow-grid-enter-duration) ease-out backwards;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, black 4.5rem, black calc(100% - 4.5rem), transparent),
+    linear-gradient(to bottom, transparent, black 3rem, black calc(100% - 3rem), transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent, black 4.5rem, black calc(100% - 4.5rem), transparent),
+    linear-gradient(to bottom, transparent, black 3rem, black calc(100% - 3rem), transparent);
+  mask-composite: intersect;
+}
+
+.flow-grid-field__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: inherit;
+  flex-direction: column;
+}
+
+/* Step names are identifiers, so they are set as code, as written — not shouted. */
+.flow-small-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--flow-label);
+  fill: var(--flow-label);
+  line-height: 1.2;
+}
+
+.flow-process__caption {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.5rem;
+}
+
+/* Facts about the run the stage is drawing, in the caption slot. Absolutely positioned with the
+   rest of the caption, so however many of them there are they cost the graph no height — which
+   is the whole reason they moved onto the stage. */
+.flow-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 1.25rem;
+  row-gap: 0.25rem;
+  padding-right: 1.5rem;
+}
+
+.flow-facts__value {
+  margin-left: 0.4em;
+  color: var(--flow-fact-value);
+}
+
+/* The stage's bottom corners. The graph is centred in the field and the lattice runs behind
+   everything, so a corner sits over empty ground at any width — and being absolute, neither can
+   push the graph down the way a footer row would. */
+.flow-process__footer-start {
+  position: absolute;
+  bottom: 1.25rem;
+  left: 1.5rem;
+}
+
+.flow-process__footer-end {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 1rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.flow-process__actions {
+  position: absolute;
+  top: 0.85rem;
+  right: 1.5rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.flow-graph-scroll {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 2.5rem 1.5rem 2rem;
+  /* `backwards` for the reason given on the lattice's own entrance, and load-bearing here rather
+     than merely tidy: this one waits out a delay first, and without it the graph would sit at its
+     resting position for that beat and then jump down to start. */
+  animation: flow-graph-in var(--flow-graph-enter-duration) ease-out var(--flow-graph-enter-delay)
+    backwards;
+}
+
+.flow-graph-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.flow-graph {
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: visible;
+}
+
+.flow-graph--passthrough {
+  pointer-events: none;
+}
+
+.flow-node-hitbox,
+.flow-node-button {
+  pointer-events: auto;
+}
+
+.flow-edge {
+  fill: none;
+  stroke: var(--flow-edge);
+  stroke-width: 1;
+}
+
+.flow-edge--reject {
+  stroke-dasharray: 3 3;
+}
+
+.flow-edge-marker {
+  fill: var(--flow-edge);
+}
+
+.flow-node {
+  stroke: none;
+  /* `fill-box` so a node grows about its own centre; the shape is drawn at its base size and
+     the scale comes from `--flow-emphasis`, which is what lets the change be eased at all —
+     a polygon's `points` is not a CSS property and could never transition. */
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--flow-resize-duration) ease;
+}
+
+.flow-node--emphasised {
+  transform: scale(var(--flow-emphasis, 1));
+}
+
+.flow-node--outline {
+  fill: var(--flow-surface);
+  stroke: var(--flow-node-outline);
+  stroke-width: 1.25;
+}
+
+.flow-node--filled.flow-node--entry {
+  fill: var(--flow-node-entry);
+}
+
+.flow-node--filled.flow-node--agent {
+  fill: var(--flow-node-agent);
+}
+
+.flow-node--filled.flow-node--human_gate {
+  fill: var(--flow-node-human-gate);
+}
+
+.flow-node--filled.flow-node--action {
+  fill: var(--flow-node-action);
+}
+
+.flow-node--filled.flow-node--check {
+  fill: var(--flow-node-check);
+}
+
+.flow-node--filled.flow-node--terminal {
+  fill: var(--flow-node-terminal);
+}
+
+.flow-node-label {
+  fill: var(--ds-text-subtle);
+}
+
+.flow-process--compact {
+  min-height: 12rem;
+}
+
+.flow-node-button {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.flow-node-reticle {
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(var(--flow-reticle-enter-scale));
+  transition:
+    opacity var(--flow-reticle-transition) ease,
+    transform var(--flow-reticle-transition) ease;
+}
+
+.flow-node-reticle--on {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.flow-node-select {
+  fill: var(--flow-select);
+  stroke: none;
+  --reticle-reach: var(--flow-reticle-amplitude);
+}
+
+/* Only the shown reticle breathes, three times and then still (WCAG 2.2.2): the corners stay. */
+.flow-node-reticle--on .flow-node-select {
+  animation: reticle-pulse var(--motion-pulse) ease-in-out 3;
+}
+
+.flow-node-person {
+  fill: var(--flow-edge);
+}
+
+/* The gate the ticket is sitting on right now: the glyph takes the diamond's own colour, so the
+   two read as one object and "waiting on a person" is the same signal as "you are here". Not a
+   hardcoded amber — the token is what the dark theme retints. */
+.flow-node-person--current {
+  fill: var(--flow-node-human-gate);
+}
+
+/* A toned gate draws in that tone, so the glyph follows it there: matching the gate means matching
+   whatever colour the gate actually is. */
+.flow-node-person--attention {
+  fill: var(--flow-node-human-gate);
+}
+
+.flow-node-person--rejected {
+  fill: var(--flow-node-rejected);
+}
+
+.flow-node-person--error {
+  fill: var(--flow-node-error);
+}
+
+.flow-node-badge {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  fill: var(--ds-text-subtlest);
+}
+
+/* The mark a toned node carries, so its state is a shape as well as a colour (A12). */
+.flow-node-mark {
+  stroke: var(--flow-surface);
+  stroke-width: 1.5;
+}
+
+.flow-node-mark--error {
+  fill: var(--flow-node-error);
+}
+
+.flow-node-mark--attention {
+  fill: var(--flow-node-human-gate);
+}
+
+.flow-node-mark--rejected {
+  fill: var(--flow-node-rejected);
+}
+
+.flow-node-mark-glyph {
+  fill: var(--flow-surface);
+  stroke: none;
+}
+
+.flow-node-mark-cross {
+  fill: none;
+  stroke: var(--flow-surface);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.flow-node--filled.flow-node--past {
+  fill: var(--flow-node-outline);
+}
+
+/* What a node says beyond its kind and its position, from `status.ts`'s one tone table — the same
+   three tones the status pills and the rail dots draw. `attention` is a step that wants a person:
+   a gate holding for a decision, or a run somebody stopped. Declared after `--past` so a step the
+   ticket has already left still reports how it ended instead of reading as a clean success. */
+.flow-node--filled.flow-node--tone-attention {
+  fill: var(--flow-node-human-gate);
+}
+
+.flow-node--filled.flow-node--tone-rejected {
+  fill: var(--flow-node-rejected);
+}
+
+.flow-node--filled.flow-node--tone-error {
+  fill: var(--flow-node-error);
+}
+
+.flow-node-group--muted {
+  pointer-events: none;
+}
+
+.flow-node-group--muted .flow-node-label,
+.flow-node-group--muted .flow-node-badge,
+.flow-node-group--muted .flow-node-person {
+  fill: var(--flow-node-muted);
+  opacity: 0.55;
+}
+
+/* The "you are here" beat. `.flow-blink` carries the same animation for anything OUTSIDE the
+   graph that points at the step the ticket is stopped on — the activity region's link on a held
+   row — so the node and the link that names it move together. One definition, because two would
+   drift apart the moment either beat is tuned.
+
+   Three beats and then still (WCAG 2.2.2), on the node's own emphasis: it stays larger and in
+   its colour, which is what says "here" once the motion has drawn the eye. An error does not
+   flash at all — its red and its mark say it, and a flashing fault reads as an alarm.
+
+   A running step is the one exception: it beats for as long as its run is in progress, because
+   "still working" stays true the whole time and a node that holds still reads as stalled.
+   Reduced motion stops it all the same. */
+.flow-blink,
+.flow-node--current {
+  animation: attention-blink var(--motion-blink) ease-in-out 3;
+}
+
+.flow-node--current.flow-node--running {
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-blink,
+  .flow-node--current,
+  .flow-node-reticle--on .flow-node-select {
+    animation: none;
+  }
+
+  /* The entrance is the one thing here a reader cannot dismiss by looking away — it plays on
+     arrival, before they have read anything — so it is the first to go. The stage simply is,
+     which is where the animation was taking them anyway. */
+  .flow-grid-field__lattice,
+  .flow-graph-scroll {
+    animation: none;
+  }
+
+  .flow-node,
+  .flow-node-reticle {
+    transition: none;
+  }
+}
+
+/* Cells large and the field invisible, out to the lattice's resting size. */
+@keyframes flow-grid-in {
+  from {
+    opacity: 0;
+    background-size: calc(var(--flow-grid-cell) * var(--flow-grid-enter-scale))
+      calc(var(--flow-grid-cell) * var(--flow-grid-enter-scale));
+  }
+  to {
+    opacity: 1;
+    background-size: var(--flow-grid-cell) var(--flow-grid-cell);
+  }
+}
+
+/* Up from the offset, into place. */
+@keyframes flow-graph-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--flow-graph-enter-offset));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

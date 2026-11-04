@@ -1,0 +1,10 @@
+#!/command/with-contenv sh
+set -eu
+. /etc/factorial/env.sh
+cd /app
+/command/s6-setuidgid factorial alembic upgrade head
+# The image's own database lives on a volume that outlasts the settings file; an external one
+# (ECS) is never judged here.
+if ! factorial_external_database; then
+  exec /command/s6-setuidgid factorial python -m orchestrator.container keycheck
+fi

@@ -1,0 +1,9 @@
+#!/command/with-contenv sh
+# The assistant runs as its own user (design.md §7.18). So it does not read /app/.env, which
+# holds every secret: `init` writes it an .env of its own, holding only what a turn needs, in the
+# directory it starts from. OWN_USER makes it refuse to start if a master key reaches it.
+. /etc/factorial/env.sh
+export HOME=/data/assistant
+export FACTORIAL_ASSISTANT__OWN_USER=true
+cd /run/factorial-assistant
+exec /command/s6-setuidgid factorial-assistant python -m orchestrator.assistant

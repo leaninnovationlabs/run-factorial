@@ -1,0 +1,21 @@
+/**
+ * Dark is colour only (decision 50): its values are the dark blocks in `tokens.css`, which every
+ * rule in the app already reads. This file holds the one thing a value cannot say — how the nav
+ * mark, one image for both themes, sits on a dark ground.
+ */
+
+/* The mark is one file for both themes, and the dark one wants only its light half. `lighten`
+   keeps whichever of the two is lighter, per channel: the light grey blocks stand on any dark
+   ground, and the near-black ones resolve to the ground itself — which is what "the black is
+   transparent" means once it is drawn rather than described. A filter would repaint the colours
+   the file defines; this repaints nothing. Written twice, for the chosen dark theme and for a
+   dark system with no choice made. */
+[data-theme="dark"] [data-nav-mark] {
+  mix-blend-mode: lighten;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-nav-mark] {
+    mix-blend-mode: lighten;
+  }
+}

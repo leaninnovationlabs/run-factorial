@@ -1,0 +1,365 @@
+@import "./theme/fonts.css";
+@import "tailwindcss";
+/* The values. Everything below names them; only this file holds them (decision 50). */
+@import "./theme/tokens.css";
+/* The one rule the dark theme needs beyond its values: the nav mark's blend. */
+@import "./theme/dark.css";
+/* The attention beats the board and the process graph share. */
+@import "./theme/motion.css";
+/* The features' own stylesheets, here rather than beside their components: pages load as chunks
+   of their own, and a stylesheet that arrived with its chunk would land after this file, in an
+   order no one chose. */
+@import "./pageTransition.css";
+@import "./components/logoPlate.css";
+@import "./components/flow/flow.css";
+@import "./components/factory-board/factory-board.css";
+@import "./components/dashboard/dashboard.css";
+@import "./components/assistant/assistant.css";
+@import "./pages/signIn.css";
+
+/*
+ * The ADS roles as Tailwind utilities (decision 50). Property-scoped namespaces, so a class reads
+ * as the role it paints — `text-subtle`, `bg-surface-sunken`, `border-input`, `outline-focused`,
+ * `z-modal` — rather than `text-text-subtle`. `inline` writes the token itself into each utility,
+ * so the theme blocks in `tokens.css` retint every class without Tailwind knowing there is a
+ * theme. Tailwind does not document these namespaces; `foundations.test.ts` compiles this file
+ * and fails if one stops resolving.
+ *
+ * Sizes and colours never share a name: `text-body-sm` is a size, `text-subtle` a colour.
+ */
+@theme inline {
+  /* Tailwind's own palette, size scale and shadows are switched off, so a class that names one —
+     `bg-slate-100`, `text-sm`, `shadow-md` — does not compile at all. Every colour, size and
+     shadow is an ADS role below. */
+  --color-*: initial;
+  --text-*: initial;
+  --shadow-*: initial;
+
+  --font-sans:
+    "Inter", "Inter fallback", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu,
+    "Helvetica Neue", sans-serif;
+  --font-mono:
+    "JetBrains Mono", "JetBrains Mono fallback", ui-monospace, Menlo, "Segoe UI Mono",
+    "Ubuntu Mono", monospace;
+  --font-weight-normal: var(--ds-font-weight-regular);
+  --font-weight-medium: var(--ds-font-weight-medium);
+  --font-weight-semibold: var(--ds-font-weight-semibold);
+  --font-weight-bold: var(--ds-font-weight-bold);
+
+  /* The ADS type scale, each size with its line height and, for headings and metrics, weight. */
+  --text-heading-xl: 1.75rem;
+  --text-heading-xl--line-height: 2rem;
+  --text-heading-xl--font-weight: var(--ds-font-weight-bold);
+  --text-heading-lg: 1.5rem;
+  --text-heading-lg--line-height: 1.75rem;
+  --text-heading-lg--font-weight: var(--ds-font-weight-bold);
+  --text-heading-md: 1.25rem;
+  --text-heading-md--line-height: 1.5rem;
+  --text-heading-md--font-weight: var(--ds-font-weight-bold);
+  --text-heading-sm: 1rem;
+  --text-heading-sm--line-height: 1.25rem;
+  --text-heading-sm--font-weight: var(--ds-font-weight-bold);
+  --text-heading-xs: 0.875rem;
+  --text-heading-xs--line-height: 1.25rem;
+  --text-heading-xs--font-weight: var(--ds-font-weight-bold);
+  --text-heading-xxs: 0.75rem;
+  --text-heading-xxs--line-height: 1rem;
+  --text-heading-xxs--font-weight: var(--ds-font-weight-bold);
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-body-sm: 0.75rem;
+  --text-body-sm--line-height: 1rem;
+  --text-metric-lg: 1.75rem;
+  --text-metric-lg--line-height: 2rem;
+  --text-metric-lg--font-weight: var(--ds-font-weight-bold);
+  --text-metric-md: 1.5rem;
+  --text-metric-md--line-height: 1.75rem;
+  --text-metric-md--font-weight: var(--ds-font-weight-bold);
+  --text-metric-sm: 1rem;
+  --text-metric-sm--line-height: 1.25rem;
+  --text-metric-sm--font-weight: var(--ds-font-weight-bold);
+  --text-code: 0.875em;
+  --text-code--line-height: 1;
+
+  /* Text and icon colours. */
+  --text-color-default: var(--ds-text);
+  --text-color-subtle: var(--ds-text-subtle);
+  --text-color-subtlest: var(--ds-text-subtlest);
+  --text-color-disabled: var(--ds-text-disabled);
+  --text-color-inverse: var(--ds-text-inverse);
+  --text-color-selected: var(--ds-text-selected);
+  --text-color-brand: var(--ds-text-brand);
+  --text-color-danger: var(--ds-text-danger);
+  --text-color-warning: var(--ds-text-warning);
+  --text-color-warning-inverse: var(--ds-text-warning-inverse);
+  --text-color-success: var(--ds-text-success);
+  --text-color-information: var(--ds-text-information);
+  --text-color-discovery: var(--ds-text-discovery);
+  --text-color-icon: var(--ds-icon);
+  --text-color-icon-subtle: var(--ds-icon-subtle);
+  --text-color-icon-subtlest: var(--ds-icon-subtlest);
+  --text-color-icon-inverse: var(--ds-icon-inverse);
+  --text-color-icon-disabled: var(--ds-icon-disabled);
+  --text-color-icon-selected: var(--ds-icon-selected);
+  --text-color-icon-brand: var(--ds-icon-brand);
+  --text-color-icon-danger: var(--ds-icon-danger);
+  --text-color-icon-warning: var(--ds-icon-warning);
+  --text-color-icon-success: var(--ds-icon-success);
+  --text-color-icon-information: var(--ds-icon-information);
+  --text-color-icon-discovery: var(--ds-icon-discovery);
+
+  /* Backgrounds: interaction states, status fills, surfaces. */
+  --background-color-neutral: var(--ds-background-neutral);
+  --background-color-neutral-hovered: var(--ds-background-neutral-hovered);
+  --background-color-neutral-pressed: var(--ds-background-neutral-pressed);
+  --background-color-neutral-subtle: var(--ds-background-neutral-subtle);
+  --background-color-neutral-subtle-hovered: var(--ds-background-neutral-subtle-hovered);
+  --background-color-neutral-subtle-pressed: var(--ds-background-neutral-subtle-pressed);
+  --background-color-neutral-bold: var(--ds-background-neutral-bold);
+  --background-color-neutral-bold-hovered: var(--ds-background-neutral-bold-hovered);
+  --background-color-neutral-bold-pressed: var(--ds-background-neutral-bold-pressed);
+  --background-color-brand-bold: var(--ds-background-brand-bold);
+  --background-color-brand-bold-hovered: var(--ds-background-brand-bold-hovered);
+  --background-color-brand-bold-pressed: var(--ds-background-brand-bold-pressed);
+  --background-color-brand-subtlest: var(--ds-background-brand-subtlest);
+  --background-color-selected: var(--ds-background-selected);
+  --background-color-selected-hovered: var(--ds-background-selected-hovered);
+  --background-color-selected-pressed: var(--ds-background-selected-pressed);
+  --background-color-disabled: var(--ds-background-disabled);
+  --background-color-input: var(--ds-background-input);
+  --background-color-input-hovered: var(--ds-background-input-hovered);
+  --background-color-input-pressed: var(--ds-background-input-pressed);
+  --background-color-inverse-subtle: var(--ds-background-inverse-subtle);
+  --background-color-inverse-subtle-hovered: var(--ds-background-inverse-subtle-hovered);
+  --background-color-danger: var(--ds-background-danger);
+  --background-color-danger-hovered: var(--ds-background-danger-hovered);
+  --background-color-danger-bold: var(--ds-background-danger-bold);
+  --background-color-danger-bold-hovered: var(--ds-background-danger-bold-hovered);
+  --background-color-warning: var(--ds-background-warning);
+  --background-color-warning-hovered: var(--ds-background-warning-hovered);
+  --background-color-warning-bold: var(--ds-background-warning-bold);
+  --background-color-warning-bold-hovered: var(--ds-background-warning-bold-hovered);
+  --background-color-success: var(--ds-background-success);
+  --background-color-success-hovered: var(--ds-background-success-hovered);
+  --background-color-success-bold: var(--ds-background-success-bold);
+  --background-color-success-bold-hovered: var(--ds-background-success-bold-hovered);
+  --background-color-information: var(--ds-background-information);
+  --background-color-information-hovered: var(--ds-background-information-hovered);
+  --background-color-information-bold: var(--ds-background-information-bold);
+  --background-color-information-bold-hovered: var(--ds-background-information-bold-hovered);
+  --background-color-discovery: var(--ds-background-discovery);
+  --background-color-discovery-hovered: var(--ds-background-discovery-hovered);
+  --background-color-discovery-bold: var(--ds-background-discovery-bold);
+  --background-color-discovery-bold-hovered: var(--ds-background-discovery-bold-hovered);
+  --background-color-surface: var(--ds-surface);
+  --background-color-surface-hovered: var(--ds-surface-hovered);
+  --background-color-surface-pressed: var(--ds-surface-pressed);
+  --background-color-surface-sunken: var(--ds-surface-sunken);
+  --background-color-table-head: var(--table-head);
+  --background-color-surface-raised: var(--ds-surface-raised);
+  --background-color-surface-raised-hovered: var(--ds-surface-raised-hovered);
+  --background-color-surface-overlay: var(--ds-surface-overlay);
+  --background-color-surface-overlay-hovered: var(--ds-surface-overlay-hovered);
+  --background-color-blanket: var(--ds-blanket);
+  --background-color-skeleton: var(--ds-skeleton);
+  --background-color-skeleton-subtle: var(--ds-skeleton-subtle);
+  --background-color-chart-neutral: var(--ds-chart-neutral);
+  --background-color-chart-information: var(--ds-chart-information);
+  --background-color-chart-warning: var(--ds-chart-warning);
+  --background-color-chart-danger: var(--ds-chart-danger);
+  --background-color-chart-success: var(--ds-chart-success);
+  --background-color-chart-discovery: var(--ds-chart-discovery);
+
+  /* Borders, rings and outlines. A bare `border` already takes `--ds-border` (base layer below). */
+  --border-color-default: var(--ds-border);
+  --border-color-bold: var(--ds-border-bold);
+  --border-color-input: var(--ds-border-input);
+  --border-color-focused: var(--ds-border-focused);
+  --border-color-selected: var(--ds-border-selected);
+  --border-color-disabled: var(--ds-border-disabled);
+  --border-color-inverse: var(--ds-border-inverse);
+  --border-color-brand: var(--ds-border-brand);
+  --border-color-danger: var(--ds-border-danger);
+  --border-color-warning: var(--ds-border-warning);
+  --border-color-success: var(--ds-border-success);
+  --border-color-information: var(--ds-border-information);
+  --border-color-discovery: var(--ds-border-discovery);
+  --ring-color-default: var(--ds-border);
+  --ring-color-bold: var(--ds-border-bold);
+  --ring-color-input: var(--ds-border-input);
+  --ring-color-focused: var(--ds-border-focused);
+  --ring-color-selected: var(--ds-border-selected);
+  --ring-color-danger: var(--ds-border-danger);
+  --outline-color-focused: var(--ds-border-focused);
+
+  /* Tailwind's own radius names already have the ADS values; these make them the tokens. */
+  --radius-xs: var(--ds-radius-xsmall);
+  --radius-sm: var(--ds-radius-small);
+  --radius-md: var(--ds-radius-medium);
+  --radius-lg: var(--ds-radius-large);
+  --radius-xl: var(--ds-radius-xlarge);
+  --radius-full: var(--ds-radius-full);
+
+  --shadow-raised: var(--ds-shadow-raised);
+  --shadow-overlay: var(--ds-shadow-overlay);
+  --shadow-overflow: var(--ds-shadow-overflow);
+
+  --opacity-disabled: var(--ds-opacity-disabled);
+  --opacity-loading: var(--ds-opacity-loading);
+
+  /* ADS layers (`@atlaskit/theme` constants): what stacks over what. */
+  --z-index-card: 100;
+  --z-index-navigation: 200;
+  --z-index-dialog: 300;
+  --z-index-layer: 400;
+  --z-index-blanket: 500;
+  --z-index-modal: 510;
+  /* Not an ADS layer: a popup is portalled to the body, so one opened from a drawer, a dialog or
+     the overlay navigation has to stack above them, not at `layer` beneath. */
+  --z-index-popup: 520;
+  --z-index-flag: 600;
+  --z-index-spotlight: 700;
+  --z-index-tooltip: 9999;
+
+  --ease-out-bold: var(--ds-easing-out-bold);
+  --ease-inout-bold: var(--ds-easing-inout-bold);
+  --ease-in-practical: var(--ds-easing-in-practical);
+  --ease-out-practical: var(--ds-easing-out-practical);
+  /* So a bare `transition-colors` is the ADS hover: 150ms, eased out. */
+  --default-transition-duration: var(--ds-duration-short);
+  --default-transition-timing-function: var(--ds-easing-out-practical);
+
+  /* Page widths are ours (ADS publishes breakpoints but no page widths): data pages take the
+     window; runtime pages keep today's 72rem; create forms today's 36rem. */
+  --container-page-default: 72rem;
+  --container-page-narrow: 36rem;
+  /* Added, never reset: `md` (48rem) and `lg` (64rem) already equal ADS's `s` and `m`. */
+  --breakpoint-xs: 30rem;
+}
+
+@layer base {
+  html {
+    background-color: var(--ds-surface-sunken);
+    color: var(--ds-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The default edge for a bare `border` or `divide`, where Tailwind's preflight leaves
+     `currentColor`. */
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--ds-border);
+  }
+}
+
+/*
+ * One focus indicator for everything that can take focus — 2px of `--ds-border-focused`, clear
+ * of the control, shown for keyboard focus only. Unlayered, so no utility can take it away. A
+ * control whose edge touches its container's clip adds `focus-inset` to draw it inside instead.
+ * Not on `tabindex="-1"`: that is a place the page moves the focus to — a new page's title,
+ * `<main>` — so a reader starts there, and a ring around a heading would say it can be pressed.
+ */
+:where([tabindex="-1"]:not(a, button, input, select, textarea, summary)):focus-visible {
+  outline: none;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: var(--ds-border-width-focused) solid var(--ds-border-focused);
+  outline-offset: 2px;
+}
+
+:where(.focus-inset):focus-visible {
+  outline-offset: calc(-1 * var(--ds-border-width-focused));
+}
+
+/*
+ * A field that takes text has no ring: a browser counts a click into it as keyboard focus, so the
+ * blue ring showed on every click. Its focus is its edge instead, the selected border at the
+ * focused width, drawn inside so nothing moves; with the caret, that says where typing goes
+ * (WCAG 2.4.7). An invalid field draws the same edge in its red. Forced colours keep the ring
+ * (below).
+ */
+@media not (forced-colors: active) {
+  :where(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="file"],
+      [type="color"]
+    ),
+    textarea,
+    select
+  ):focus-visible {
+    outline: none;
+  }
+
+  :where(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="file"],
+      [type="color"]
+    ),
+    textarea,
+    select
+  ):focus-visible:not([aria-invalid="true"]) {
+    border-color: var(--ds-border-selected);
+    box-shadow: inset 0 0 0 calc(var(--ds-border-width-focused) - var(--ds-border-width))
+      var(--ds-border-selected);
+  }
+
+  :where(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="file"],
+      [type="color"]
+    ),
+    textarea,
+    select
+  ):focus-visible[aria-invalid="true"] {
+    border-color: var(--ds-border-danger);
+    box-shadow: inset 0 0 0 calc(var(--ds-border-width-focused) - var(--ds-border-width))
+      var(--ds-border-danger);
+  }
+}
+
+/*
+ * The phone's tab bar is in the page's flow, so what floats at the window's foot (the flags, the
+ * assistant's Show-me bar) rises above it while it is on the page: its row (`TabBar`'s
+ * `min-h-14`), its top border, and the home indicator's inset below it.
+ */
+:root:has([data-tab-bar]) {
+  --tab-bar-clearance: calc(3.5rem + 1px + env(safe-area-inset-bottom));
+}
+
+@media (forced-colors: active) {
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline-color: Highlight;
+  }
+}

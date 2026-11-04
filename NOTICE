@@ -1,0 +1,67 @@
+factorial
+Copyright 2026 Lean Innovation Labs LLC
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+-------------------------------------------------------------------------------
+Third-party software in the container image
+-------------------------------------------------------------------------------
+
+The image built from ./Dockerfile includes the software below. Each part stays
+under its own license, and none of it is licensed under the Apache License by
+this project.
+
+- Claude Code CLI (@anthropic-ai/claude-code), Copyright Anthropic PBC.
+  Proprietary software, used under Anthropic's Commercial Terms of Service:
+  https://www.anthropic.com/legal/commercial-terms
+
+- OpenAI Codex CLI, Copyright OpenAI. Apache License, Version 2.0:
+  https://github.com/openai/codex
+
+- Node.js, Copyright Node.js contributors. MIT License, with the licenses of
+  its bundled dependencies: https://github.com/nodejs/node/blob/main/LICENSE
+
+- uv, Copyright Astral Software Inc. MIT License or Apache License,
+  Version 2.0: https://github.com/astral-sh/uv
+
+- s6-overlay, Copyright just-containers. ISC License:
+  https://github.com/just-containers/s6-overlay
+
+- The dashboard, which bundles npm packages (React and others, most of them
+  under the MIT License) and the Inter, JetBrains Mono and Roboto fonts (SIL
+  Open Font License 1.1). The build of the dashboard writes the name, version
+  and full licence text of each one to /app/ui/dist/third-party-licenses.txt,
+  which the API also serves at /factorial/third-party-licenses.txt.
+
+The image also includes Debian packages and Python and npm dependencies, each
+under the license its package declares.
+
+-------------------------------------------------------------------------------
+GitHub Spec Kit
+-------------------------------------------------------------------------------
+
+The plan agent's speckit-specify, speckit-clarify and speckit-tasks skills are
+adapted from GitHub Spec Kit (https://github.com/github/spec-kit), which carries
+this notice:
+
+MIT License
+
+Copyright GitHub, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

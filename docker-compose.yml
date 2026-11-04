@@ -1,0 +1,75 @@
+# The app on a laptop as it runs on ECS (tech-stack decision 73): `app` is the whole image, every
+# service under s6 in one container as the ECS task runs it (decision 52), and `database` stands
+# where RDS stands, the image's own Postgres in a container of its own. Both are the image
+# `make image` builds. `make up` starts them and `make down` stops them; never `down -v`.
+# - Configuration arrives as compose secrets at /run/secrets, the paths init copies from. Never
+#   `env_file:`: every agent run inherits the app's environment, and `.env` holds vendor keys that
+#   init does not move. The Makefile passes `--env-file /dev/null`, so compose does not read `.env`
+#   for interpolation either.
+# - `factorial-data` is the volume a plain `docker run` used, so its data carries over. Two
+#   containers that run Postgres on it corrupt the cluster: `make up` and `make db` refuse while a
+#   container outside this project mounts it.
+# - `database` is host development's database too: `make db` starts it alone on 127.0.0.1:5432
+#   for `make dev` (decision 13). The stack and `make dev` use the same host ports and the one
+#   worker lock, so `make down` before `make dev`.
+# No public URL, therefore no inbound webhooks: forward them with `gh webhook forward`.
+
+name: factorial
+
+services:
+  database:
+    image: factorial:local
+    pull_policy: never
+    entrypoint: ["/bin/sh", "/etc/factorial/postgres-standalone"]
+    stop_signal: SIGINT
+    stop_grace_period: 30s
+    volumes:
+      - factorial-data:/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD", "/usr/lib/postgresql/17/bin/pg_isready", "-q", "-h", "127.0.0.1", "-U", "factory", "-d", "factory"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 60s
+
+  app:
+    image: factorial:local
+    pull_policy: never
+    environment:
+      # Not a secret: the URL env.sh exports then names this service, and the app's own Postgres
+      # stays paused, as it does on RDS.
+      FACTORIAL_IMAGE_DATABASE_HOST: database
+    secrets:
+      - source: factorial_env
+        target: factorial.env
+    volumes:
+      - factorial-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8001"
+    # codex_cli's sandbox needs user namespaces (decision 52); the ECS task runs no codex_cli.
+    security_opt:
+      - seccomp=./docker/seccomp.json
+    # s6 waits for each service at a stop, and the terminal gateway can take 45 s to close the tmux
+    # clients it attached.
+    stop_grace_period: 60s
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8000/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 180s
+
+volumes:
+  factorial-data:
+    external: true
+    name: factorial-data
+
+secrets:
+  factorial_env:
+    file: ./.env

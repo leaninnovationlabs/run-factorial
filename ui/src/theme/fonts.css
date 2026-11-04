@@ -1,0 +1,54 @@
+/**
+ * Web fonts — nothing else.
+ *
+ * Every font is self-hosted (decision 50): one set of glyph metrics on every OS, which matters
+ * where a figure's width is reserved glyph by glyph (`format.ts`'s `figureSizers`), and no
+ * third-party origin, which an air-gapped install cannot reach. Latin subset, OFL — the licences
+ * sit beside the files. Inter and JetBrains Mono are variable fonts, each with a metric-matched
+ * fallback face, so the swap from the system font moves nothing.
+ */
+
+/* Google's sign-in button asks for Roboto 500 on its label; every theme. */
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url("./fonts/roboto-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("./fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+}
+
+/* Arial and Courier New scaled to Inter's and JetBrains Mono's metrics, so the text laid out
+   before the web font arrives occupies the same lines it will after. */
+@font-face {
+  font-family: "Inter fallback";
+  src: local("Arial");
+  size-adjust: 107.12%;
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "JetBrains Mono fallback";
+  src: local("Courier New");
+  size-adjust: 100%;
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
+}

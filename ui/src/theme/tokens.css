@@ -1,0 +1,782 @@
+/**
+ * The dashboard's design tokens — the one file that holds colour, shape, space and motion values
+ * (decision 50). Components name a role through Tailwind (`text-subtle`, `bg-surface-sunken`,
+ * `border-input`; the mapping is `index.css`'s `@theme inline`), never a palette step or a hex.
+ *
+ * The values are copied from the Atlassian Design System's `@atlaskit/tokens` 16.12.0
+ * (Apache-2.0), `dist/esm/artifacts/themes`: `atlassian-light` and `atlassian-dark` with their
+ * `-finesse` overrides layered on, and the `-increased-contrast` themes under
+ * `prefers-contrast: more`. Only the tokens the dashboard uses are copied, under their ADS names,
+ * so a later move to the package changes this file and nothing that reads it. Re-sync by hand
+ * against a newer release: the names stay, the values move.
+ *
+ * Three theme states, set by `ThemeProvider` on the document element: `data-theme="light"`,
+ * `data-theme="dark"`, or no attribute at all, which is "match the system" and is answered here
+ * by `prefers-color-scheme` so no script has to run before the first paint. The dark values are
+ * written twice for that reason — once for the explicit choice, once for the system — and
+ * `foundations.test.ts` holds the two copies equal. `color-scheme` is set with them, so scrollbars
+ * and native controls follow the theme too.
+ *
+ * Spacing stays on Tailwind's own scale (`--spacing: 0.25rem`), which already IS the ADS scale:
+ * step 0.5 = space.025 (2px), 1 = space.050, 1.5 = space.075, 2 = space.100, 3 = space.150,
+ * 4 = space.200, 5 = space.250, 6 = space.300, 8 = space.400, 10 = space.500, 12 = space.600,
+ * 16 = space.800, 20 = space.1000. Hand-written CSS uses the `--ds-space-*` names below.
+ */
+
+/* Values every theme shares: shape, space, type weights and motion. */
+:root {
+  --ds-radius-xsmall: 0.125rem;
+  --ds-radius-small: 0.25rem;
+  --ds-radius-medium: 0.375rem;
+  --ds-radius-large: 0.5rem;
+  --ds-radius-xlarge: 0.75rem;
+  --ds-radius-full: 624.9375rem;
+  --ds-border-width: 0.0625rem;
+  --ds-border-width-selected: 0.125rem;
+  --ds-border-width-focused: 0.125rem;
+
+  --ds-space-0: 0rem;
+  --ds-space-025: 0.125rem;
+  --ds-space-050: 0.25rem;
+  --ds-space-075: 0.375rem;
+  --ds-space-100: 0.5rem;
+  --ds-space-150: 0.75rem;
+  --ds-space-200: 1rem;
+  --ds-space-250: 1.25rem;
+  --ds-space-300: 1.5rem;
+  --ds-space-400: 2rem;
+  --ds-space-500: 2.5rem;
+  --ds-space-600: 3rem;
+  --ds-space-800: 4rem;
+  --ds-space-1000: 5rem;
+
+  --ds-font-weight-regular: 400;
+  --ds-font-weight-medium: 500;
+  --ds-font-weight-semibold: 600;
+  /* A variable font's weight: the ADS bold sits between semibold and Tailwind's 700. */
+  --ds-font-weight-bold: 653;
+
+  --ds-duration-xxshort: 50ms;
+  --ds-duration-xshort: 100ms;
+  --ds-duration-short: 150ms;
+  --ds-duration-medium: 200ms;
+  --ds-duration-long: 250ms;
+  --ds-duration-xlong: 400ms;
+  --ds-easing-out-bold: cubic-bezier(0, 0.4, 0, 1);
+  --ds-easing-inout-bold: cubic-bezier(0.4, 0, 0, 1);
+  --ds-easing-in-practical: cubic-bezier(0.6, 0, 0.8, 0.6);
+  --ds-easing-out-practical: cubic-bezier(0.4, 1, 0.6, 1);
+
+  /* The attention beats (`theme/motion.css`). ADS has no looping motion, so these two are the
+     dashboard's own: one out-and-back of a selection's pips, and one dim of "you are here". */
+  --motion-pulse: 0.92s;
+  --motion-blink: 1.6s;
+}
+
+/* Light: the default, and the answer when nothing else matches. */
+:root {
+  color-scheme: light;
+
+  /* Text. `text-subtlest` is the floor for readable text; `link` is blue and underlined inline, because it is only 2.76:1 against body text. */
+  --ds-text: #292a2e;
+  --ds-text-subtle: #505258;
+  --ds-text-subtlest: #6b6e76;
+  --ds-text-disabled: #080f214a;
+  --ds-text-inverse: #ffffff;
+  --ds-text-selected: #292a2e;
+  --ds-text-brand: #1868db;
+  --ds-text-warning-inverse: #292a2e;
+  --ds-text-danger: #ae2e24;
+  --ds-text-warning: #9e4c00;
+  --ds-text-success: #4c6b1f;
+  --ds-text-information: #1558bc;
+  --ds-text-discovery: #803fa5;
+
+  /* Icons. Brighter than their text twins; a status icon pairs with every status colour, so colour is never the only signal. */
+  --ds-icon: #292a2e;
+  --ds-icon-subtle: #505258;
+  --ds-icon-subtlest: #6b6e76;
+  --ds-icon-inverse: #ffffff;
+  --ds-icon-disabled: #080f214a;
+  --ds-icon-selected: #292a2e;
+  --ds-icon-brand: #1868db;
+  --ds-icon-warning-inverse: #292a2e;
+  --ds-icon-danger: #c9372c;
+  --ds-icon-warning: #e06c00;
+  --ds-icon-success: #6a9a23;
+  --ds-icon-information: #357de8;
+  --ds-icon-discovery: #af59e1;
+
+  /* Borders and focus. `border-input` is 3.24:1 on white, the WCAG 1.4.11 floor for a field's edge; `border-focused` always pairs with `border-width-focused`. */
+  --ds-border: #0b120e24;
+  --ds-border-bold: #7d818a;
+  --ds-border-input: #8c8f97;
+  --ds-border-focused: #4688ec;
+  --ds-border-selected: #292a2e;
+  --ds-border-disabled: #0515240f;
+  --ds-border-inverse: #ffffff;
+  --ds-border-brand: #1868db;
+  --ds-border-danger: #e2483d;
+  --ds-border-warning: #e06c00;
+  --ds-border-success: #6a9a23;
+  --ds-border-information: #357de8;
+  --ds-border-discovery: #af59e1;
+
+  /* Backgrounds. Hover, pressed and selected come from the finesse set as one family: mixing sets makes selected equal the default hover. The primary button is neutral-bold (decision 50); brand-bold is kept for links' pressed ground and a future accent. */
+  --ds-background-neutral: #0515240f;
+  --ds-background-neutral-hovered: #0b120e24;
+  --ds-background-neutral-pressed: #080f214a;
+  --ds-background-neutral-subtle: #00000000;
+  --ds-background-neutral-subtle-hovered: #17171708;
+  --ds-background-neutral-subtle-pressed: #0515240f;
+  --ds-background-neutral-bold: #292a2e;
+  --ds-background-neutral-bold-hovered: #3b3d42;
+  --ds-background-neutral-bold-pressed: #505258;
+  --ds-background-brand-bold: #1868db;
+  --ds-background-brand-bold-hovered: #1558bc;
+  --ds-background-brand-bold-pressed: #144794;
+  --ds-background-brand-subtlest: #e9f2fe;
+  --ds-background-selected: #0515240f;
+  --ds-background-selected-hovered: #0b120e24;
+  --ds-background-selected-pressed: #080f214a;
+  --ds-background-disabled: #0515240f;
+  --ds-background-input: #ffffff;
+  --ds-background-input-hovered: #f8f8f8;
+  --ds-background-input-pressed: #ffffff;
+  --ds-background-inverse-subtle: #00000029;
+  --ds-background-inverse-subtle-hovered: #0000003d;
+  --ds-background-inverse-subtle-pressed: #00000052;
+  --ds-background-danger: #ffeceb;
+  --ds-background-danger-hovered: #ffd5d2;
+  --ds-background-danger-pressed: #ffb8b2;
+  --ds-background-warning: #fff5db;
+  --ds-background-warning-hovered: #fce4a6;
+  --ds-background-warning-pressed: #fbd779;
+  --ds-background-success: #efffd6;
+  --ds-background-success-hovered: #d3f1a7;
+  --ds-background-success-pressed: #bde97c;
+  --ds-background-information: #e9f2fe;
+  --ds-background-information-hovered: #cfe1fd;
+  --ds-background-information-pressed: #adcbfb;
+  --ds-background-discovery: #f8eefe;
+  --ds-background-discovery-hovered: #eed7fc;
+  --ds-background-discovery-pressed: #e3bdfa;
+  --ds-background-danger-bold: #c9372c;
+  --ds-background-danger-bold-hovered: #ae2e24;
+  --ds-background-danger-bold-pressed: #872821;
+  --ds-background-warning-bold: #fbc828;
+  --ds-background-warning-bold-hovered: #fca700;
+  --ds-background-warning-bold-pressed: #f68909;
+  --ds-background-success-bold: #5b7f24;
+  --ds-background-success-bold-hovered: #4c6b1f;
+  --ds-background-success-bold-pressed: #3f5224;
+  --ds-background-information-bold: #1868db;
+  --ds-background-information-bold-hovered: #1558bc;
+  --ds-background-information-bold-pressed: #144794;
+  --ds-background-discovery-bold: #964ac0;
+  --ds-background-discovery-bold-hovered: #803fa5;
+  --ds-background-discovery-bold-pressed: #673286;
+
+  /* Surfaces and elevation. A panel is `surface` with a border and no shadow; a shadow means the thing moves or floats (raised: a card; overlay: a drawer, dialog, menu or flag). */
+  --ds-surface: #ffffff;
+  --ds-surface-hovered: #f0f1f2;
+  --ds-surface-pressed: #dddee1;
+  --ds-surface-sunken: #f8f8f8;
+  --ds-surface-raised: #ffffff;
+  --ds-surface-raised-hovered: #f0f1f2;
+  --ds-surface-raised-pressed: #dddee1;
+  --ds-surface-overlay: #ffffff;
+  --ds-surface-overlay-hovered: #f0f1f2;
+  --ds-surface-overlay-pressed: #dddee1;
+  /* Not an ADS token: the role a table's column heads paint, named from the ADS values above.
+     In light the page itself is `surface-sunken`, so a sunken head on a white panel read as a
+     gap in the panel; a step darker, it reads as the panel's own band. Dark keeps `surface-sunken`,
+     already a step off its lighter panel. */
+  --table-head: var(--ds-background-neutral);
+  --ds-shadow-raised: 0px 1px 1px #1e1f2140, 0px 0px 1px #1e1f214f;
+  --ds-shadow-overlay: 0px 8px 12px #1e1f2126, 0px 0px 1px #1e1f214f;
+  --ds-shadow-overflow: 0px 0px 8px #1e1f2129, 0px 0px 1px #1e1f211f;
+  --ds-shadow-overflow-perimeter: #1e1f211f;
+  --ds-shadow-overflow-spread: #1e1f2129;
+  --ds-blanket: #050c1f75;
+  --ds-skeleton: #0515240f;
+  --ds-skeleton-subtle: #17171708;
+
+  /* Data visualisation. The board's lanes and heat ramp and the flow graph's node kinds read these, never a hex of their own. */
+  --ds-chart-neutral: #8c8f97;
+  --ds-chart-brand: #357de8;
+  --ds-chart-danger: #e2483d;
+  --ds-chart-warning: #f68909;
+  --ds-chart-success: #82b536;
+  --ds-chart-information: #357de8;
+  --ds-chart-discovery: #bf63f3;
+  --ds-chart-danger-bold: #872821;
+  --ds-chart-warning-bold: #bd5b00;
+  --ds-chart-success-bold: #5b7f24;
+  --ds-chart-information-bold: #1558bc;
+  --ds-chart-discovery-bold: #803fa5;
+  --ds-chart-gray-bold: #8c8f97;
+  --ds-chart-blue-bold: #4688ec;
+  --ds-chart-teal-bold: #2898bd;
+  --ds-chart-green-bold: #22a06b;
+  --ds-chart-lime-bold: #6a9a23;
+  --ds-chart-yellow-bold: #b38600;
+  --ds-chart-orange-bold: #e06c00;
+  --ds-chart-red-bold: #f15b50;
+  --ds-chart-magenta-bold: #da62ac;
+  --ds-chart-purple-bold: #bf63f3;
+
+  /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
+  --ds-opacity-disabled: 0.4;
+  --ds-opacity-loading: 0.2;
+}
+
+/* Dark, chosen. Colour only (decision 50): type and shape do not change with the theme. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Text. `text-subtlest` is the floor for readable text; `link` is blue and underlined inline, because it is only 2.76:1 against body text. */
+  --ds-text: #cecfd2;
+  --ds-text-subtle: #a9abaf;
+  --ds-text-subtlest: #96999e;
+  --ds-text-disabled: #e5e9f640;
+  --ds-text-inverse: #1f1f21;
+  --ds-text-selected: #cecfd2;
+  --ds-text-brand: #669df1;
+  --ds-text-warning-inverse: #1f1f21;
+  --ds-text-danger: #fd9891;
+  --ds-text-warning: #fbc828;
+  --ds-text-success: #b3df72;
+  --ds-text-information: #8fb8f6;
+  --ds-text-discovery: #d8a0f7;
+
+  /* Icons. Brighter than their text twins; a status icon pairs with every status colour, so colour is never the only signal. */
+  --ds-icon: #cecfd2;
+  --ds-icon-subtle: #a9abaf;
+  --ds-icon-subtlest: #96999e;
+  --ds-icon-inverse: #1f1f21;
+  --ds-icon-disabled: #e5e9f640;
+  --ds-icon-selected: #cecfd2;
+  --ds-icon-brand: #669df1;
+  --ds-icon-warning-inverse: #1f1f21;
+  --ds-icon-danger: #f15b50;
+  --ds-icon-warning: #fbc828;
+  --ds-icon-success: #82b536;
+  --ds-icon-information: #4688ec;
+  --ds-icon-discovery: #bf63f3;
+
+  /* Borders and focus. `border-input` is 3.24:1 on white, the WCAG 1.4.11 floor for a field's edge; `border-focused` always pairs with `border-width-focused`. */
+  --ds-border: #e3e4f21f;
+  --ds-border-bold: #7e8188;
+  --ds-border-input: #7e8188;
+  --ds-border-focused: #8fb8f6;
+  --ds-border-selected: #cecfd2;
+  --ds-border-disabled: #ceced912;
+  --ds-border-inverse: #18191a;
+  --ds-border-brand: #669df1;
+  --ds-border-danger: #f15b50;
+  --ds-border-warning: #f68909;
+  --ds-border-success: #82b536;
+  --ds-border-information: #4688ec;
+  --ds-border-discovery: #bf63f3;
+
+  /* Backgrounds. Hover, pressed and selected come from the finesse set as one family: mixing sets makes selected equal the default hover. The primary button is neutral-bold (decision 50); brand-bold is kept for links' pressed ground and a future accent. */
+  --ds-background-neutral: #ceced912;
+  --ds-background-neutral-hovered: #e3e4f21f;
+  --ds-background-neutral-pressed: #e5e9f640;
+  --ds-background-neutral-subtle: #00000000;
+  --ds-background-neutral-subtle-hovered: #bdbdbd0a;
+  --ds-background-neutral-subtle-pressed: #ceced912;
+  --ds-background-neutral-bold: #cecfd2;
+  --ds-background-neutral-bold-hovered: #bfc1c4;
+  --ds-background-neutral-bold-pressed: #a9abaf;
+  --ds-background-brand-bold: #669df1;
+  --ds-background-brand-bold-hovered: #8fb8f6;
+  --ds-background-brand-bold-pressed: #adcbfb;
+  --ds-background-brand-subtlest: #1c2b42;
+  --ds-background-selected: #ceced912;
+  --ds-background-selected-hovered: #e3e4f21f;
+  --ds-background-selected-pressed: #e5e9f640;
+  --ds-background-disabled: #e3e4f21f;
+  --ds-background-input: #242528;
+  --ds-background-input-hovered: #2b2c2f;
+  --ds-background-input-pressed: #242528;
+  --ds-background-inverse-subtle: #ffffff29;
+  --ds-background-inverse-subtle-hovered: #ffffff3d;
+  --ds-background-inverse-subtle-pressed: #ffffff52;
+  --ds-background-danger: #42221f;
+  --ds-background-danger-hovered: #5d1f1a;
+  --ds-background-danger-pressed: #872821;
+  --ds-background-warning: #3a2c1f;
+  --ds-background-warning-hovered: #693200;
+  --ds-background-warning-pressed: #7a3b00;
+  --ds-background-success: #28311b;
+  --ds-background-success-hovered: #37471f;
+  --ds-background-success-pressed: #3f5224;
+  --ds-background-information: #1c2b42;
+  --ds-background-information-hovered: #123263;
+  --ds-background-information-pressed: #144794;
+  --ds-background-discovery: #35243f;
+  --ds-background-discovery-hovered: #48245d;
+  --ds-background-discovery-pressed: #673286;
+  --ds-background-danger-bold: #f87168;
+  --ds-background-danger-bold-hovered: #fd9891;
+  --ds-background-danger-bold-pressed: #ffb8b2;
+  --ds-background-warning-bold: #fbc828;
+  --ds-background-warning-bold-hovered: #fca700;
+  --ds-background-warning-bold-pressed: #f68909;
+  --ds-background-success-bold: #94c748;
+  --ds-background-success-bold-hovered: #b3df72;
+  --ds-background-success-bold-pressed: #bde97c;
+  --ds-background-information-bold: #669df1;
+  --ds-background-information-bold-hovered: #8fb8f6;
+  --ds-background-information-bold-pressed: #adcbfb;
+  --ds-background-discovery-bold: #c97cf4;
+  --ds-background-discovery-bold-hovered: #d8a0f7;
+  --ds-background-discovery-bold-pressed: #e3bdfa;
+
+  /* Surfaces and elevation. A panel is `surface` with a border and no shadow; a shadow means the thing moves or floats (raised: a card; overlay: a drawer, dialog, menu or flag). */
+  --ds-surface: #1f1f21;
+  --ds-surface-hovered: #242528;
+  --ds-surface-pressed: #2b2c2f;
+  --ds-surface-sunken: #18191a;
+  --ds-surface-raised: #242528;
+  --ds-surface-raised-hovered: #2b2c2f;
+  --ds-surface-raised-pressed: #303134;
+  --ds-surface-overlay: #2b2c2f;
+  --ds-surface-overlay-hovered: #303134;
+  --ds-surface-overlay-pressed: #3d3f43;
+  --table-head: var(--ds-surface-sunken);
+  --ds-shadow-raised: 0px 0px 0px 1px #00000000, 0px 1px 1px #01040480, 0px 0px 1px #01040480;
+  --ds-shadow-overlay: 0px 0px 0px 1px #bdbdbd1f, 0px 8px 12px #0104045c, 0px 0px 1px 1px #01040480;
+  --ds-shadow-overflow: 0px 0px 12px #0104048f, 0px 0px 1px #01040480;
+  --ds-shadow-overflow-perimeter: #01040480;
+  --ds-shadow-overflow-spread: #0104048f;
+  --ds-blanket: #10121499;
+  --ds-skeleton: #ceced912;
+  --ds-skeleton-subtle: #bdbdbd0a;
+
+  /* Data visualisation. The board's lanes and heat ramp and the flow graph's node kinds read these, never a hex of their own. */
+  --ds-chart-neutral: #7e8188;
+  --ds-chart-brand: #4688ec;
+  --ds-chart-danger: #e2483d;
+  --ds-chart-warning: #f68909;
+  --ds-chart-success: #82b536;
+  --ds-chart-information: #4688ec;
+  --ds-chart-discovery: #bf63f3;
+  --ds-chart-danger-bold: #ffb8b2;
+  --ds-chart-warning-bold: #fbc828;
+  --ds-chart-success-bold: #b3df72;
+  --ds-chart-information-bold: #8fb8f6;
+  --ds-chart-discovery-bold: #d8a0f7;
+  --ds-chart-gray-bold: #7e8188;
+  --ds-chart-blue-bold: #357de8;
+  --ds-chart-teal-bold: #42b2d7;
+  --ds-chart-green-bold: #2abb7f;
+  --ds-chart-lime-bold: #82b536;
+  --ds-chart-yellow-bold: #cf9f02;
+  --ds-chart-orange-bold: #f68909;
+  --ds-chart-red-bold: #e2483d;
+  --ds-chart-magenta-bold: #cd519d;
+  --ds-chart-purple-bold: #af59e1;
+
+  /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
+  --ds-opacity-disabled: 0.4;
+  --ds-opacity-loading: 0.2;
+}
+
+/* Dark, from the system: the same values as the block above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    /* Text. `text-subtlest` is the floor for readable text; `link` is blue and underlined inline, because it is only 2.76:1 against body text. */
+    --ds-text: #cecfd2;
+    --ds-text-subtle: #a9abaf;
+    --ds-text-subtlest: #96999e;
+    --ds-text-disabled: #e5e9f640;
+    --ds-text-inverse: #1f1f21;
+    --ds-text-selected: #cecfd2;
+    --ds-text-brand: #669df1;
+    --ds-text-warning-inverse: #1f1f21;
+    --ds-text-danger: #fd9891;
+    --ds-text-warning: #fbc828;
+    --ds-text-success: #b3df72;
+    --ds-text-information: #8fb8f6;
+    --ds-text-discovery: #d8a0f7;
+
+    /* Icons. Brighter than their text twins; a status icon pairs with every status colour, so colour is never the only signal. */
+    --ds-icon: #cecfd2;
+    --ds-icon-subtle: #a9abaf;
+    --ds-icon-subtlest: #96999e;
+    --ds-icon-inverse: #1f1f21;
+    --ds-icon-disabled: #e5e9f640;
+    --ds-icon-selected: #cecfd2;
+    --ds-icon-brand: #669df1;
+    --ds-icon-warning-inverse: #1f1f21;
+    --ds-icon-danger: #f15b50;
+    --ds-icon-warning: #fbc828;
+    --ds-icon-success: #82b536;
+    --ds-icon-information: #4688ec;
+    --ds-icon-discovery: #bf63f3;
+
+    /* Borders and focus. `border-input` is 3.24:1 on white, the WCAG 1.4.11 floor for a field's edge; `border-focused` always pairs with `border-width-focused`. */
+    --ds-border: #e3e4f21f;
+    --ds-border-bold: #7e8188;
+    --ds-border-input: #7e8188;
+    --ds-border-focused: #8fb8f6;
+    --ds-border-selected: #cecfd2;
+    --ds-border-disabled: #ceced912;
+    --ds-border-inverse: #18191a;
+    --ds-border-brand: #669df1;
+    --ds-border-danger: #f15b50;
+    --ds-border-warning: #f68909;
+    --ds-border-success: #82b536;
+    --ds-border-information: #4688ec;
+    --ds-border-discovery: #bf63f3;
+
+    /* Backgrounds. Hover, pressed and selected come from the finesse set as one family: mixing sets makes selected equal the default hover. The primary button is neutral-bold (decision 50); brand-bold is kept for links' pressed ground and a future accent. */
+    --ds-background-neutral: #ceced912;
+    --ds-background-neutral-hovered: #e3e4f21f;
+    --ds-background-neutral-pressed: #e5e9f640;
+    --ds-background-neutral-subtle: #00000000;
+    --ds-background-neutral-subtle-hovered: #bdbdbd0a;
+    --ds-background-neutral-subtle-pressed: #ceced912;
+    --ds-background-neutral-bold: #cecfd2;
+    --ds-background-neutral-bold-hovered: #bfc1c4;
+    --ds-background-neutral-bold-pressed: #a9abaf;
+    --ds-background-brand-bold: #669df1;
+    --ds-background-brand-bold-hovered: #8fb8f6;
+    --ds-background-brand-bold-pressed: #adcbfb;
+    --ds-background-brand-subtlest: #1c2b42;
+    --ds-background-selected: #ceced912;
+    --ds-background-selected-hovered: #e3e4f21f;
+    --ds-background-selected-pressed: #e5e9f640;
+    --ds-background-disabled: #e3e4f21f;
+    --ds-background-input: #242528;
+    --ds-background-input-hovered: #2b2c2f;
+    --ds-background-input-pressed: #242528;
+    --ds-background-inverse-subtle: #ffffff29;
+    --ds-background-inverse-subtle-hovered: #ffffff3d;
+    --ds-background-inverse-subtle-pressed: #ffffff52;
+    --ds-background-danger: #42221f;
+    --ds-background-danger-hovered: #5d1f1a;
+    --ds-background-danger-pressed: #872821;
+    --ds-background-warning: #3a2c1f;
+    --ds-background-warning-hovered: #693200;
+    --ds-background-warning-pressed: #7a3b00;
+    --ds-background-success: #28311b;
+    --ds-background-success-hovered: #37471f;
+    --ds-background-success-pressed: #3f5224;
+    --ds-background-information: #1c2b42;
+    --ds-background-information-hovered: #123263;
+    --ds-background-information-pressed: #144794;
+    --ds-background-discovery: #35243f;
+    --ds-background-discovery-hovered: #48245d;
+    --ds-background-discovery-pressed: #673286;
+    --ds-background-danger-bold: #f87168;
+    --ds-background-danger-bold-hovered: #fd9891;
+    --ds-background-danger-bold-pressed: #ffb8b2;
+    --ds-background-warning-bold: #fbc828;
+    --ds-background-warning-bold-hovered: #fca700;
+    --ds-background-warning-bold-pressed: #f68909;
+    --ds-background-success-bold: #94c748;
+    --ds-background-success-bold-hovered: #b3df72;
+    --ds-background-success-bold-pressed: #bde97c;
+    --ds-background-information-bold: #669df1;
+    --ds-background-information-bold-hovered: #8fb8f6;
+    --ds-background-information-bold-pressed: #adcbfb;
+    --ds-background-discovery-bold: #c97cf4;
+    --ds-background-discovery-bold-hovered: #d8a0f7;
+    --ds-background-discovery-bold-pressed: #e3bdfa;
+
+    /* Surfaces and elevation. A panel is `surface` with a border and no shadow; a shadow means the thing moves or floats (raised: a card; overlay: a drawer, dialog, menu or flag). */
+    --ds-surface: #1f1f21;
+    --ds-surface-hovered: #242528;
+    --ds-surface-pressed: #2b2c2f;
+    --ds-surface-sunken: #18191a;
+    --ds-surface-raised: #242528;
+    --ds-surface-raised-hovered: #2b2c2f;
+    --ds-surface-raised-pressed: #303134;
+    --ds-surface-overlay: #2b2c2f;
+    --ds-surface-overlay-hovered: #303134;
+    --ds-surface-overlay-pressed: #3d3f43;
+    --table-head: var(--ds-surface-sunken);
+    --ds-shadow-raised: 0px 0px 0px 1px #00000000, 0px 1px 1px #01040480, 0px 0px 1px #01040480;
+    --ds-shadow-overlay:
+      0px 0px 0px 1px #bdbdbd1f, 0px 8px 12px #0104045c, 0px 0px 1px 1px #01040480;
+    --ds-shadow-overflow: 0px 0px 12px #0104048f, 0px 0px 1px #01040480;
+    --ds-shadow-overflow-perimeter: #01040480;
+    --ds-shadow-overflow-spread: #0104048f;
+    --ds-blanket: #10121499;
+    --ds-skeleton: #ceced912;
+    --ds-skeleton-subtle: #bdbdbd0a;
+
+    /* Data visualisation. The board's lanes and heat ramp and the flow graph's node kinds read these, never a hex of their own. */
+    --ds-chart-neutral: #7e8188;
+    --ds-chart-brand: #4688ec;
+    --ds-chart-danger: #e2483d;
+    --ds-chart-warning: #f68909;
+    --ds-chart-success: #82b536;
+    --ds-chart-information: #4688ec;
+    --ds-chart-discovery: #bf63f3;
+    --ds-chart-danger-bold: #ffb8b2;
+    --ds-chart-warning-bold: #fbc828;
+    --ds-chart-success-bold: #b3df72;
+    --ds-chart-information-bold: #8fb8f6;
+    --ds-chart-discovery-bold: #d8a0f7;
+    --ds-chart-gray-bold: #7e8188;
+    --ds-chart-blue-bold: #357de8;
+    --ds-chart-teal-bold: #42b2d7;
+    --ds-chart-green-bold: #2abb7f;
+    --ds-chart-lime-bold: #82b536;
+    --ds-chart-yellow-bold: #cf9f02;
+    --ds-chart-orange-bold: #f68909;
+    --ds-chart-red-bold: #e2483d;
+    --ds-chart-magenta-bold: #cd519d;
+    --ds-chart-purple-bold: #af59e1;
+
+    /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
+    --ds-opacity-disabled: 0.4;
+    --ds-opacity-loading: 0.2;
+  }
+}
+
+/* Increased contrast, in whichever colour mode applies: only the tokens that change. */
+@media (prefers-contrast: more) {
+  :root:not([data-theme="dark"]) {
+    --ds-text: #1e1f21;
+    --ds-text-subtle: #292a2e;
+    --ds-text-subtlest: #3b3d42;
+    --ds-text-selected: #123263;
+    --ds-text-brand: #123263;
+    --ds-text-warning-inverse: #ffffff;
+    --ds-text-danger: #5d1f1a;
+    --ds-text-warning: #693200;
+    --ds-text-success: #164b35;
+    --ds-text-information: #123263;
+    --ds-text-discovery: #48245d;
+    --ds-icon-subtle: #3b3d42;
+    --ds-icon-subtlest: #3b3d42;
+    --ds-icon-selected: #1558bc;
+    --ds-icon-brand: #1558bc;
+    --ds-icon-warning-inverse: #ffffff;
+    --ds-icon-warning: #9e4c00;
+    --ds-icon-success: #216e4e;
+    --ds-icon-information: #1558bc;
+    --ds-icon-discovery: #964ac0;
+    --ds-border: #e9f0fb5c;
+    --ds-border-bold: #505258;
+    --ds-border-input: #505258;
+    --ds-border-focused: #1558bc;
+    --ds-border-selected: #1558bc;
+    --ds-border-disabled: #0b120e24;
+    --ds-border-brand: #1558bc;
+    --ds-border-danger: #c9372c;
+    --ds-border-warning: #9e4c00;
+    --ds-border-success: #216e4e;
+    --ds-border-information: #1558bc;
+    --ds-border-discovery: #964ac0;
+    --ds-background-neutral-subtle-hovered: #0515240f;
+    --ds-background-neutral-subtle-pressed: #0b120e24;
+    --ds-background-brand-bold: #123263;
+    --ds-background-brand-bold-hovered: #1c2b42;
+    --ds-background-brand-bold-pressed: #022353;
+    --ds-background-selected: #e9f2fe;
+    --ds-background-selected-hovered: #cfe1fd;
+    --ds-background-selected-pressed: #8fb8f6;
+    --ds-background-danger-bold: #5d1f1a;
+    --ds-background-danger-bold-hovered: #42221f;
+    --ds-background-danger-bold-pressed: #49120c;
+    --ds-background-warning-bold: #533f04;
+    --ds-background-warning-bold-hovered: #332e1b;
+    --ds-background-warning-bold-pressed: #342800;
+    --ds-background-success-bold: #164b35;
+    --ds-background-success-bold-hovered: #1c3329;
+    --ds-background-success-bold-pressed: #0f3324;
+    --ds-background-information-bold: #123263;
+    --ds-background-information-bold-hovered: #1c2b42;
+    --ds-background-information-bold-pressed: #022353;
+    --ds-background-discovery-bold: #48245d;
+    --ds-background-discovery-bold-hovered: #35243f;
+    --ds-background-discovery-bold-pressed: #211a47;
+    --ds-surface-sunken: #fcfdfe;
+    --ds-shadow-raised: inset 0px 0px 0px 1px #1e1f2180;
+    --ds-shadow-overlay: inset 0px 0px 0px 1px #1e1f2180;
+    --ds-shadow-overflow: 0px 0px 8px #1e1f2129;
+    --ds-chart-neutral: #6b6e76;
+    --ds-chart-brand: #1868db;
+    --ds-chart-danger: #c9372c;
+    --ds-chart-warning: #7f5f01;
+    --ds-chart-success: #216e4e;
+    --ds-chart-information: #1868db;
+    --ds-chart-discovery: #964ac0;
+    --ds-chart-danger-bold: #5d1f1a;
+    --ds-chart-warning-bold: #533f04;
+    --ds-chart-success-bold: #164b35;
+    --ds-chart-information-bold: #123263;
+    --ds-chart-discovery-bold: #48245d;
+    --ds-chart-gray-bold: #6b6e76;
+    --ds-chart-blue-bold: #1558bc;
+    --ds-chart-teal-bold: #206a83;
+    --ds-chart-green-bold: #216e4e;
+    --ds-chart-lime-bold: #4c6b1f;
+    --ds-chart-yellow-bold: #7f5f01;
+    --ds-chart-orange-bold: #9e4c00;
+    --ds-chart-red-bold: #ae2e24;
+    --ds-chart-magenta-bold: #943d73;
+    --ds-chart-purple-bold: #803fa5;
+  }
+
+  :root[data-theme="dark"] {
+    --ds-text: #e2e3e4;
+    --ds-text-subtle: #cecfd2;
+    --ds-text-subtlest: #bfc1c4;
+    --ds-text-selected: #cfe1fd;
+    --ds-text-brand: #cfe1fd;
+    --ds-text-warning-inverse: #18191a;
+    --ds-text-danger: #ffd5d2;
+    --ds-text-warning: #fce4a6;
+    --ds-text-success: #baf3db;
+    --ds-text-information: #cfe1fd;
+    --ds-text-discovery: #eed7fc;
+    --ds-icon-subtle: #bfc1c4;
+    --ds-icon-subtlest: #bfc1c4;
+    --ds-icon-selected: #8fb8f6;
+    --ds-icon-brand: #8fb8f6;
+    --ds-icon-warning-inverse: #18191a;
+    --ds-icon-danger: #f87168;
+    --ds-icon-success: #7ee2b8;
+    --ds-icon-information: #8fb8f6;
+    --ds-icon-discovery: #c97cf4;
+    --ds-border: #e9f0fb5c;
+    --ds-border-bold: #a9abaf;
+    --ds-border-input: #a9abaf;
+    --ds-border-selected: #8fb8f6;
+    --ds-border-disabled: #e3e4f21f;
+    --ds-border-brand: #8fb8f6;
+    --ds-border-danger: #f87168;
+    --ds-border-warning: #fbc828;
+    --ds-border-success: #7ee2b8;
+    --ds-border-information: #8fb8f6;
+    --ds-border-discovery: #c97cf4;
+    --ds-background-neutral-subtle-hovered: #ceced912;
+    --ds-background-neutral-subtle-pressed: #e3e4f21f;
+    --ds-background-brand-bold: #cfe1fd;
+    --ds-background-brand-bold-hovered: #e9f2fe;
+    --ds-background-brand-bold-pressed: #e2e3e4;
+    --ds-background-selected: #1c2b42;
+    --ds-background-selected-hovered: #123263;
+    --ds-background-selected-pressed: #1558bc;
+    --ds-background-danger-bold: #ffd5d2;
+    --ds-background-danger-bold-hovered: #ffeceb;
+    --ds-background-danger-bold-pressed: #e2e3e4;
+    --ds-background-warning-bold: #f5e989;
+    --ds-background-warning-bold-hovered: #fef7c8;
+    --ds-background-warning-bold-pressed: #e2e3e4;
+    --ds-background-success-bold: #baf3db;
+    --ds-background-success-bold-hovered: #dcfff1;
+    --ds-background-success-bold-pressed: #e2e3e4;
+    --ds-background-information-bold: #cfe1fd;
+    --ds-background-information-bold-hovered: #e9f2fe;
+    --ds-background-information-bold-pressed: #e2e3e4;
+    --ds-background-discovery-bold: #eed7fc;
+    --ds-background-discovery-bold-hovered: #f8eefe;
+    --ds-background-discovery-bold-pressed: #e2e3e4;
+    --ds-shadow-raised: inset 0px 0px 0px 1px #e9f0fb80;
+    --ds-shadow-overlay: inset 0px 0px 0px 1px #e9f0fb80;
+    --ds-shadow-overflow: 0px 0px 12px #0104048f;
+    --ds-chart-neutral: #96999e;
+    --ds-chart-brand: #669df1;
+    --ds-chart-danger: #f87168;
+    --ds-chart-information: #669df1;
+    --ds-chart-discovery: #c97cf4;
+    --ds-chart-gray-bold: #96999e;
+    --ds-chart-blue-bold: #8fb8f6;
+    --ds-chart-teal-bold: #9dd9ee;
+    --ds-chart-green-bold: #7ee2b8;
+    --ds-chart-lime-bold: #b3df72;
+    --ds-chart-yellow-bold: #eed12b;
+    --ds-chart-orange-bold: #fbc828;
+    --ds-chart-red-bold: #fd9891;
+    --ds-chart-magenta-bold: #f797d2;
+    --ds-chart-purple-bold: #d8a0f7;
+  }
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ds-text: #e2e3e4;
+    --ds-text-subtle: #cecfd2;
+    --ds-text-subtlest: #bfc1c4;
+    --ds-text-selected: #cfe1fd;
+    --ds-text-brand: #cfe1fd;
+    --ds-text-warning-inverse: #18191a;
+    --ds-text-danger: #ffd5d2;
+    --ds-text-warning: #fce4a6;
+    --ds-text-success: #baf3db;
+    --ds-text-information: #cfe1fd;
+    --ds-text-discovery: #eed7fc;
+    --ds-icon-subtle: #bfc1c4;
+    --ds-icon-subtlest: #bfc1c4;
+    --ds-icon-selected: #8fb8f6;
+    --ds-icon-brand: #8fb8f6;
+    --ds-icon-warning-inverse: #18191a;
+    --ds-icon-danger: #f87168;
+    --ds-icon-success: #7ee2b8;
+    --ds-icon-information: #8fb8f6;
+    --ds-icon-discovery: #c97cf4;
+    --ds-border: #e9f0fb5c;
+    --ds-border-bold: #a9abaf;
+    --ds-border-input: #a9abaf;
+    --ds-border-selected: #8fb8f6;
+    --ds-border-disabled: #e3e4f21f;
+    --ds-border-brand: #8fb8f6;
+    --ds-border-danger: #f87168;
+    --ds-border-warning: #fbc828;
+    --ds-border-success: #7ee2b8;
+    --ds-border-information: #8fb8f6;
+    --ds-border-discovery: #c97cf4;
+    --ds-background-neutral-subtle-hovered: #ceced912;
+    --ds-background-neutral-subtle-pressed: #e3e4f21f;
+    --ds-background-brand-bold: #cfe1fd;
+    --ds-background-brand-bold-hovered: #e9f2fe;
+    --ds-background-brand-bold-pressed: #e2e3e4;
+    --ds-background-selected: #1c2b42;
+    --ds-background-selected-hovered: #123263;
+    --ds-background-selected-pressed: #1558bc;
+    --ds-background-danger-bold: #ffd5d2;
+    --ds-background-danger-bold-hovered: #ffeceb;
+    --ds-background-danger-bold-pressed: #e2e3e4;
+    --ds-background-warning-bold: #f5e989;
+    --ds-background-warning-bold-hovered: #fef7c8;
+    --ds-background-warning-bold-pressed: #e2e3e4;
+    --ds-background-success-bold: #baf3db;
+    --ds-background-success-bold-hovered: #dcfff1;
+    --ds-background-success-bold-pressed: #e2e3e4;
+    --ds-background-information-bold: #cfe1fd;
+    --ds-background-information-bold-hovered: #e9f2fe;
+    --ds-background-information-bold-pressed: #e2e3e4;
+    --ds-background-discovery-bold: #eed7fc;
+    --ds-background-discovery-bold-hovered: #f8eefe;
+    --ds-background-discovery-bold-pressed: #e2e3e4;
+    --ds-shadow-raised: inset 0px 0px 0px 1px #e9f0fb80;
+    --ds-shadow-overlay: inset 0px 0px 0px 1px #e9f0fb80;
+    --ds-shadow-overflow: 0px 0px 12px #0104048f;
+    --ds-chart-neutral: #96999e;
+    --ds-chart-brand: #669df1;
+    --ds-chart-danger: #f87168;
+    --ds-chart-information: #669df1;
+    --ds-chart-discovery: #c97cf4;
+    --ds-chart-gray-bold: #96999e;
+    --ds-chart-blue-bold: #8fb8f6;
+    --ds-chart-teal-bold: #9dd9ee;
+    --ds-chart-green-bold: #7ee2b8;
+    --ds-chart-lime-bold: #b3df72;
+    --ds-chart-yellow-bold: #eed12b;
+    --ds-chart-orange-bold: #fbc828;
+    --ds-chart-red-bold: #fd9891;
+    --ds-chart-magenta-bold: #f797d2;
+    --ds-chart-purple-bold: #d8a0f7;
+  }
+}

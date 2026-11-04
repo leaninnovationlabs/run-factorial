@@ -1,0 +1,28 @@
+#!/bin/sh
+# The compose `database` service's entrypoint (tech-stack decision 73): the image's own Postgres
+# in a container of its own, where RDS stands on ECS, reached by the service's name. It runs no
+# orchestrator code, so it starts without s6, secrets or the startup check. It listens on every
+# address of the compose network, which only the stack joins, and compose publishes it on the
+# host's 127.0.0.1 for host development. A new volume is made with the role, password and
+# database the URL in the mounted factorial.env names (the public compose); with no file or no
+# URL in it (`make up`), they are the image's `factory`, which nobody guards (database.sh). An
+# existing volume is never changed: one made for another role than the URL names, such as a
+# `factory` volume from before the public compose, stops the start and says so (postgres.sh).
+set -eu
+install -d -o postgres -g postgres -m 0700 /data/postgres
+install -d -o postgres -g postgres -m 0755 /run/postgresql
+. /etc/factorial/postgres.sh
+if [ -r /run/secrets/factorial.env ]; then
+  factorial_initdb /run/secrets/factorial.env
+else
+  factorial_initdb
+fi
+# Written here, not copied into the image, so that postgres owns the file it reads. The rules
+# reach the cluster by `hba_file`, so a volume made by the one-container image needs no edit.
+hba=/run/postgresql/pg_hba.conf
+printf '%s\n' 'local all all peer' 'host all all 127.0.0.1/32 scram-sha-256' \
+  'host all all ::1/128 scram-sha-256' 'host all all samenet scram-sha-256' > "$hba"
+chown postgres:postgres "$hba"
+chmod 0600 "$hba"
+exec /command/s6-setuidgid postgres /usr/lib/postgresql/17/bin/postgres -D /data/postgres \
+  -c listen_addresses='*' -c hba_file="$hba" -c unix_socket_directories=/run/postgresql

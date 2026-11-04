@@ -1,0 +1,22 @@
+{
+  "refused": {
+    "rollout": [
+      0,
+      15
+    ],
+    "signals": [
+      0,
+      3
+    ]
+  },
+  "self_answered": {
+    "rollout": [
+      15,
+      30
+    ],
+    "signals": [
+      3,
+      6
+    ]
+  }
+}

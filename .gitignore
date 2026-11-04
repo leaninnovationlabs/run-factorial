@@ -1,0 +1,35 @@
+# Secrets — never commit
+.env
+.env.*
+factorial.env
+!.env.example
+
+# macOS
+.DS_Store
+
+
+# Node
+node_modules/
+dist/
+
+# GitHub App private keys — never commit
+*.pem
+
+# Python bytecode
+__pycache__/
+
+# pytest's own cache dir.
+.pytest_cache/
+
+# Agent worktrees inside the repo: a broad `git add -A` would record one as a submodule entry.
+.claude/worktrees/
+.worktrees/
+
+*.py[cod]
+.venv/
+*.egg-info/
+.ruff_cache/
+
+# Playwright MCP browser-session artifacts
+.playwright-mcp/
+.local/

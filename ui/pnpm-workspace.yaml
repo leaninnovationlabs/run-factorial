@@ -1,0 +1,4 @@
+# pnpm blocks dependency build scripts by default. esbuild's postinstall is what puts its
+# platform binary in place, and vite will not start without it.
+allowBuilds:
+  esbuild: true

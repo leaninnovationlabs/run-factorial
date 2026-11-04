@@ -1,0 +1,8 @@
+#!/command/with-contenv sh
+# First start on a fresh volume only. An external database needs no cluster here, and neither does
+# a compose role container, whose database runs in the `database` service.
+set -eu
+. /etc/factorial/database.sh
+factorial_runs_postgres || exit 0
+. /etc/factorial/postgres.sh
+factorial_initdb

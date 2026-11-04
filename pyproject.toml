@@ -1,0 +1,80 @@
+[project]
+name = "factorial"
+version = "0.1.0"
+description = "ADLC orchestrator — uv workspace root"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+dependencies = [
+    "factorial-orchestrator",
+    "factorial-runtime",
+]
+
+[tool.uv]
+package = false
+# Earlier certifi trusts the compromised eMudhra chains, and httpx trusts certifi.
+constraint-dependencies = ["certifi>=2026.10.19"]
+
+[tool.uv.workspace]
+members = ["orchestrator", "runtime"]
+
+[tool.uv.sources]
+factorial-orchestrator = { workspace = true }
+factorial-runtime = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "testcontainers[postgres]>=4.9",
+    "httpx>=0.28",
+    # fastmcp's client and its ASGI test transport are httpx2, not httpx (decision 60).
+    "httpx2>=2.13.1",
+    "pytest-xdist>=3.6",
+]
+
+# ----------------------------------------------------------------- tooling
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["orchestrator/src", "runtime/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# A live smoke drives one run and waits on it, so a blocking git or gh call blocks nothing else.
+"scripts/smoke/*.py" = ["ASYNC221"]
+
+[tool.ruff.lint.flake8-bugbear]
+# A tool's `tc: ToolContext = Depends(tool_context)`: FastMCP resolves it per call, as FastAPI's
+# `Depends` (which ruff already exempts) is resolved per request.
+extend-immutable-calls = ["fastmcp.dependencies.Depends"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+include = ["orchestrator/src", "orchestrator/tests", "runtime/src", "runtime/tests"]
+extraPaths = ["orchestrator/src", "runtime/src", "runtime/tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["orchestrator/tests", "runtime/tests"]
+# Both workspace members have a `tests` package; importlib mode keeps them from
+# shadowing each other on sys.path.
+# Four workers, each module whole on one of them (decision 66). `-n0` runs in one process, for
+# `--pdb` or `-s`.
+addopts = "--import-mode=importlib -n 4 --dist loadfile"
+# Shared helpers of the runtime tests (`host_session_support.py`), importable by name.
+pythonpath = ["runtime/tests"]
+# `conformance.py` (runtime/tests) is the shared adapter conformance battery: a module of
+# `test_*` functions parametrized over adapters, deliberately not named `test_*.py` itself
+# (it is a battery every adapter's suite runs, not one adapter's own tests) — it still needs
+# collecting explicitly, since pytest's default python_files glob would otherwise skip it.
+python_files = ["test_*.py", "conformance.py"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+markers = [
+    "postgres: test requires a real Postgres (testcontainers)",
+]

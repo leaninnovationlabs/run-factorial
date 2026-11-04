@@ -1,0 +1,30 @@
+# An allowlist: the build context holds only the paths the Dockerfile copies, so nothing else in
+# the checkout can reach the image, which is published as it is (tech-stack decision 84). A path
+# the Dockerfile starts to copy is added here.
+*
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!orchestrator/pyproject.toml
+!orchestrator/src
+!orchestrator/migrations
+!runtime/pyproject.toml
+!runtime/src
+!ui
+ui/node_modules
+ui/dist
+ui/*.tsbuildinfo
+!docker/rootfs
+!docker/seccomp.json
+!docker/clis
+!docker/strip-comments.py
+!LICENSE
+!NOTICE
+
+# After the allowlist, so they win inside an allowed directory: a secret must never reach the
+# build context.
+**/.env
+**/.env.*
+**/*.pem
+**/__pycache__
+**/node_modules

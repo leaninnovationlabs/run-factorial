@@ -1,0 +1,29 @@
+/**
+ * The sign-in page's ground and doors. The doors are set in Roboto because Google's sign-in
+ * branding asks for it, and both doors wear the face so they stay one shape; `fonts.css` serves
+ * the font. The ground's two colours are role tokens, so the dark theme needs no rule here.
+ */
+
+.sign-in-ground {
+  --sign-in-dot: var(--ds-border);
+  --sign-in-ghost: var(--ds-background-neutral);
+}
+
+.sign-in-bed {
+  background-image: radial-gradient(var(--sign-in-dot) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  background-position: 11px 11px;
+  mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black 20%, transparent 100%);
+}
+
+.sign-in-ghost {
+  border-color: var(--sign-in-ghost);
+}
+.sign-in-ghost-solid {
+  background-color: var(--sign-in-ghost);
+}
+
+.sign-in-door {
+  font-family: Roboto, system-ui, sans-serif;
+  letter-spacing: 0.25px;
+}

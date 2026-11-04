@@ -1,0 +1,29 @@
+name: close pull requests
+
+# This repository is a read-only mirror: a person syncs it by hand from a private repository,
+# where every change lands. So each new pull request gets a comment that says so, and is closed.
+#
+# pull_request_target runs this file as main has it, with a token that can write to a pull
+# request from a fork. That is safe only because no step checks out or runs the pull request's
+# code: the one step passes its number to gh, through the environment and never inline.
+"on":
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    name: close
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close with a pointer to the docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          gh pr close "$NUMBER" --repo "$REPO" --comment "This repository is a read-only mirror
+          of a private repository, so it takes no pull requests. To read about Factorial, go to
+          https://www.runfactorial.com."

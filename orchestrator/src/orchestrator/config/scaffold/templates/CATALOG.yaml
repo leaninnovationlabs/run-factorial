@@ -1,0 +1,108 @@
+# The agent definitions the process builder can fill a gap with, keyed by the `agent:` name a
+# process.yaml uses. Flat and name-keyed on purpose: one directory per name means two lanes
+# cannot define the same-named agent differently, so there is no precedence rule to explain.
+# A lane that needs different prompts for a role names its agent something else, and that name
+# then appears in the operator's config — two prompt sets are two agents.
+#
+# A variant's `lane:` is the topology its prompts describe (absent: any lane), and its `forge:` the
+# host whose CLI they call (absent: github). A project gets only its own forge's variants, so a
+# GitLab project on a stacked lane gets the stub for any agent with no GitLab stacked variant.
+#
+# The version identifies which shipped content a file came from. Bump it on any content change.
+agents:
+  plan-agent:
+    version: 8
+    variants:
+      stacked:
+        lane: stacked
+        summary: >-
+          The implementation pull request targets the spec branch; the spec branch reaches the
+          base branch only at the last gate.
+      base-target:
+        lane: base-target
+        summary: >-
+          Every pull request targets the base branch; the spec merges at the first gate and the
+          implementation branches from it.
+      base-target-gitlab:
+        lane: base-target
+        forge: gitlab
+        summary: >-
+          Every merge request targets the base branch and is opened with glab; the spec merges at
+          the first gate and the implementation branches from it.
+  build-agent:
+    version: 7
+    variants:
+      stacked:
+        lane: stacked
+        summary: >-
+          Branches from the spec branch and opens its pull request against it, so the diff a
+          reviewer sees is the implementation alone.
+      base-target:
+        lane: base-target
+        summary: >-
+          Branches from the base branch after the spec has merged, and opens its pull request
+          against the base branch.
+      base-target-gitlab:
+        lane: base-target
+        forge: gitlab
+        summary: >-
+          Branches from the base branch after the spec has merged, and opens its merge request
+          against the base branch with glab.
+  test-agent:
+    version: 5
+    variants:
+      base-target:
+        lane: base-target
+        summary: >-
+          Runs the repository's suite against the implementation pull request and posts a
+          pass/fail verdict as a comment.
+      base-target-gitlab:
+        lane: base-target
+        forge: gitlab
+        summary: >-
+          Runs the repository's suite against the implementation merge request and posts a
+          pass/fail verdict as an MR note with glab.
+
+# Shared skills, at `.factorial/skills/<name>/SKILL.md`. Listed here for the same versioning reason,
+# but never scaffolded on their own: a skill ships because an agent taking its template declares
+# it, so each agent's own `skills.shared` is what decides, not this list. The plan agent declares
+# `spec-page`, and writes the summary page only when its first turn's `# Files` section lists one.
+skills:
+  project-constitution:
+    version: 5
+    variants:
+      stacked:
+        lane: stacked
+        summary: >-
+          Names the spec and implementation branches by their stacked-lane prefixes in its
+          naming table.
+      base-target:
+        lane: base-target
+        summary: >-
+          Names the spec and implementation branches by the step whose `workspace.branch` sets
+          each prefix, since a base-target lane settles no lane-wide prefix.
+      base-target-gitlab:
+        lane: base-target
+        forge: gitlab
+        summary: >-
+          The base-target naming table, for a lane whose reviews happen on GitLab merge
+          requests.
+  spec-page:
+    version: 5
+    variants:
+      github:
+        summary: Links the spec files on GitHub, and the spec pull request on a rework.
+      gitlab:
+        forge: gitlab
+        summary: Links the spec files on GitLab, and the spec merge request on a rework.
+
+# MCP servers. `offered_with` ships a file beside the named agents' files WITHOUT any agent
+# declaring it, for a feature the operator turns on by hand. An `example` ships as
+# `<name>.yaml.example`, which no loader reads, offered with the agents whose commented-out `mcp:`
+# block names it: a live server needs a real endpoint, a stored secret and an operator's
+# allowlist entry, none of which a first commit can supply.
+mcp:
+  product-docs:
+    version: 3
+    example: true
+    offered_with: [plan-agent]

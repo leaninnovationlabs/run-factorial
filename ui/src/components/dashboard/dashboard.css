@@ -1,0 +1,70 @@
+/**
+ * The dashboard's chart colours: tints of the ADS chart tokens in `theme/tokens.css`, so light,
+ * dark and increased contrast all come from these rules and no colour value lives here. Declared
+ * on `:root` rather than on a dashboard root because the design primitives that paint them
+ * (`components/ui/StackedBar`, `BarList`, `Legend`) are drawn in the dev catalogue too, outside
+ * any dashboard. Full-strength chart tokens read loud across a page of bars, so every look is
+ * mixed toward the surface; the ADS tokens and the other pages keep full strength.
+ *
+ * Two scales, two tints, kept apart on purpose:
+ *
+ * - `outcome-*` is a STATUS scale (what the ticket became), in the roles the status lozenges
+ *   use: done is success green, open is information blue, exited is neutral grey. Mixed 30%
+ *   toward the surface (70% of the token). Judged by contrast, not as a categorical set, so
+ *   every figure that paints them also writes its value as text beside it.
+ * - `series-N` is the CATEGORICAL scale for the steps of a process, in process order and never
+ *   cycled; `retry` is the danger role, a status and never a series; `muted` paints the steps
+ *   past the fourth. These are mixed only 15% (85% of the token), because at 30% series 3 and
+ *   4 fail the colour-vision checks. `rework-N` is its step's colour under the hatch: rework is
+ *   the same step again, and a lighter shade cannot separate from a tinted series. `idle`
+ *   (time no one worked) is `muted` under the hatch.
+ *
+ * Checked with the dataviz skill's `validate_palette.js` (2.1.296), by hand, against
+ * `--ds-surface` and `--ds-surface-sunken`, on the tinted values of all six theme blocks (dark
+ * and increased-contrast dark each appear twice, with the same values). The 85% series pass
+ * every hard check in light and in dark:
+ *
+ * - light: the worst adjacent pair is green beside magenta, ΔE 6.8 deutan, in the 6–8 band that
+ *   needs a second cue; normal vision 15.1 (yellow beside green). Contrast is 2.7–2.8:1 on the
+ *   surface and 2.6–2.7 on the sunken one, the relief band.
+ * - dark: the worst pair is yellow beside green, ΔE 8.4 protan and 15.9 normal vision; every
+ *   series is 3:1 and up on both surfaces.
+ * - magenta beside retry misses the normal-vision floor (ΔE 12.4 light, 11.7 dark; floor 15).
+ *   Blue beside retry separates in every block (ΔE 22.1 protan in light).
+ * - the 70% outcome looks on the light surface: done 1.83:1, open 2.54, exited 2.15; in dark,
+ *   open 2.96 and exited 2.77, done above 3.
+ * - increased contrast fails the chroma floor and the colour-vision checks, tinted or not
+ *   (light: green beside magenta ΔE 4.1 deutan; dark: every series above the lightness band).
+ *   Every series there is 3:1 and up.
+ *
+ * What carries the WARNs and the misses is the relief the mark rules already require: the 2px
+ * gap between segments, and each segment named in its row's detail line and the table twin,
+ * which is why `BarList` draws both.
+ *
+ * The hatch is one rule, keyed on the `data-chart-look` every mark and swatch carries, so a
+ * stacked bar, a list bar and a legend swatch draw it alike.
+ *
+ * No hex here, in comments included: `foundations.test.ts` counts a hex anywhere in a stylesheet.
+ */
+:root {
+  --dash-outcome-done: color-mix(in srgb, var(--ds-chart-success) 70%, var(--ds-surface));
+  --dash-outcome-open: color-mix(in srgb, var(--ds-chart-information) 70%, var(--ds-surface));
+  --dash-outcome-exited: color-mix(in srgb, var(--ds-chart-neutral) 70%, var(--ds-surface));
+
+  --dash-series-1: color-mix(in srgb, var(--ds-chart-blue-bold) 85%, var(--ds-surface));
+  --dash-series-2: color-mix(in srgb, var(--ds-chart-magenta-bold) 85%, var(--ds-surface));
+  --dash-series-3: color-mix(in srgb, var(--ds-chart-green-bold) 85%, var(--ds-surface));
+  --dash-series-4: color-mix(in srgb, var(--ds-chart-yellow-bold) 85%, var(--ds-surface));
+  --dash-rework-1: var(--dash-series-1);
+  --dash-rework-2: var(--dash-series-2);
+  --dash-rework-3: var(--dash-series-3);
+  --dash-rework-4: var(--dash-series-4);
+  --dash-retry: color-mix(in srgb, var(--ds-chart-danger) 85%, var(--ds-surface));
+  --dash-muted: color-mix(in srgb, var(--ds-chart-neutral) 85%, var(--ds-surface));
+  --dash-idle: var(--dash-muted);
+}
+
+[data-chart-look^="rework-"],
+[data-chart-look="idle"] {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--ds-surface) 3px 5px);
+}

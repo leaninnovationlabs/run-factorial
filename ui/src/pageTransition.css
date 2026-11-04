@@ -1,0 +1,42 @@
+/**
+ * The two halves of a page change. They are deliberately different gestures: the page leaving
+ * only fades, because a page sliding out as another slides in reads as two things moving past
+ * each other, and the page arriving rises the last few pixels into place so the eye is given a
+ * direction to follow.
+ *
+ * The entrance is an animation rather than a transition because it has to play on MOUNT — the
+ * element is new every time, and there is no "before" state to transition from. The hook in
+ * `pageTransition.ts` is what pairs the two: the exit is timed there, so the arriving page mounts
+ * with the page it replaces already at zero opacity.
+ */
+
+.page-swap {
+  --page-exit-duration: 0.13s;
+  --page-enter-duration: 0.26s;
+  --page-enter-offset: 14px;
+  transition: opacity var(--page-exit-duration) ease-in;
+  /* No fill mode on purpose. The entrance is the only thing here that sets a transform, and once
+     it ends the element's transform is `none` again — which matters, because a transformed
+     ancestor becomes the containing block for `position: fixed` descendants, and a page must stay
+     free to hold one without it being pinned to the page instead of the window. */
+  animation: page-enter var(--page-enter-duration) ease-out;
+}
+
+.page-swap[data-page-phase="out"] {
+  opacity: 0;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--page-enter-offset));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The hook already stops holding the old page back; this is what stops the new one moving. */
+  .page-swap {
+    animation: none;
+    transition: none;
+  }
+}

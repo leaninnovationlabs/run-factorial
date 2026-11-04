@@ -1,0 +1,46 @@
+[project]
+name = "factorial-orchestrator"
+version = "0.1.0"
+description = "ADLC orchestrator — reconciliation loop, state DB, event log, API"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6.0",
+    # auth-app pulls PyJWT — required for the App JWT -> installation token flow
+    # (tech-stack decision 6); without the extra, minting raises at first use.
+    "githubkit[auth-app]>=0.12",
+    "cryptography>=44.0",
+    # The Google OAuth token exchange (api/routes/auth.py); githubkit happens to pull it too.
+    "httpx>=0.28",
+    # Renders a step's Markdown page to inert HTML (tech-stack decision 58).
+    "markdown-it-py>=4.0",
+    # The operator MCP server at /mcp/ (tech-stack decision 60).
+    "fastmcp-slim[server]>=4.0.11,<5",
+    # MCP token signing (decision 60); declared because used directly (decision 14).
+    "joserfc>=1.7.5",
+    # Account passwords, argon2id (tech-stack decision 80).
+    "argon2-cffi>=23.1",
+    "factorial-runtime",
+]
+
+[project.scripts]
+factorial-worker = "orchestrator.worker.__main__:main"
+factorial-assistant = "orchestrator.assistant.__main__:main"
+factorial-assistant-codex-mcp = "orchestrator.assistant.mcp_bridge:main"
+
+[tool.uv.sources]
+factorial-runtime = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestrator"]

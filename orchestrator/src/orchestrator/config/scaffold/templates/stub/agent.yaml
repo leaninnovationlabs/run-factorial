@@ -1,0 +1,36 @@
+# Agent manifest for `__AGENT_NAME__`. SCAFFOLDED, NOT FINISHED.
+#
+# Your process file names this agent, but Factorial has no template for it, so this file was
+# created empty for you to fill in. It does NOT parse as written, and a step that uses this agent
+# will fail at spawn until you complete it. The project's configuration page reports it as an
+# agent gap until then.
+#
+# Copy the shape below out of the comments and give each key a value. Create system-prompt.md and
+# instructions.md beside this file. https://www.runfactorial.com/docs/agents/ describes every
+# field.
+#
+# specVersion: factorial/v1
+# kind: Agent
+# name: __AGENT_NAME__          # must equal this folder's name
+#
+# prompts:                      # both files must exist beside this one
+#   system: system-prompt.md
+#   instructions: instructions.md
+#
+# model: claude-sonnet-5-5
+#   A concrete, versioned model id. A size alias ("sonnet", "opus") resolves to a name the API
+#   rejects, and the agent fails on its first turn. The parser refuses aliases outright. A Codex
+#   runtime needs a Codex model id.
+#
+# limits:
+#   # A turn is one model request on Claude, one prompt round on Codex; the run fails past the limit.
+#   # The count spans resumes within one attempt and restarts on a retry.
+#   # 200 fits a real ticket, under where a 1-hour step ends an Opus run; a Sonnet run ends later.
+#   max_turns: 200
+#
+# secrets:                      # what to MINT, not an isolation boundary.
+#   - key: SERVICE_API_KEY      # The substrate may inject every stored secret into every
+#     description: Service key    # container regardless of what is declared here. Values live in
+#   - key: GH_TOKEN             # the orchestrator's project secrets, never in this folder.
+#     description: GitHub App token, minted per run and scoped to the target repo
+

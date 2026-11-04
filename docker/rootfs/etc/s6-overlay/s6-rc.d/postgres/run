@@ -1,0 +1,8 @@
+#!/command/with-contenv sh
+. /etc/factorial/database.sh
+# On an external database, or in a compose role container whose database is the `database`
+# service, the service stays in the graph that db-ready and migrate wait on, so the graph keeps
+# one shape, and it does nothing until the container stops; SIGINT, its down signal, ends s6-pause.
+factorial_runs_postgres || exec /command/s6-pause
+exec /command/s6-setuidgid postgres /usr/lib/postgresql/17/bin/postgres -D /data/postgres \
+  -c listen_addresses=127.0.0.1 -c unix_socket_directories=/run/postgresql

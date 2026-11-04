@@ -1,0 +1,120 @@
+name: tests
+
+# Three jobs, one per thing this repo can break:
+#
+#   (a) python-tests — the orchestrator and runtime suites, under uv, split into
+#                      four shard jobs and one job that passes when all four do.
+#   (b) ste-check    — README.md against the Simplified Technical
+#                      English rules (docs/writing-rules.md).
+#   (c) dashboard    — ui/, the same chain the image build runs.
+#
+# Each push to main runs it, that is, each sync from the private repository.
+"on":
+  push: { branches: ["main"] }
+
+permissions:
+  contents: read
+
+jobs:
+  # Four runners at once, each with whole modules (decision 66): one runner has two cores, and
+  # the suite took ten minutes there however many workers shared them.
+  python-shard:
+    name: python tests ${{ matrix.shard }}/4
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # Fail loudly if this runner ever lacks Docker: the postgres-marked
+      # tests need it (testcontainers), and without a daemon they error rather
+      # than skip. This step names the cause before hundreds of stack traces do.
+      - name: Docker preflight
+        run: docker info
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.13.5"
+          enable-cache: true
+
+      # The terminal relay's tests drive a real tmux, and fail rather than skip without it. The
+      # runner image has it; installing it cost seven seconds a job for "already the newest".
+      - name: tmux preflight
+        run: tmux -V
+
+      - run: uv sync
+
+      # The pinned invocation. `-c pyproject.toml` is required, not cosmetic:
+      # both workspace members ship a `tests` package, and pyproject's
+      # importlib import mode is what stops them shadowing each other. Two workers, one per
+      # core: four starved the tests that wait on a deadline.
+      - run: uv run pytest -c pyproject.toml orchestrator/tests runtime/tests -n 2 --shard ${{ matrix.shard }}/4 --junitxml=junit.xml
+
+      # Each test's seconds on this runner: what the root conftest.py's shard weights come from.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: junit-${{ matrix.shard }}
+          path: junit.xml
+          retention-days: 14
+
+  # One check that passes when every shard passes.
+  python-tests:
+    name: python tests
+    needs: python-shard
+    if: ${{ always() && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.python-shard.result }}" = success
+
+  ste-check:
+    name: STE check (README.md)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - run: ./scripts/check-ste.sh README.md
+
+  dashboard:
+    name: dashboard (ui — build, tests, biome)
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    # Mirrors the image's dashboard build stage, so what passes here is what the image builds.
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.1.2
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22.23.4'
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      # --frozen-lockfile, as the image's build stage installs: a stale lockfile fails
+      # here before it fails an image build.
+      - run: pnpm install --frozen-lockfile
+
+      # First: `tsc -b` is what a UI change breaks most often.
+      - run: pnpm build
+
+      - run: pnpm test
+
+      # `check:ci`, not `check`: the latter passes --write and edits the tree to
+      # make itself pass. A gate reports, it does not repair.
+      - run: pnpm check:ci

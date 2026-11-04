@@ -1,0 +1,180 @@
+# ADLC process — the STACKED lane, as a fixture this repo owns.
+#
+# Not a copy of any target repository. It exists so the parser and the predicate library
+# are tested against a lane where implementation stacks on an open spec PR and exactly one
+# pull request per ticket reaches the default branch — a shape factorial-simple does not have.
+# Plan -> spec gate -> build -> code gate -> spec-merge gate -> done. GitHub only (Issues + PRs).
+#
+# Two deliberate departures from the sample, both load-bearing here:
+#
+#   1. No test step. The first pass runs plan and build only. CI's `verify` workflow still
+#      gates every pull request; what is missing is an agent that AUTHORS acceptance tests.
+#      Re-adding it means a `test` step between build and code_review_gate, and restoring
+#      .factorial/agents/test-agent/ — both were removed together, on purpose.
+#
+#   2. Nothing reaches `main` except the spec pull request, and only a human merges it.
+#      The sample merges the spec at gate 1 and then points implementation at `main`. Here
+#      gate 1 approves WITHOUT merging, so the spec PR stays open as the implementation's
+#      base, and the branches stack:
+#
+#          main  <--  spec/{ticket}-{slug}  <--  impl/{ticket}-{slug}
+#
+#      Gate 2 merges implementation into the spec branch; gate 3 merges the spec PR — both
+#      halves together — into `main`. An implementation PR never targets `main`, and exactly
+#      one pull request per ticket ever merges there.
+
+specVersion: factorial/v1
+kind: Process
+name: stacked-lane
+description: Plan -> spec gate -> build -> code gate -> spec-merge gate -> done (GitHub-only, no test stage)
+
+roles:
+  spec_reviewers: ["{ticket_owner}"]
+  code_reviewers: ["{ticket_owner}"] # single-reviewer sample; point at a real team later
+
+defaults:
+  timeout: 1h # counts the time the session works, not the time it waits at its prompt
+  retry:
+    maxAttempts: 2
+    backoff: 10m
+  onFailure:
+    escalate:
+      ticketLabel: "factorial:blocked"
+      assign: ["{ticket_owner}"]
+      comment: |
+        ADLC {step} failed after {attempt} attempt(s): {failure_reason}.
+        Fix the cause, then remove `factorial:blocked` to resume.
+
+entry:
+  when:
+    all:
+      - ticket_label("factorial:new")
+      - ticket_has_assignee()
+  step: plan
+
+steps:
+  # ------------------------------------------------------------------- 1. plan (agent)
+  - name: plan
+    kind: agent
+    description: Turn the ticket into a reviewable contract (spec, plan, tasks)
+    agent: plan-agent
+    next: spec_review_gate
+    workspace:
+      repo: "{repo}"
+      base: main
+      branch: "spec/{ticket}-{slug}" # {slug} is chosen by the agent at runtime
+    preconditions:
+      all:
+        - ticket_has_assignee()
+    inputs:
+      - ticket_body
+      - ticket_comments
+    postconditions:
+      all:
+        - branch_exists("spec/{ticket}-*")
+        - file_exists("specs/{ticket}-*/spec.md", "spec/{ticket}-*")
+        - pr_open("spec/{ticket}-*", "main")
+    onSuccess:
+      ticketLabel: "factorial:spec-review"
+      assign: ["{roles.spec_reviewers}"]
+      comment: "Spec ready for review: {pr_url}"
+
+  # ------------------------------------------------------------- 2. spec review (human)
+  - name: spec_review_gate
+    kind: human_gate
+    description: Reviewer approves the spec PR — approval only; the PR stays open as the impl base
+    next: build
+    gate:
+      type: pr_approval
+      pr: { head: "spec/{ticket}-*", base: "main" }
+      approvers: ["{roles.spec_reviewers}"]
+      waiting:
+        ticketLabel: "factorial:spec-review"
+      onApprove:
+        # merge: false is the whole point. Merging here would put the spec on `main` before
+        # any implementation exists, and would delete the branch the build agent stacks on.
+        merge: false
+        ticketLabel: "factorial:ready-for-build"
+        assign: ["{ticket_owner}"]
+      onReject:
+        rerunStep: plan
+        inputs:
+          - pr_review_comments
+        ticketLabel: "factorial:spec-rework"
+        assign: ["{ticket_owner}"]
+
+  # ------------------------------------------------------------------ 3. build (agent)
+  - name: build
+    kind: agent
+    description: Implement the approved spec on a branch stacked on the spec branch
+    agent: build-agent
+    next: code_review_gate
+    workspace:
+      repo: "{repo}"
+      # Literal `main`, on every step, on purpose — this is the checkout base the runtime
+      # provisions, not the branch the agent works from. instructions.md is what puts the
+      # build agent on `origin/spec/{ticket}-{slug}`, and the postcondition below is what
+      # proves it got there.
+      base: main
+      branch: "impl/{ticket}-{slug}"
+    preconditions:
+      all:
+        # The spec PR is still open: gate 1 approved it without merging.
+        - pr_open("spec/{ticket}-*", "main")
+    inputs:
+      - ticket_body
+      - file: "specs/{ticket}-*/spec.md"
+      - file: "specs/{ticket}-*/tasks.md"
+    postconditions:
+      all:
+        - branch_exists("impl/{ticket}-*")
+        # The base is the assertion that matters. An impl PR against `main` fails this step.
+        - pr_open("impl/{ticket}-*", "spec/{ticket}-*")
+    onSuccess:
+      ticketLabel: "factorial:code-review"
+      assign: ["{roles.code_reviewers}"]
+      comment: "Implementation ready for review: {pr_url}"
+
+  # ------------------------------------------------------------- 4. code review (human)
+  - name: code_review_gate
+    kind: human_gate
+    description: Reviewer approves the implementation PR; approval merges it into the spec branch
+    next: spec_merge_gate
+    gate:
+      type: pr_approval
+      pr: { head: "impl/{ticket}-*", base: "spec/{ticket}-*" }
+      approvers: ["{roles.code_reviewers}"]
+      waiting:
+        ticketLabel: "factorial:code-review"
+      onApprove:
+        merge: true # into the spec branch, never into main
+        ticketLabel: "factorial:spec-merge"
+        assign: ["{roles.spec_reviewers}"]
+      onReject:
+        rerunStep: build
+        inputs:
+          - pr_review_comments
+        ticketLabel: "factorial:build-rework"
+        assign: ["{ticket_owner}"]
+
+  # -------------------------------------------------------- 5. spec merge, gate 2 (human)
+  - name: spec_merge_gate
+    kind: human_gate
+    description: The only path to main — approve and merge the spec PR, carrying spec and implementation together
+    next: done
+    gate:
+      type: pr_approval
+      pr: { head: "spec/{ticket}-*", base: "main" }
+      approvers: ["{roles.spec_reviewers}"]
+      waiting:
+        ticketLabel: "factorial:spec-merge"
+      onApprove:
+        merge: true
+        ticketLabel: "factorial:done"
+        assign: ["{ticket_owner}"]
+
+terminal:
+  step: done
+  actions:
+    closeTicket: true
+    comment: "ADLC complete — spec and implementation merged to main together."

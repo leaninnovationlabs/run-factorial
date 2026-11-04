@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Factorial: issue to merged code",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "main",
+        "label": "Issue to merge",
+        "focus": [
+          "issue",
+          "admit",
+          "work",
+          "pr",
+          "verify",
+          "gate",
+          "merge"
+        ],
+        "note": "An agent does the work on a branch, the orchestrator checks it, and a human approves and merges."
+      },
+      {
+        "id": "loop",
+        "label": "The next step",
+        "focus": [
+          "work",
+          "pr",
+          "verify",
+          "gate"
+        ],
+        "note": "A process has several steps. After each gate the next agent runs, until the last step merges."
+      },
+      {
+        "id": "containment",
+        "label": "Containment",
+        "focus": [
+          "work",
+          "pr",
+          "merge"
+        ],
+        "note": "A one-hour token and a worktree per run. The App authors the PR, so only a human can approve and merge it."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "github",
+      "label": "GitHub and the people on it"
+    },
+    {
+      "id": "orchestrator",
+      "label": "Orchestrator"
+    },
+    {
+      "id": "agent",
+      "label": "Agent"
+    }
+  ],
+  "mainPath": [
+    "issue",
+    "admit",
+    "work",
+    "pr",
+    "verify",
+    "gate",
+    "merge"
+  ],
+  "nodes": [
+    {
+      "id": "issue",
+      "lane": "github",
+      "col": 0,
+      "type": "external",
+      "label": "Issue",
+      "sublabel": "factorial:new",
+      "width": 132
+    },
+    {
+      "id": "gate",
+      "lane": "github",
+      "col": 4,
+      "type": "security",
+      "label": "Human gate",
+      "sublabel": "a person approves",
+      "width": 132
+    },
+    {
+      "id": "merge",
+      "lane": "github",
+      "col": 5,
+      "type": "external",
+      "label": "Merged",
+      "sublabel": "by a person, to main",
+      "width": 132
+    },
+    {
+      "id": "admit",
+      "lane": "orchestrator",
+      "col": 1,
+      "type": "backend",
+      "label": "Admit",
+      "sublabel": "pin the process",
+      "width": 132
+    },
+    {
+      "id": "verify",
+      "lane": "orchestrator",
+      "col": 3,
+      "type": "security",
+      "label": "Verify",
+      "sublabel": "postconditions hold",
+      "width": 132
+    },
+    {
+      "id": "work",
+      "lane": "agent",
+      "col": 2,
+      "type": "cloud",
+      "label": "Work",
+      "sublabel": "in a worktree, 1h token",
+      "width": 132
+    },
+    {
+      "id": "pr",
+      "lane": "agent",
+      "col": 3,
+      "type": "external",
+      "label": "Pull request",
+      "sublabel": "on its own branch",
+      "width": 132
+    }
+  ],
+  "edges": [
+    {
+      "id": "admission",
+      "from": "issue",
+      "to": "admit"
+    },
+    {
+      "id": "first-step",
+      "from": "admit",
+      "to": "work",
+      "label": "run the first step",
+      "variant": "emphasis"
+    },
+    {
+      "id": "open-pr",
+      "from": "work",
+      "to": "pr",
+      "variant": "emphasis"
+    },
+    {
+      "id": "observe",
+      "from": "pr",
+      "to": "verify",
+      "label": "polled, never self-reported"
+    },
+    {
+      "id": "hold",
+      "from": "verify",
+      "to": "gate",
+      "variant": "emphasis"
+    },
+    {
+      "id": "approved",
+      "from": "gate",
+      "to": "merge",
+      "label": "last step",
+      "variant": "emphasis"
+    },
+    {
+      "id": "next-step",
+      "from": "gate",
+      "to": "work",
+      "label": "next step",
+      "role": "return",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The orchestrator polls",
+      "items": [
+        "GitHub is the truth; a webhook only wakes the loop",
+        "Predicates decide, never an agent's self-report"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "People can park a ticket",
+      "items": [
+        "Stop, block or exit: a label parks the ticket",
+        "Removing the label releases it"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Containment is structural",
+      "items": [
+        "One-hour, repo-scoped App token per run",
+        "The App authors PRs, so it cannot approve one"
+      ]
+    }
+  ]
+}

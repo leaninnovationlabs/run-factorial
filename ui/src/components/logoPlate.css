@@ -1,0 +1,245 @@
+/**
+ * The sign-in mark's cycle: place, seal, hold, pick up, repeat. Every layer runs the same 6 s
+ * loop offset by its own slot delay, which is what keeps the stagger through every iteration —
+ * a delayed periodic animation stays delayed. Keyframe percentages are of 6 s (1% = 60 ms).
+ *
+ * The panel is the plate, so the grid and the light pass are drawn on the panel-wide bed and the
+ * tiles on the mark; both read `--cycle` from the panel. The name rises in once and stays.
+ */
+
+.logo-plate {
+  --cycle: 6s;
+  --slot: 170ms;
+  --base: 220ms;
+}
+
+.logo-plate-tile {
+  fill: #fff;
+}
+.logo-plate-ring {
+  fill: none;
+  stroke: #fff;
+  stroke-dasharray: 92;
+}
+.logo-plate-grid {
+  fill: #fff;
+  opacity: 0;
+}
+.logo-plate-reticle {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: square;
+  opacity: 0;
+}
+.logo-plate-ripple {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  opacity: 0;
+}
+.logo-plate-sweep {
+  opacity: 0;
+}
+.logo-plate-tile,
+.logo-plate-ring,
+.logo-plate-reticle,
+.logo-plate-ripple {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.logo-plate-grid {
+  animation: logo-plate-grid var(--cycle) linear infinite;
+}
+.logo-plate-sweep {
+  animation: logo-plate-sweep var(--cycle) linear infinite 2.6s;
+}
+.logo-plate-ripple {
+  animation: logo-plate-ripple var(--cycle) linear infinite 1.55s;
+}
+.logo-plate-tile {
+  animation: logo-plate-tile var(--cycle) ease-out infinite;
+  animation-delay: calc(var(--base) + var(--i) * var(--slot));
+}
+.logo-plate-ring {
+  animation: logo-plate-ring var(--cycle) ease-out infinite;
+  animation-delay: calc(var(--base) + var(--i) * var(--slot));
+}
+.logo-plate-reticle {
+  animation: logo-plate-reticle var(--cycle) ease-out infinite;
+  animation-delay: calc(var(--base) - 90ms + var(--i) * var(--slot));
+}
+/* The dot is punctuation, not the sixth tile: it waits an extra beat. */
+.logo-plate-reticle.logo-plate-dot {
+  animation-delay: calc(var(--base) + 60ms + var(--i) * var(--slot));
+}
+.logo-plate-tile.logo-plate-dot {
+  animation-delay: calc(var(--base) + 150ms + var(--i) * var(--slot));
+}
+.logo-plate-word {
+  animation: logo-plate-rise 0.35s ease-out both 1.75s;
+}
+
+@keyframes logo-plate-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes logo-plate-tile {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  5% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  77% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  82% {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@keyframes logo-plate-ring {
+  0% {
+    opacity: 1;
+    stroke-dashoffset: 92;
+  }
+  6% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  77% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+    transform: translateY(0);
+  }
+  82% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+    transform: translateY(-12px);
+  }
+  82.1% {
+    stroke-dashoffset: 92;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: 92;
+  }
+}
+@keyframes logo-plate-reticle {
+  0% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  2% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+  4.5% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  75% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  77% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  80% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+@keyframes logo-plate-grid {
+  0% {
+    opacity: 0;
+  }
+  3% {
+    opacity: 0.16;
+  }
+  22% {
+    opacity: 0.16;
+  }
+  27% {
+    opacity: 0;
+  }
+  76% {
+    opacity: 0;
+  }
+  79% {
+    opacity: 0.16;
+  }
+  97% {
+    opacity: 0.16;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes logo-plate-ripple {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.2);
+  }
+  7% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@keyframes logo-plate-sweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-60%);
+  }
+  1.5% {
+    opacity: 1;
+  }
+  9% {
+    opacity: 1;
+  }
+  10.5% {
+    opacity: 0;
+    transform: translateX(160%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(160%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The finished mark, at once. The placement layers have nothing to show when nothing moves. */
+  .logo-plate-tile,
+  .logo-plate-ring,
+  .logo-plate-word {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .logo-plate-grid,
+  .logo-plate-reticle,
+  .logo-plate-ripple,
+  .logo-plate-sweep {
+    display: none;
+  }
+}

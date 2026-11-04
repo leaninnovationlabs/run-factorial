@@ -1,0 +1,112 @@
+{
+  "base": {
+    "rollout": [
+      0,
+      13
+    ],
+    "signals": [
+      0,
+      3
+    ]
+  },
+  "human": {
+    "rollout": [
+      13,
+      23
+    ],
+    "signals": [
+      3,
+      5
+    ]
+  },
+  "command": {
+    "rollout": [
+      23,
+      38
+    ],
+    "signals": [
+      5,
+      7
+    ]
+  },
+  "fail": {
+    "rollout": [
+      38,
+      44
+    ],
+    "signals": [
+      7,
+      8
+    ]
+  },
+  "abort": {
+    "rollout": [
+      44,
+      52
+    ],
+    "signals": [
+      8,
+      9
+    ]
+  },
+  "agent_edit": {
+    "rollout": [
+      52,
+      67
+    ],
+    "signals": [
+      9,
+      11
+    ]
+  },
+  "quit": {
+    "rollout": [
+      67,
+      67
+    ],
+    "signals": [
+      11,
+      11
+    ]
+  },
+  "resume": {
+    "rollout": [
+      67,
+      78
+    ],
+    "signals": [
+      11,
+      14
+    ]
+  },
+  "resume_image": {
+    "rollout": [
+      78,
+      89
+    ],
+    "signals": [
+      14,
+      17
+    ]
+  },
+  "resume_compressed": {
+    "rollout": [
+      89,
+      100
+    ],
+    "signals": [
+      17,
+      20
+    ]
+  },
+  "hangup": {
+    "rollout": [
+      100,
+      114
+    ],
+    "signals": [
+      20,
+      22
+    ]
+  }
+}

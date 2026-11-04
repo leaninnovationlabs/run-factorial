@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- `viewport-fit=cover`, so a phone's page reaches under the home indicator and the tab bar
+         pads itself clear of it with `env(safe-area-inset-bottom)`, which is 0 without it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Root-absolute, and so from `public/` (Vite writes the `/factorial/` base in front): a
+         relative href resolves against the current route, and on a two-segment one
+         (`/projects/9041`) the SPA fallback answers with the index page's own HTML — a 200 the
+         browser cannot decode, so the tab keeps its default icon and nothing reports an error. -->
+    <!-- The query is a cache key, not a parameter. A browser keeps favicons in a store of its
+         own that a reload does not revalidate, so a tab that once saw none keeps showing none;
+         a URL it has not seen is the one thing it will always fetch. Bump it when the icon
+         changes. -->
+    <link rel="icon" href="/favicon.ico?v=1" />
+    <!-- The one face every page reads first, fetched with the HTML rather than after the CSS
+         that names it. Vite hashes the path, so it resolves to the same file `fonts.css` uses. -->
+    <link
+      rel="preload"
+      href="/src/theme/fonts/inter-latin-wght-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <title>Factorial</title>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

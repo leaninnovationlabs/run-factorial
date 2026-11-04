@@ -1,0 +1,31 @@
+/*
+ * The two attention beats the pictures share: the corners of a selection breathing outward,
+ * and "you are here" dimming and back. The board and the process graph both play them, from this
+ * one definition, so the same gesture keeps the same tempo wherever it appears. Each user plays a
+ * beat three times and stops (WCAG 2.2.2) — except the process graph's running step, which beats
+ * while it runs (`flow.css`) — and drops it under reduced motion; each corner sets its
+ * own `--reticle-x` / `-y` diagonal sign, and each picture sets `--reticle-reach`.
+ */
+
+@keyframes reticle-pulse {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(
+      calc(var(--reticle-x, 0) * var(--reticle-reach)),
+      calc(var(--reticle-y, 0) * var(--reticle-reach))
+    );
+  }
+}
+
+@keyframes attention-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
