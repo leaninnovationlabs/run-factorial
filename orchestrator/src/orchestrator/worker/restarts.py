@@ -160,11 +160,7 @@ async def restart(tick: _Tick, request: Event) -> None:
 
 
 async def _clean_up(tick: _Tick, plan: Footprint, target: ProcessVersion) -> None:
-    if tick.github is None or tick.github.contract_github is None:
-        raise RuntimeError(
-            "a restart closes pull requests and deletes branches, and this project has no "
-            "contract_github wired"
-        )
+    tick.host().forge.contract(tick.project.github_repo)
     await remove_footprint(
         tick,
         plan,

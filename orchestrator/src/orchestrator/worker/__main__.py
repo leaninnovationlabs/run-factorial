@@ -13,7 +13,6 @@ from orchestrator.db.session import dispose_engine, session_scope
 from orchestrator.logs import configure_logging
 from orchestrator.settings import Settings, get_settings
 from orchestrator.worker import leases, singleton
-from orchestrator.worker.admission import GitHubCandidates
 from orchestrator.worker.context import production_deps
 from orchestrator.worker.loop import run_forever
 from orchestrator.worker.parked import GitHubParked
@@ -43,7 +42,6 @@ async def _run(settings: Settings) -> None:
             await run_forever(
                 deps,
                 settings=settings,
-                candidates=GitHubCandidates,
                 parked=GitHubParked,
             )
         finally:

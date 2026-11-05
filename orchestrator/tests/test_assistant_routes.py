@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -22,6 +22,7 @@ from orchestrator.db.models import (
     ChatConversation,
     ChatItem,
     ChatItemKind,
+    ChatSpend,
     ChatTurn,
     ChatTurnStatus,
 )
@@ -218,6 +219,53 @@ async def test_send_over_the_daily_budget_is_429(
 
     assert (status, body["code"]) == (429, "daily_budget")
     assert len(await turns_of(maker, conversation)) == 2
+
+
+async def seed_spend(
+    maker: async_sessionmaker[AsyncSession], owner: str, cost: str, *, day: date | None = None
+) -> None:
+    async with maker() as session:
+        session.add(
+            ChatSpend(
+                organization_id=await default_organization_id(session),
+                owner=owner,
+                day=day or datetime.now(UTC).date(),
+                cost_usd=Decimal(cost),
+            )
+        )
+        await session.commit()
+
+
+async def test_send_over_the_organization_s_daily_budget_is_429(
+    client: AsyncClient,
+    auth: dict[str, str],
+    maker: async_sessionmaker[AsyncSession],
+    master_key: None,
+) -> None:
+    """The sender's own spend is under the person's budget; everyone's together is not."""
+    await enable_assistant(maker, organization_daily_budget_usd="30.00")
+    conversation = await new_conversation(client, auth)
+    await seed_spend(maker, "someone-else@example.com", "15.00")
+    await seed_spend(maker, ME, "15.00")
+
+    status, body = await send(client, auth, conversation)
+
+    assert (status, body["code"]) == (429, "daily_budget")
+    assert body["detail"] == "Today's assistant budget of 30.00 USD for this organization is spent."
+
+
+async def test_the_organization_budget_counts_only_today(
+    client: AsyncClient,
+    auth: dict[str, str],
+    maker: async_sessionmaker[AsyncSession],
+    master_key: None,
+) -> None:
+    await enable_assistant(maker, organization_daily_budget_usd="30.00")
+    conversation = await new_conversation(client, auth)
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    await seed_spend(maker, "someone-else@example.com", "30.00", day=yesterday)
+
+    assert (await send(client, auth, conversation))[0] == 202
 
 
 async def test_send_while_disabled_is_409_not_configured(

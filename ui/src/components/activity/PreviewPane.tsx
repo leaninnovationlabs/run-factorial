@@ -35,6 +35,7 @@ import {
   useRunPreview,
 } from "../../api/queries";
 import type { OutputEntry, StepRun } from "../../api/types";
+import { type ForgeHost, forgeName, pullName } from "../../forge";
 import { shortSha } from "../../format";
 import {
   Button,
@@ -107,12 +108,14 @@ function chosen<T extends { key: string }>(tabs: T[], selected: string | null): 
 export function PreviewPane({
   run,
   step,
+  forge,
   autoStart,
   selected,
   onSelect,
 }: {
   run: StepRun;
   step: string;
+  forge?: ForgeHost;
   /** The step's latest attempt: showing the live tab starts its preview without a click. */
   autoStart: boolean;
   /** The tab the reader chose, kept by the drawer across attempts; the first when absent. */
@@ -231,11 +234,11 @@ export function PreviewPane({
         <div {...named(entry.key, entry.label)} className="flex min-h-0 flex-1 flex-col">
           {entry.kind === "file" && outputs.data?.cut_off && (
             <SectionMessage appearance="information" title="The record was cut off" className="m-4">
-              This attempt changed more than 300 files, so its record stops at GitHub's limit. A
-              file named exactly still shows. A pattern shows only the files the record holds.
+              This attempt changed more than 300 files, so its record may leave some out. A file
+              named exactly still shows. A pattern shows only the files the record holds.
             </SectionMessage>
           )}
-          <CappedNotice entry={entry} entries={entries} />
+          <CappedNotice entry={entry} entries={entries} forge={forge} />
           {FRAMED.has(entry.kind) ? (
             <FilePane
               key={`${entry.key}:${entry.status}:${entry.commit ?? ""}`}
@@ -243,6 +246,7 @@ export function PreviewPane({
               run={run}
               step={step}
               changed={outputs.data?.changed_files ?? []}
+              forge={forge}
             />
           ) : (
             <EmptyState
@@ -338,7 +342,15 @@ function EntryPicker({
 }
 
 /** Said on a pattern's file when the pattern matched more files than the API shows. */
-function CappedNotice({ entry, entries }: { entry: OutputEntry; entries: OutputEntry[] }) {
+function CappedNotice({
+  entry,
+  entries,
+  forge,
+}: {
+  entry: OutputEntry;
+  entries: OutputEntry[];
+  forge?: ForgeHost;
+}) {
   const pattern = patternOf(entry);
   if (pattern === null || entry.status !== "published" || entry.group_total === null) return null;
   const shown = entries.filter((other) => patternOf(other) === pattern).length;
@@ -348,7 +360,9 @@ function CappedNotice({ entry, entries }: { entry: OutputEntry; entries: OutputE
       appearance="information"
       title={`${entry.group} matched ${entry.group_total} files`}
       actions={
-        entry.group_url ? [{ text: "Open the folder on GitHub", href: entry.group_url }] : undefined
+        entry.group_url
+          ? [{ text: `Open the folder on ${forgeName(forge)}`, href: entry.group_url }]
+          : undefined
       }
       className="m-4"
     >
@@ -583,6 +597,7 @@ export function ChangeRequestForm({
   run,
   gate,
   pr = null,
+  forge,
   startOpen = false,
   onSent,
 }: {
@@ -591,6 +606,7 @@ export function ChangeRequestForm({
   gate: string;
   /** The pull request the gate decides, when known, which the text is also posted to. */
   pr?: string | null;
+  forge?: ForgeHost;
   /** Open at once: the reviewer pressed Request changes before the drawer opened. */
   startOpen?: boolean;
   onSent: (run: StepRun) => void;
@@ -606,7 +622,7 @@ export function ChangeRequestForm({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-body-sm text-subtle">
           Attempt {run.attempt} of <Code>{run.step_name}</Code> is waiting for your review. Approve
-          the pull request on GitHub, or request changes here.
+          the {pullName(forge)} on {forgeName(forge)}, or request changes here.
         </p>
         <Button appearance="primary" onClick={() => setOpen(true)}>
           Request changes
@@ -654,7 +670,7 @@ export function ChangeRequestForm({
             value={feedback}
             onChange={(event) => setFeedback(event.target.value)}
             errorMessage={attempted && !feedback.trim() ? "Say what should change." : undefined}
-            helperMessage={`This rejects ${gate} and starts attempt ${run.attempt + 1} of ${run.step_name}, which receives this text as its change request. The text is also posted, with your email, to ${pr ? `pull request #${pr}` : "the pull request"}.`}
+            helperMessage={`This rejects ${gate} and starts attempt ${run.attempt + 1} of ${run.step_name}, which receives this text as its change request. The text is also posted, with your email, to ${pr ? `${pullName(forge)} #${pr}` : `the ${pullName(forge)}`}.`}
           />
           <ErrorMessage error={request.error} title="Couldn't send the change request" />
           {refusal && (

@@ -31,7 +31,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from orchestrator.access import Permission
-from orchestrator.access.accounts import session_ended
+from orchestrator.access.accounts import needs_verification, session_ended
 from orchestrator.access.decision import allowed_on_run, caller_named
 from orchestrator.api.deps import PageBlobsDep, SessionDep, SettingsDep
 from orchestrator.api.page_formats import RENDER_TAG, NotText, RenderTooLarge, render
@@ -109,8 +109,12 @@ async def get_page(
             "This page link is invalid or has expired. Open the preview again.",
         )
     signed = verified_session(request.cookies.get(SESSION_COOKIE), api_token=token, now=now)
-    if signed is None or await session_ended(
-        session, email=signed.email, verified=signed.verified, epoch=signed.epoch
+    if (
+        signed is None
+        or await session_ended(
+            session, email=signed.email, verified=signed.verified, epoch=signed.epoch
+        )
+        or needs_verification(verified=signed.verified, mail=settings.mail.enabled)
     ):
         # Only a browser opening the link is sent to sign in. A frame keeps the refusal: its
         # sandbox runs no script, so the dashboard would draw nothing there. A script gets it too.

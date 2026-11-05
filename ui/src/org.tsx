@@ -28,6 +28,9 @@ const ORGLESS: readonly string[] = [
   "/dev/sample",
   "/signup",
   "/onboarding",
+  "/verify-email",
+  "/forgot-password",
+  "/reset-password",
 ];
 const INVITE = /^\/invite\/[^/]+$/;
 

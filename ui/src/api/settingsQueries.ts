@@ -6,11 +6,18 @@ import { api } from "./client";
 import { keys } from "./keys";
 import type { AssistantSettings } from "./types";
 
+/** Where a credential is stored: a backend and one of its auth modes. */
+export interface CredentialPlace {
+  backend: string;
+  auth_mode: string;
+}
+
 export function useAssistantSettings() {
   return useQuery({ queryKey: keys.assistantSettings, queryFn: api.getAssistantSettings });
 }
 
-/** Whether the assistant is on and has a credential: the chat's read, for anyone who may use it. */
+/** Whether a message would be accepted (`ready_to_send`, the send path's own gate): the chat's
+ *  read, for anyone who may use it. */
 export function useAssistantReady() {
   return useQuery({ queryKey: keys.assistantReady, queryFn: api.getAssistantReady });
 }
@@ -28,7 +35,8 @@ export function useSaveAssistantSettings() {
 export function useSetAssistantCredential() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (value: string) => api.setAssistantCredential(value),
+    mutationFn: ({ backend, auth_mode, value }: CredentialPlace & { value: string }) =>
+      api.setAssistantCredential(backend, auth_mode, value),
     gcTime: 0,
     onSettled: () => client.invalidateQueries({ queryKey: keys.assistantSettings }),
   });
@@ -37,7 +45,8 @@ export function useSetAssistantCredential() {
 export function useClearAssistantCredential() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => api.clearAssistantCredential(),
+    mutationFn: ({ backend, auth_mode }: CredentialPlace) =>
+      api.clearAssistantCredential(backend, auth_mode),
     onSettled: () => client.invalidateQueries({ queryKey: keys.assistantSettings }),
   });
 }

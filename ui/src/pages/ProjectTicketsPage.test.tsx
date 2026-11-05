@@ -53,11 +53,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function page(pending: PendingIssue[] | null): Promise<HTMLElement> {
+async function page(pending: PendingIssue[] | null, shown = PROJECT): Promise<HTMLElement> {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  qc.setQueryData(keys.project(PROJECT_ID), PROJECT);
+  qc.setQueryData(keys.project(PROJECT_ID), shown);
   // Null seeds no lists, so the page has to ask for them.
   if (pending) {
     qc.setQueryData(keys.pendingIssues(PROJECT_ID), pending);
@@ -176,6 +176,29 @@ describe("the Admission filter", () => {
     const link = byText(root, "a", "#41");
     expect(link?.getAttribute("href")).toBe(
       "https://github.com/northwind/harbor-invoices/issues/41",
+    );
+  });
+
+  it("links an issue in the repository its ticket source reads issues from", async () => {
+    const root = await page(
+      [WAITING],
+      project({
+        ticket_source: {
+          id: 1,
+          project_id: PROJECT_ID,
+          kind: "github",
+          external_ref: "northwind/support-desk",
+          webhook_secret_ref: null,
+          last_polled_at: null,
+          created_at: "2026-07-02T14:18:03Z",
+        },
+      }),
+    );
+    await pick(root, "Admission");
+    await settle();
+
+    expect(byText(root, "a", "#41")?.getAttribute("href")).toBe(
+      "https://github.com/northwind/support-desk/issues/41",
     );
   });
 

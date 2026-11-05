@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { useAdoptConfigHead, useUnknownHead } from "../../api/queries";
 import type { ConfigAdoption, UnknownHead } from "../../api/types";
+import { type ForgeHost, forgeName } from "../../forge";
 import { formatRelative, shortSha } from "../../format";
 import { Button, Checkbox, Code, ErrorMessage, Lozenge, ModalDialog } from "../ui";
 
@@ -12,10 +13,12 @@ import { Button, Checkbox, Code, ErrorMessage, Lozenge, ModalDialog } from "../u
  */
 export function AdoptHeadDialog({
   projectId,
+  forge,
   onClose,
   onAdopted,
 }: {
   projectId: number;
+  forge?: ForgeHost;
   onClose: () => void;
   onAdopted: (result: ConfigAdoption) => void;
 }) {
@@ -75,7 +78,7 @@ export function AdoptHeadDialog({
     >
       <div className="space-y-4">
         <ErrorMessage error={head.error} />
-        {head.data && <Review head={head.data} />}
+        {head.data && <Review head={head.data} host={forgeName(forge)} />}
         {head.data && (
           <Checkbox
             label={
@@ -100,7 +103,7 @@ export function AdoptHeadDialog({
   );
 }
 
-function Review({ head }: { head: UnknownHead }) {
+function Review({ head, host }: { head: UnknownHead; host: string }) {
   if (!head.known_base) {
     return (
       <>
@@ -115,7 +118,7 @@ function Review({ head }: { head: UnknownHead }) {
           rel="noreferrer"
           className="font-medium text-brand"
         >
-          Open {shortSha(head.head_sha)} on GitHub
+          Open {shortSha(head.head_sha)} on {host}
         </a>
         <p className="text-body-sm text-subtle">
           You can&apos;t undo this. A later direct push needs its own review.
@@ -152,7 +155,7 @@ function Review({ head }: { head: UnknownHead }) {
         </ul>
         {head.total_commits > head.commits.length && (
           <p className="text-body-sm text-subtle">
-            {head.total_commits - head.commits.length} more in the comparison on GitHub.
+            {head.total_commits - head.commits.length} more in the comparison on {host}.
           </p>
         )}
       </section>
@@ -178,11 +181,11 @@ function Review({ head }: { head: UnknownHead }) {
           rel="noreferrer"
           className="font-medium text-brand"
         >
-          Compare {shortSha(head.known_base)} with {shortSha(head.head_sha)} on GitHub
+          Compare {shortSha(head.known_base)} with {shortSha(head.head_sha)} on {host}
         </a>
         {head.files_truncated && (
           <p className="text-body-sm text-subtle">
-            GitHub lists at most 300 files here. The comparison shows the rest.
+            This list stops at 300 files. The comparison shows the rest.
           </p>
         )}
       </section>

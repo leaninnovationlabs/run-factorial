@@ -21,12 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api.deps import get_db_session, settings_dependency
 from orchestrator.api.main import create_app
 from orchestrator.api.services.actor import Actor
+from orchestrator.api.services.assistant_settings import save_assistant_settings
 from orchestrator.api.services.controls import request_resume
 from orchestrator.api.services.errors import Conflict
 from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.api.services.refs import resolve_ticket
 from orchestrator.assistant import loop as assistant_loop
 from orchestrator.assistant import proposals
+from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.items import append_item
 from orchestrator.assistant.loop import serve
 from orchestrator.assistant.proposals import expire_stale, outcome_line, record_proposal
@@ -841,6 +843,41 @@ async def test_a_spent_daily_budget_runs_the_write_but_queues_no_reply(
     (line,) = await notices(maker, mine.conversation_id)
     assert line.endswith(
         "Your daily budget for the assistant is spent, so it will not reply until tomorrow."
+    )
+
+
+async def test_a_spent_organization_budget_runs_the_write_but_queues_no_reply(
+    client: AsyncClient,
+    auth: dict[str, str],
+    maker: async_sessionmaker[AsyncSession],
+    mine: SeededChatTurn,
+) -> None:
+    ticket = await a_running_ticket(maker)
+    proposal = await propose(
+        maker, mine, "factorial_ticket_exit", {"ticket": f"id:{ticket.id}", "project": None}
+    )
+    async with maker() as session:
+        ours = await default_organization_id(session)
+        capped = AssistantSettings(organization_daily_budget_usd=Decimal("30.00"))
+        await save_assistant_settings(session, ours, capped, by="test")
+        session.add(
+            ChatSpend(
+                organization_id=ours,
+                owner="someone-else@example.com",
+                day=datetime.now(UTC).date(),
+                cost_usd=Decimal("30.00"),
+            )
+        )
+        await session.commit()
+
+    r = await client.post(approve_url(proposal), headers=auth | DASHBOARD)
+
+    assert r.status_code == 200 and r.json()["status"] == "succeeded", r.text
+    assert await queued_turns(maker, mine.conversation_id) == []
+    (line,) = await notices(maker, mine.conversation_id)
+    assert line.endswith(
+        "The organization's daily budget for the assistant is spent, so it will not reply until"
+        " tomorrow."
     )
 
 

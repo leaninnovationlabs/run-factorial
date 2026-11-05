@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { forgeHost } from "../../forge";
 import { byText, click, mount, settle } from "../../testDom";
 import { AdoptHeadDialog } from "./AdoptHeadDialog";
 
@@ -122,6 +123,44 @@ describe("AdoptHeadDialog", () => {
     expect(byText(document.body, "button", "Adopt and sync")?.getAttribute("aria-disabled")).toBe(
       "true",
     );
+    await view.unmount();
+  });
+
+  it("names a GitLab project's host on the comparison and its links", async () => {
+    const compared = {
+      ...preview(HEAD),
+      total_commits: 3,
+      files_truncated: true,
+      compare_url: "https://gitlab.example.com/o/r/-/compare/a...e",
+    };
+    let body: unknown = compared;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(body)),
+    );
+    const forge = forgeHost({ kind: "gitlab" }, {});
+    const dialog = () => (
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <AdoptHeadDialog projectId={3} forge={forge} onClose={() => {}} onAdopted={() => {}} />
+      </QueryClientProvider>
+    );
+    let view = await mount(dialog());
+    await settle();
+    let text = document.body.textContent ?? "";
+    expect(text).toContain("2 more in the comparison on GitLab.");
+    expect(text).toContain("This list stops at 300 files. The comparison shows the rest.");
+    expect(byText(document.body, "a", "Compare aaaaaaa with eeeeeee on GitLab")).not.toBeNull();
+    expect(text).not.toContain("GitHub");
+    await view.unmount();
+
+    body = { ...compared, known_base: null };
+    view = await mount(dialog());
+    await settle();
+    text = document.body.textContent ?? "";
+    expect(byText(document.body, "a", "Open eeeeeee on GitLab")).not.toBeNull();
+    expect(text).not.toContain("GitHub");
     await view.unmount();
   });
 });

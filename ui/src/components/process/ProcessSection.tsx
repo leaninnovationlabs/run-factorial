@@ -18,6 +18,7 @@ import type {
   ProjectDetail,
   ReadinessItem,
 } from "../../api/types";
+import { forgeHost } from "../../forge";
 import { errorText, formatRelative, NO_VALUE, shortSha } from "../../format";
 import { asSentence } from "../activity/words";
 import { Fact, FlowFacts, isProcessConfigLike } from "../flow";
@@ -483,6 +484,7 @@ export function ProcessSection({
       {reviewing && (
         <AdoptHeadDialog
           projectId={project.id}
+          forge={forgeHost(project.ticket_source, project.settings, project.forge)}
           onClose={() => setReviewing(false)}
           onAdopted={(result) => {
             setReviewing(false);

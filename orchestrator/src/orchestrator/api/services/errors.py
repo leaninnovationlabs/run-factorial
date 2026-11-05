@@ -58,6 +58,8 @@ RefusalCode = Literal[
     "unknown_head",
     # Sync refused: a process names a runtime this organization has not created.
     "runtime_missing",
+    # A session whose email is not verified, while mail is configured (design.md §7.19 item 17).
+    "email_unverified",
 ]
 
 

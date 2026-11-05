@@ -51,6 +51,7 @@ __all__ = [
     "list_names",
     "list_names_for_runtime",
     "organization_credential_meta",
+    "organization_credentials_meta",
     "put",
     "put_for_organization",
     "put_for_runtime",
@@ -403,6 +404,25 @@ async def organization_credential_meta(
     ).first()
     return None if row is None else (str(row[0]), row[1])
 
+
+
+async def organization_credentials_meta(
+    session: AsyncSession, organization_id: int, prefix: str
+) -> list[tuple[str, str, datetime]]:
+    """`(name, updated_by, updated_at)` of every credential whose name starts with `prefix`."""
+    rows = await session.execute(
+        select(
+            OrganizationCredential.name,
+            OrganizationCredential.updated_by,
+            OrganizationCredential.updated_at,
+        )
+        .where(
+            OrganizationCredential.organization_id == organization_id,
+            OrganizationCredential.name.startswith(prefix, autoescape=True),
+        )
+        .order_by(OrganizationCredential.name)
+    )
+    return [(str(name), str(by), at) for name, by, at in rows]
 
 async def verify_readable(session: AsyncSession) -> None:
     """Decrypt one stored row from each table of ciphertext, so a master key that cannot read

@@ -22,7 +22,7 @@ HISTORY: Final[dict[str, str]] = {
     "worker/gates.py:_answered_review_ids": "an answered review stays answered",
     "worker/branches.py:unrecorded_runs": "an ended run's output record is history",
     "worker/previews.py:_latest_by_run": "preview lifecycle; a redo stops its own previews",
-    "worker/loop.py:_sweep_gitlab_tokens": (
+    "worker/loop.py:_sweep_project": (
         "keyed on live status; a redo ends every run it sets aside"
     ),
     "events/read_models.py:in_flight_runs": "live status, as above",

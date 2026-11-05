@@ -15,6 +15,7 @@ import {
   useUpdateRuntime,
 } from "../../api/queries";
 import type { Runtime } from "../../api/types";
+import { forgeHost, repoHref } from "../../forge";
 import { formatAbsolute } from "../../format";
 import {
   Button,
@@ -134,7 +135,7 @@ function ConnectedRepositories({ runtime }: { runtime: Runtime }) {
                   {project.name}
                 </Link>
                 <a
-                  href={`https://github.com/${project.github_repo}`}
+                  href={repoHref(project.github_repo, forgeHost(null, undefined, project.forge))}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 font-mono text-body-sm text-subtle hover:text-default hover:underline"

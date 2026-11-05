@@ -23,6 +23,7 @@ from orchestrator.secrets.crypto import load_keyring
 from orchestrator.settings import (
     E2bSettings,
     GitLabSettings,
+    MultiOrgSettings,
     RuntimeSettings,
     Settings,
     get_settings,
@@ -59,6 +60,18 @@ def test_the_startup_check_builds_both_host_adapters(monkeypatch: pytest.MonkeyP
     )
     assert container.problems(_settings, environ={}) == []
     assert recorded == ["claude_cli", "codex_cli"]
+
+
+def test_open_signup_without_mail_is_named() -> None:
+    """The API refuses to start, which the supervisor would restart for ever behind a 503."""
+
+    def multi_org() -> Settings:
+        settings = _settings()
+        settings.multi_org = MultiOrgSettings(enabled=True)
+        return settings
+
+    [found] = container.problems(multi_org, environ={})
+    assert found.startswith("FACTORIAL_MULTI_ORG__ENABLED needs mail")
 
 
 def test_an_empty_api_token_is_named() -> None:

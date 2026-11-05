@@ -111,6 +111,17 @@ export interface Account {
   name: string;
 }
 
+export interface ForgeDisplay {
+  kind: string;
+  name: string;
+  origin: string;
+  pull_noun: string;
+  issue_path: string;
+  pull_path: string;
+  tree_path: string;
+  commit_path: string;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -119,6 +130,7 @@ export interface Project {
   settings: Record<string, unknown>;
   active: boolean;
   created_at: string;
+  forge?: ForgeDisplay | null;
 }
 
 /** The runtime a project's latest process version names. `name` is null when no Runtime row
@@ -1324,6 +1336,8 @@ export interface RuntimeProject {
   id: number;
   name: string;
   github_repo: string;
+  /** Absent on a payload from before the list carried it; that reads as GitHub. */
+  forge?: ForgeDisplay | null;
 }
 
 /** `api.schemas.RuntimeCredentialOut`. `updated_at` moves when the value is replaced;
@@ -1721,6 +1735,8 @@ export interface AssistantSettings {
   turn_budget_usd: string;
   max_steps: number;
   daily_budget_usd: string;
+  /** Everyone's spend together in one day; null sets no cap. */
+  organization_daily_budget_usd: string | null;
   bedrock_region: string;
 }
 
@@ -1728,7 +1744,8 @@ export interface AssistantBackend {
   kind: string;
   label: string;
   auth_modes: string[];
-  default_model: string;
+  /** auth mode -> the model a switch to it starts from. */
+  default_models: Record<string, string>;
 }
 
 /** The stored credential's provenance, never the credential. */
@@ -1746,9 +1763,18 @@ export interface AssistantStatus {
   at?: string | null;
 }
 
+/** One stored credential's place and provenance (`api.schemas.AssistantStoredCredentialOut`). */
+export interface AssistantStoredCredential {
+  backend: string;
+  auth_mode: string;
+  updated_by: string;
+  updated_at: string;
+}
+
 export interface AssistantSettingsOut {
   settings: AssistantSettings;
-  credential: AssistantCredential;
+  /** Every stored credential, the saved backend and auth mode's among them. */
+  credentials: AssistantStoredCredential[];
   backends: AssistantBackend[];
   /** Same gate as POST …/messages: enabled plus credential or Bedrock mint. */
   ready_to_send: boolean;

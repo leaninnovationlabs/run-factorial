@@ -59,6 +59,7 @@ const APP: GitHubConnection = {
 async function mounted(
   connection: GitHubConnection = APP,
   permissions?: string[],
+  project: ProjectDetail = detail,
 ): Promise<HTMLElement> {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   holding(qc, permissions);
@@ -67,7 +68,7 @@ async function mounted(
   view = await mount(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <TicketSourceBody project={detail} rows={[]} />
+        <TicketSourceBody project={project} rows={[]} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -85,6 +86,21 @@ const field = (root: HTMLElement, label: string): HTMLInputElement | null => {
 };
 
 describe("the GitHub connection", () => {
+  it("opens on GitHub for a GitHub source that still carries the GitLab form's hint", async () => {
+    const stale = {
+      ...detail,
+      settings: {
+        ...detail.settings,
+        forge: "gitlab",
+        gitlab: { base_url: "https://gitlab.example" },
+      },
+    } as ProjectDetail;
+    const root = await mounted(APP, undefined, stale);
+    expect(root.querySelector<HTMLSelectElement>("select")?.value).toBe("github");
+    expect(field(root, "GitLab URL")).toBeNull();
+    expect(field(root, "Issues repository")).not.toBeNull();
+  });
+
   it("shows App fields by default and Token fields when chosen", async () => {
     const root = await mounted({ ...APP, mode: null, app_id: "", webhook_url: "" });
     expect(root.textContent).toContain("Connect with");

@@ -33,6 +33,30 @@ const InvitePage = lazy(() =>
   import("./pages/accountPages").then((m) => ({ default: m.InvitePage })),
 );
 
+/** The pages the deployment's emails link to (design.md §7.19 items 16 and 17), one chunk. */
+const CheckEmailPage = lazy(() =>
+  import("./pages/emailPages").then((m) => ({ default: m.CheckEmailPage })),
+);
+const VerifyEmailPage = lazy(() =>
+  import("./pages/emailPages").then((m) => ({ default: m.VerifyEmailPage })),
+);
+const ForgotPasswordPage = lazy(() =>
+  import("./pages/emailPages").then((m) => ({ default: m.ForgotPasswordPage })),
+);
+const ResetPasswordPage = lazy(() =>
+  import("./pages/emailPages").then((m) => ({ default: m.ResetPasswordPage })),
+);
+
+/** Where a verification link lands. Only a session of its account redeems it, so a browser
+ *  without one signs in here first and the page sends the token after. */
+export const VERIFY_EMAIL_PATH = "/verify-email";
+
+/** Pages that need no session: a reset link proves the mailbox by itself. */
+const SESSIONLESS: Record<string, ComponentType> = {
+  "/forgot-password": ForgotPasswordPage,
+  "/reset-password": ResetPasswordPage,
+};
+
 /** Where a step's page link sends a browser that has no session (`api/routes/pages.py`). */
 export const PAGE_SIGN_IN_PATH = "/sign-in";
 
@@ -57,14 +81,15 @@ export function SessionCheck() {
 }
 
 export function App() {
-  const { sessionEmail, checking, signOut } = useAuth();
+  const { sessionEmail, mustVerify, checking, signOut } = useAuth();
   const { pathname } = useLocation();
 
-  // Shown signed in or not: the page moves a signed-in reader on to the page link.
+  // Shown signed in or not: the page moves a signed-in reader on to the page link. The link
+  // refuses an unverified session too, so moving that one on would loop.
   if (pathname === PAGE_SIGN_IN_PATH) {
     return (
       <Suspense fallback={<SessionCheck />}>
-        <SignInPage forPage />
+        {sessionEmail && mustVerify ? <CheckEmailPage /> : <SignInPage forPage />}
       </Suspense>
     );
   }
@@ -76,12 +101,32 @@ export function App() {
       </Suspense>
     );
   }
+  const Sessionless = SESSIONLESS[pathname];
+  if (Sessionless) {
+    return (
+      <Suspense fallback={<SessionCheck />}>
+        <Sessionless />
+      </Suspense>
+    );
+  }
   // One gate: a session, from a password or an SSO sign-in.
   if (checking) return <SessionCheck />;
   if (!sessionEmail) {
     return (
       <Suspense fallback={<SessionCheck />}>
-        {pathname === "/signup" ? <SignUpPage /> : <SignInPage />}
+        {pathname === "/signup" ? (
+          <SignUpPage />
+        ) : (
+          <SignInPage forVerify={pathname === VERIFY_EMAIL_PATH} />
+        )}
+      </Suspense>
+    );
+  }
+  // The second gate, while the deployment sends mail: a verified email.
+  if (pathname === VERIFY_EMAIL_PATH || mustVerify) {
+    return (
+      <Suspense fallback={<SessionCheck />}>
+        {pathname === VERIFY_EMAIL_PATH ? <VerifyEmailPage /> : <CheckEmailPage />}
       </Suspense>
     );
   }

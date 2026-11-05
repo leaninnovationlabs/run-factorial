@@ -282,7 +282,7 @@ export function TicketPage() {
   }
 
   const repo = project.data?.github_repo;
-  const forge = forgeHost(project.data?.ticket_source, project.data?.settings);
+  const forge = forgeHost(project.data?.ticket_source, project.data?.settings, project.data?.forge);
 
   const process = snapshot.data;
   const failing = (ticket.consecutive_failures ?? 0) > 0;

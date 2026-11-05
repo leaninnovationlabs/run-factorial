@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING, Final
 from githubkit import GitHub, TokenAuthStrategy
 from githubkit.exception import RequestFailed
 
+from orchestrator.adapters.state import AsyncKeyedMemo
 from orchestrator.github.client import GitHubClient, split_repo
 from orchestrator.github.observer import PER_PAGE, raw_pages
-from orchestrator.github.state import AsyncKeyedMemo
 
 if TYPE_CHECKING:
     from githubkit_schemas.latest.models import (

@@ -92,7 +92,7 @@ from orchestrator.predicates import Unmet
 from orchestrator.terminal.protocol import AUDIT_MAX
 from orchestrator.worker.acceptance import ci_checks, postconditions_met
 from orchestrator.worker.failures import _fail_run
-from orchestrator.worker.inputs import release_gitlab_run_token
+from orchestrator.worker.inputs import release_run_credential
 from orchestrator.worker.outputs import observe_outputs
 from orchestrator.worker.pricing import record_usage
 from orchestrator.worker.tick_context import _Tick, _timeout
@@ -280,7 +280,7 @@ async def _park_idle(
     """
     assert run.runtime_run_id is not None
     await adapter.interrupt(run.runtime_run_id, reason=ParkReason.IDLE)
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     run.status = StepRunStatus.INTERRUPTED
     run.ended_at = tick.now
     run.failure_reason = "parked idle, waiting on a human; the workspace is kept for a resume"
@@ -516,7 +516,7 @@ async def _roll_over(
 
 async def _park_unrenewed(tick: _Tick, step: AgentStep, run: StepRun, why: str) -> None:
     """A rollover that stopped the session and could not start it again, `why` in words."""
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     run.status = StepRunStatus.INTERRUPTED
     run.ended_at = tick.now
     run.failure_reason = "parked to renew its token, and could not be resumed"
@@ -572,7 +572,7 @@ async def _parked_at_ceiling(
     assert run.runtime_run_id is not None
     if not interrupted:
         await adapter.interrupt(run.runtime_run_id, reason=ParkReason.CEILING)
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     run.status = StepRunStatus.INTERRUPTED
     run.ended_at = tick.now
     run.failure_reason = "parked at its session ceiling; the workspace is kept for a resume"
@@ -759,7 +759,7 @@ async def _park_exited(tick: _Tick, step: AgentStep, run: StepRun, unmet: Unmet)
     Interrupt would. It is already stopped, so nothing is sent to the substrate."""
     assert run.runtime_run_id is not None
     at_prompt = run.status == StepRunStatus.IDLE
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     run.status = StepRunStatus.INTERRUPTED
     run.ended_at = tick.now
     run.failure_reason = (

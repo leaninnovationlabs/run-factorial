@@ -8,10 +8,10 @@ from typing import Annotated
 
 from fastmcp.dependencies import Depends
 from fastmcp.tools.base import ToolResult
-from githubkit.exception import RequestFailed
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from orchestrator.adapters.registry import display_of, host_failure
 from orchestrator.api.schemas import PinOut
 from orchestrator.api.services.actor import Actor
 from orchestrator.api.services.errors import NotFound, Unavailable, UpstreamFailed
@@ -31,7 +31,6 @@ from orchestrator.db.models import (
     ProcessVersion,
     StepRun,
     Ticket,
-    TicketSourceKind,
     TicketStatus,
 )
 from orchestrator.events.read_models import (
@@ -46,7 +45,7 @@ from orchestrator.events.read_models import (
     ticket_timeline,
 )
 from orchestrator.factorial.registry import lane_head
-from orchestrator.github import GitHubStateSource, StateSource
+from orchestrator.github import StateSource
 from orchestrator.mcp_server.auth import current_actor
 from orchestrator.mcp_server.context import ToolContext, tool_context
 from orchestrator.mcp_server.registry import ToolSpec, tool
@@ -326,53 +325,34 @@ async def _admitted(
 async def _not_admitted(tc: ToolContext, issue: IssueRef) -> ToolResult:
     ref = f"{issue.repo}#{issue.number}"
     source = await ticket_source(tc.session, issue.project.id)
-    if source is not None and source.kind == TicketSourceKind.GITLAB:
-        from orchestrator.gitlab.client import GitLabError
-        from orchestrator.gitlab.observer import GitLabStateSource
-
-        gitlab = await tc.gitlab(issue.project)
-        try:
-            pending = await pending_issue(
-                tc.session,
-                issue.project,
-                source,
-                issue.number,
-                lambda repo, number: GitLabStateSource(gitlab, repo, number),
-                gitlab.settings.bot_login,
-            )
-        except GitLabError as exc:
-            if exc.status_code == 404:
-                raise NotFound(f"{ref} is not an issue Factorial can read on GitLab.") from exc
-            raise UpstreamFailed(
-                f"Factorial couldn't read {ref} from GitLab (HTTP {exc.status_code or 'unknown'})."
-            ) from exc
-    elif source is None or source.kind != TicketSourceKind.GITHUB:
+    if source is None:
         raise NotFound(
-            f"{ref} is not a ticket, and project {issue.project.name} has no GitHub ticket "
-            "source to admit it from.",
+            f"{ref} is not a ticket, and project {issue.project.name} has no ticket source to "
+            "admit it from.",
             hint="A person adds one on the project page.",
         )
-    else:
-        github = await tc.deps.github(issue.project)
-        if github is None:
-            raise Unavailable(tc.deps.github_missing)
-        client = github.client
-        try:
-            pending = await pending_issue(
-                tc.session,
-                issue.project,
-                source,
-                issue.number,
-                lambda repo, number: GitHubStateSource(client, repo, number),
-                github.bot_login,
-            )
-        except RequestFailed as exc:
-            code = exc.response.status_code
-            if code == 404:
-                raise NotFound(f"{ref} is not an issue Factorial can read on GitHub.") from exc
-            raise UpstreamFailed(
-                f"Factorial couldn't read {ref} from GitHub (HTTP {code})."
-            ) from exc
+    bindings = await tc.bindings(issue.project)
+    if bindings is None:
+        raise Unavailable(await tc.unbound(issue.project))
+    try:
+        pending = await pending_issue(
+            tc.session,
+            issue.project,
+            source,
+            issue.number,
+            lambda repo, number: bindings.snapshot(repo, str(number)),
+            bindings.bot_login,
+        )
+    except Exception as exc:
+        failure = host_failure(exc)
+        if failure is None:
+            raise
+        name = display_of(issue.project, source.kind).name
+        if failure.status == 404:
+            raise NotFound(f"{ref} is not an issue Factorial can read on {name}.") from exc
+        raise UpstreamFailed(
+            f"Factorial couldn't read {ref} from {name} (HTTP {failure.status or 'unknown'})."
+        ) from exc
     out = TicketGetOut(
         ref=ref,
         pending=(
@@ -526,27 +506,15 @@ async def run_ticket_create(
     idempotency_key: str | None,
 ) -> ToolResult:
     target = await resolve_project(tc.session, tc.organization_id, project)
-    source = await ticket_source(tc.session, target.id)
-    if source is not None and source.kind == TicketSourceKind.GITLAB:
-        from orchestrator.gitlab.issues import GitLabIssueWriter
-        from orchestrator.gitlab.observer import GitLabStateSource
+    writer = await tc.issue_writer(target)
+    bindings = await tc.bindings(target)
+    bot_login = bindings.bot_login if bindings is not None else ""
+    missing = "" if bindings is not None else await tc.unbound(target)
 
-        gitlab = await tc.gitlab(target)
-        writer = GitLabIssueWriter(gitlab)
-        bot_login = gitlab.settings.bot_login
-
-        def state_source(repo: str, number: int) -> StateSource:
-            return GitLabStateSource(gitlab, repo, number)
-
-    else:
-        writer = await tc.issue_writer(target)
-        github = await tc.deps.github(target)
-        bot_login = github.bot_login if github is not None else ""
-
-        def state_source(repo: str, number: int) -> StateSource:
-            if github is None:
-                raise Unavailable(tc.deps.github_missing)
-            return GitHubStateSource(github.client, repo, number)
+    def state_source(repo: str, number: int) -> StateSource:
+        if bindings is None:
+            raise Unavailable(missing)
+        return bindings.snapshot(repo, str(number))
 
     created = await create_ticket(
         tc.session,
@@ -602,7 +570,5 @@ def _created_out(created: CreatedTicket) -> TicketCreateOut:
 TOOLS: list[ToolSpec] = [factorial_tickets_list, factorial_ticket_get, factorial_ticket_create]
 
 
-def _ticket_url(where, number: str) -> str:
-    if getattr(where, "forge", "github") == "gitlab":
-        return f"{where.origin}/{where.github_repo}/-/issues/{number}"
-    return f"https://github.com/{where.github_repo}/issues/{number}"
+def _ticket_url(where: ProjectRepos, number: str) -> str:
+    return where.host.issue_href(where.github_repo, number)

@@ -7,7 +7,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { keys } from "../../api/queries";
-import type { CredentialTest, Runtime, RuntimeTemplateBuild } from "../../api/types";
+import type {
+  CredentialTest,
+  Runtime,
+  RuntimeProject,
+  RuntimeTemplateBuild,
+} from "../../api/types";
 import { click, type Mounted, mount, settle } from "../../testDom";
 import { RuntimeDetail } from "./RuntimeDetail";
 
@@ -62,11 +67,15 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function page(runtime: Runtime, builds?: RuntimeTemplateBuild[]): Promise<HTMLElement> {
+async function page(
+  runtime: Runtime,
+  builds?: RuntimeTemplateBuild[],
+  projects: RuntimeProject[] = [],
+): Promise<HTMLElement> {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  qc.setQueryData(keys.runtimeProjects(runtime.id), []);
+  qc.setQueryData(keys.runtimeProjects(runtime.id), projects);
   if (builds) qc.setQueryData(keys.runtimeTemplates(runtime.id), builds);
   view = await mount(
     <QueryClientProvider client={qc}>
@@ -77,6 +86,35 @@ async function page(runtime: Runtime, builds?: RuntimeTemplateBuild[]): Promise<
   );
   return view.container;
 }
+
+describe("the runtime's connected repositories", () => {
+  it("opens each repository on its project's own host", async () => {
+    const root = await page(e2bRuntime({ connected_projects: 2 }), undefined, [
+      { id: 1, name: "Widgets", github_repo: "acme/widgets" },
+      {
+        id: 2,
+        name: "Ledger",
+        github_repo: "finance/ledger",
+        forge: {
+          kind: "gitlab",
+          name: "GitLab",
+          origin: "https://gitlab.example.com",
+          pull_noun: "MR",
+          issue_path: "/-/issues/{key}",
+          pull_path: "/-/merge_requests/{number}",
+          tree_path: "/-/tree/{branch}",
+          commit_path: "/-/commit/{sha}",
+        },
+      },
+    ]);
+    const href = (repo: string) =>
+      [...root.querySelectorAll("a")]
+        .find((a) => a.textContent?.trim() === repo)
+        ?.getAttribute("href");
+    expect(href("acme/widgets")).toBe("https://github.com/acme/widgets");
+    expect(href("finance/ledger")).toBe("https://gitlab.example.com/finance/ledger");
+  });
+});
 
 describe("an E2B runtime's chosen build", () => {
   it("says the worker refuses an unverified or unlisted build, with the vendor's smoke", async () => {

@@ -20,10 +20,19 @@ import { chatItem, chatTurn, mountInAssistant, type SseBody, sseBody } from "./t
 
 let view: Mounted | null = null;
 
+function stored(updatedAt = "2026-10-01T09:00:00Z") {
+  return {
+    backend: "claude_sdk",
+    auth_mode: "api_key",
+    updated_by: "operator@example.com",
+    updated_at: updatedAt,
+  };
+}
+
 function settings(enabled = true, credential = true): AssistantSettingsOut {
   return {
     settings: { enabled },
-    credential: { set: credential, updated_by: null, updated_at: null },
+    credentials: credential ? [stored()] : [],
     ready_to_send: enabled && credential,
     backends: [],
     status: null,
@@ -55,8 +64,8 @@ function stubApi({
     const current = await api.getAssistantSettings();
     return {
       enabled: current.settings.enabled,
-      credential_set: current.credential.set,
-      credential_updated_at: current.credential.updated_at,
+      credential_set: current.credentials.length > 0,
+      credential_updated_at: current.credentials[0]?.updated_at ?? null,
       ready_to_send: current.ready_to_send,
     };
   });
@@ -185,6 +194,13 @@ describe("AssistantPage", () => {
     expect(dialog()?.textContent).toContain("Set up the assistant");
     expect(dialog()?.textContent).toContain("Ask an admin to set it up.");
     expect(byText(dialog() ?? document.body, "a", "Open the assistant settings")).toBeFalsy();
+  });
+
+  test("on Bedrock through the host's role, with no credential stored, the composer is offered", async () => {
+    stubApi({ configured: { ...settings(true, false), ready_to_send: true }, items: ANSWERED });
+    await ask();
+    expect(dialog()?.textContent).not.toContain("Set up the assistant");
+    expect(composer()).not.toBeNull();
   });
 
   test("the composer is disabled while a turn is queued or running, and Stop cancels it", async () => {
@@ -434,11 +450,7 @@ describe("AssistantPage", () => {
     // Fixed in Assistant settings, which saves and refreshes the settings every view reads.
     vi.mocked(api.getAssistantSettings).mockResolvedValue({
       ...settings(),
-      credential: {
-        set: true,
-        updated_by: "operator@example.com",
-        updated_at: "2026-10-12T10:00:00Z",
-      },
+      credentials: [stored("2026-10-12T10:00:00Z")],
       ready_to_send: true,
     });
     await act(async () => {

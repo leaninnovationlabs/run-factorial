@@ -1,6 +1,6 @@
 # Factorial — High-Level Design
 
-**Status:** v0.16 · 2026-10-25
+**Status:** v0.17 · 2026-11-03
 **Scope of this phase:** GitHub (Issues + PRs + Actions) and GitLab (issues, pull/merge requests and CI). App Runtime is out of scope.
 
 ## 1. Overview
@@ -1688,8 +1688,8 @@ tools, which read and propose.
    leaves the proposal approved, never pending again, with the failure on its card. A service
    refusal ends it `refused` with the service's words. Every outcome adds a notice in the
    person's words and queues one continuation turn, which two approvals in a row share; when
-   the person's daily budget is spent, the write still runs, the notice says so, and no turn
-   follows. A decline queues nothing, and a proposal still pending after 24 hours expires
+   the person's or the organization's daily budget is spent, the write still runs, the notice
+   says so, and no turn follows. A decline queues nothing, and a proposal still pending after 24 hours expires
    (Approve then answers 410): the next turn's message carries either to the model. At a
    session ceiling a chat resume is refused, as an MCP one is (decision 56).
 7. **Config keeps §7.17's guard.** Chat commits refuse `agents/`, `skills/` and approver changes:
@@ -1719,8 +1719,9 @@ Seven costs are accepted:
    any GET under a project's repos. On GitLab it is only a project's metadata (its tokens
    removed) and its repository, issue, merge-request and member reads: no CI variable, job log,
    artifact, hook or token.
-6. **Costs are estimates.** The SDK estimates cost on the client, and the daily budget uses those
-   estimates.
+6. **Costs are estimates.** The SDK estimates cost on the client, and both daily budgets use
+   those estimates. On a subscription the estimate is at API prices and does not track the
+   plan's own limits. Codex reports no cost, so no budget limits a Codex conversation.
 7. **Conversations store quoted issue text** until the person deletes the conversation, and for
    at most 30 days after its last activity.
 
@@ -1739,18 +1740,21 @@ the open-source build ships with it off:
   owner who sent it already decided. A password signup must send the invite's token, so a
   person who only knows the invited address cannot take the account first.
 - **On: many organizations.** Anyone signs up, and any account creates organizations.
-  `auth.allowed_domains` decides nothing, and an SSO sign-in joins nothing by itself.
+  `auth.allowed_domains` decides nothing, and an SSO sign-in joins nothing by itself. Signup is
+  open, so the deployment must send mail to verify it (item 17).
 
 1. **An account is an email.** `app_user` keeps one row for each lowercase email. A session
-   carries the email, whether an SSO sign-in had verified the account when the session began,
+   carries the email, whether the account's email was verified when the session began,
    and the account's session epoch (item 14) (tech-stack.md decision 12), so changing the flag
    signs nobody out.
    An account signs in with a password, Google or OIDC. The first SSO sign-in creates it.
-2. **A password does not prove the email.** Until email verification exists, only an SSO sign-in
-   sets `email_verified_at`. A verified SSO sign-in that reaches an account with an unverified
-   email removes its password, because the person who set it may not own the mailbox. It also
-   ends every session that began before. Without this, that person keeps a session and sets the
-   password again. The MCP tokens that person minted stay (accepted cost 2).
+2. **A password does not prove the email.** Only the mailbox or the identity provider does:
+   `email_verified_at` is set by a verified SSO sign-in, a verification link or a password reset
+   (item 16). A verified SSO sign-in that reaches an account with an unverified email removes
+   its password, and a reset replaces it, because the person who set it may not own the
+   mailbox. Both end every session that began before. Without this, that person keeps a session
+   and sets the password again. A reset also revokes the MCP tokens the account's sessions
+   minted; an SSO sign-in does not (accepted cost 2).
 3. **Membership is the tenant boundary.** A person reaches an organization only through an
    `organization_member` row. A person who is not a member gets 404, never 403, so a slug does
    not tell a stranger that the organization exists. This holds with the flag off too: a person
@@ -1844,19 +1848,60 @@ the open-source build ships with it off:
     (`dashboard_origins`) or it sends `Sec-Fetch-Site: same-origin`. It answers 403, not 401, so
     the dashboard does not sign the person out. The bearer token is exempt: a browser never
     sends it by itself.
+16. **An email with a link proves the mailbox.** With mail configured (`FACTORIAL_MAIL__*`, one
+    SMTP server), the API sends two emails, each a link with a token: a verification after a
+    password signup, at a password sign-in of an unverified account with no live link, or on
+    request, and a password reset on request. The token is 32 random
+    bytes. The `email_verification` row keeps only its SHA-256, its purpose (`verify` or
+    `reset`), the address it went to, and its expiry: a day for `verify`, an hour for `reset`.
+    A token works once, and a new one for the same account and purpose replaces it. Every link
+    starts with `auth.external_url`, never the request's `Host`, so a forged header cannot send
+    a token to another host. Each link opens a dashboard page that sends the token by POST, so
+    a mail scanner that opens the link uses nothing.
+    - **A verification link verifies only the account that is signed in.** The page asks the
+      person to sign in, then sends the token with that session, and the API refuses a token
+      whose email is not the session's. Without this, the owner of a mailbox who opens a link
+      they did not ask for would verify the account of a stranger who set its password. The
+      browser that sends the token gets a new session. Every other session of the account that
+      began unverified ends, as after an SSO sign-in.
+    - **A reset needs no session.** It sets the new password and `email_verified_at`, and ends
+      every session and every session-minted MCP token (item 14). This is how the owner of an
+      address takes back an account that a stranger registered with it. The reset request
+      answers the same whether the email has an account or not, and it looks the email up
+      after the answer, so its time does not tell either.
+    - **Sending is limited.** One email a minute and five a day for each account and purpose,
+      and the request routes count against each client address too. Open signup lets anyone
+      make the deployment write to any address, and a provider suspends a sender whose mail
+      bounces or is reported.
+17. **With mail, an unverified session reaches only its verification.** While mail is
+    configured, a session whose email is not verified may read `/auth/me`, ask for a new
+    verification email, send a token, and sign out. The guard, the page route and the terminal
+    gateway refuse it everything else, with the 403 `email_unverified`, and an MCP token that a
+    session of an unverified account minted is refused (item 7), also after the account is
+    verified: it may be a stranger's. An account that SSO created is
+    verified already. Without mail there is nothing to verify with, so the gate is off. With
+    multi-org on the API refuses to start without mail, because open signup without
+    verification lets a stranger take an invite to an address they registered, and the image's
+    startup check names the missing mail.
+    `python -m orchestrator.admin verify-email <email>` verifies an account whose mail does not
+    arrive.
 
 This design accepts five costs:
 
-1. **With multi-org on, an unverified email can take an invite.** Anyone can sign up there, so
-   an invite to an address that a stranger registered first with a password reaches the
-   stranger. The members list marks unverified accounts. Email verification closes this. With
-   multi-org off, a password signup needs the invite's token, so this does not happen.
+1. **Without mail, a password account stays unverified.** An install with multi-org off and no
+   mail cannot verify a password signup. There a signup needs an invite's token or the empty
+   install, so a stranger cannot take an invited address first, but `email_verified_at` stays
+   empty and the members list marks each such account unverified. With multi-org on the API
+   does not start without mail (item 17).
 2. **An SSO sign-in keeps the MCP tokens of the account it verifies.** A stranger who
    registered the address first and minted a token keeps that token until it expires or someone
    revokes it. Revoking them all would also break the tokens of each honest person who signed
-   up with a password and then signs in by SSO.
+   up with a password and then signs in by SSO. With mail configured an unverified account
+   cannot mint a token, and one it minted before is refused (item 17), so this cost is an
+   install's without mail. A reset revokes them.
 3. **Signup and sign-in say whether an email has an account.** A stranger can learn whether an
-   address is registered. Email verification closes this.
+   address is registered. A reset request answers the same for every email, but signup still
+   tells.
 4. **Two organizations' projects may use one GitHub App.** Each project stores its own copy of
    the key, and a delivery to the App's URL wakes only the projects whose webhook secret
    verifies it (§7.1 item 7).
@@ -1883,11 +1928,13 @@ entrypoints over one `orchestrator` package, deployed as separate processes (tec
 ## 9. MVP slice & non-goals
 
 **MVP:** one process (`refine → spec gate → develop → code gate → done`), GitHub or GitLab
-issues/reviews/CI, one agent substrate adapter, event log + minimal dashboard.
+issues/reviews/CI, one agent substrate adapter, event log + minimal dashboard. Snapshot types
+and the Tracker / Forge protocols live in `orchestrator.adapters`; a composite `StateSource`
+can pair one of each. The worker still binds both from the ticket source.
 
 **Non-goals (this phase):** Jira, deploy/monitoring steps, App Runtime, multi-repo tickets,
 carrying an in-flight ticket's progress onto a new config (a restart starts it fresh instead,
 tech-stack.md decision 67), redo of a step the ticket passed beyond the reviewed one, rolling a
 shared branch back (tech-stack.md decision 76), Projects v2 integration, custom roles, joining an organization by email domain,
-email verification and sending invites by email (§7.19). A step preview is not a deploy step
+sending invites and notifications by email (§7.19). A step preview is not a deploy step
 (§3.3).

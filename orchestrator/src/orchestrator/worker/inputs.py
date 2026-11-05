@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import partial
 from typing import Final
 
 from pydantic import SecretStr
@@ -203,26 +202,19 @@ async def _resolve_inputs(
         *await _rework_inputs(tick, step, attempt),
         *await _redo_inputs(tick, step, entered_by),
     ]
-    from orchestrator.github.media import media_refs
-    from orchestrator.gitlab.media import gitlab_media_refs
-
     attachments, missing = await resolve_attachments(
         media_for(tick),
         tick.source.repo,
         [(item.input.value, item.items) for item in resolved],
         prefix="image",
-        refs=gitlab_media_refs if tick.source_kind == "gitlab" else media_refs,
+        refs=tick.host().media_refs,
     )
     return ResolvedInputs(tuple(item.input for item in resolved), attachments, missing)
 
 
 def media_for(tick: _Tick) -> MediaFactory | None:
-    """The images an input embeds are fetched with the ticket's own forge credentials."""
-    if tick.source_kind == "gitlab":
-        from orchestrator.gitlab.media import GitLabMedia
-
-        return None if tick.gitlab is None else partial(GitLabMedia, tick.gitlab)
-    return tick.github.media if tick.github else None
+    """The images an input embeds are fetched with the ticket's own tracker credentials."""
+    return tick.host().media(tick.project.github_repo)
 
 
 def _wants_pr_review_comments(inputs: Sequence[InputRef]) -> bool:
@@ -603,7 +595,7 @@ async def run_secrets(
     repo: str,
     *,
     runtime_id: int | None = None,
-    gitlab_run_id: int | None = None,
+    run_id: int,
 ) -> RunSecrets:
     """Everything the substrate injects for one run: the agent's declarations, the registry
     runtime's own credentials when the run is on one, plus a `GH_TOKEN` and `FACTORIAL_BOT_LOGIN`
@@ -647,64 +639,20 @@ async def run_secrets(
     # whatever the manifest declares. Token mode's stored token arrives as `GH_TOKEN` below.
     for key in CONNECTION_SECRETS:
         secrets.pop(key, None)
-    if getattr(tick, "source_kind", "github") == "gitlab":
-        # The stored GitLab token never enters the run. A project access token is minted for
-        # this step_run. `GH_TOKEN` is the git channel the adapters already honour. The same
-        # project token is also `GITLAB_TOKEN`: Claude and the agent prompts look for that
-        # name on a GitLab remote, and with it missing they ask the operator to log in.
-        for key in ("GITLAB_TOKEN", "GITLAB_WEBHOOK_SECRET"):
-            secrets.pop(key, None)
-        if gitlab_run_id is None:
-            raise RuntimeError(
-                "a GitLab run has no step_run id, so no project-scoped token can be minted"
-            )
-        from pathlib import Path as _Path
-        from tempfile import gettempdir
-
-        from orchestrator.gitlab.ca_file import CA_ENV_KEYS, write_run_ca_file
-        from orchestrator.gitlab.run_token import mint_project_run_token
-
-        client = tick.gitlab
-        if client is None:
-            raise RuntimeError(
-                f"project {tick.project.name!r} runs on GitLab, but the GitLab URL was refused "
-                "or GITLAB_TOKEN is not set"
-            )
-        gitlab_settings = client.settings
-        minted = SecretStr(await mint_project_run_token(client, repo, gitlab_run_id, now=tick.now))
-        secrets[GH_TOKEN_KEY] = minted
-        secrets["GITLAB_TOKEN"] = minted
-        if gitlab_settings.host:
-            secrets["GIT_HTTP_HOST"] = SecretStr(gitlab_settings.host)
-        if gitlab_settings.bot_login:
-            secrets[BOT_LOGIN_KEY] = SecretStr(gitlab_settings.bot_login)
-        ca_path = write_run_ca_file(
-            gitlab_settings, _Path(gettempdir()) / f"factorial-gitlab-ca-{tick.project.id}.pem"
+    forge = tick.host().forge
+    for key in forge.withheld_secrets:
+        secrets.pop(key, None)
+    # Minted per run on the project's own forge, scoped to this agent's permission request
+    # (design.md §7.1). A resume mints a NEW one rather than reusing the run's original:
+    # that token was scoped for an hour at spawn and the ticket may have sat parked past it.
+    secrets.update(
+        await forge.grant_run_secrets(
+            repo,
+            run_id,
+            now=tick.now,
+            permissions=requested_permissions(resolved.manifest.permissions),
         )
-        if ca_path is not None:
-            located = SecretStr(str(ca_path))
-            for key in CA_ENV_KEYS:
-                secrets[key] = located
-    else:
-        if tick.github is None:
-            raise RuntimeError(f"project {tick.project.name!r} has no GitHub connection")
-        # Minted per run on the project's own client, scoped to the repo and to this agent's own
-        # permission request (design.md §7.1); a token-mode connection hands back its stored
-        # token. `resolve_agent` has already refused a manifest asking past its project ceiling,
-        # and `requested_permissions` is the same function that check ran through — so the
-        # request minted is the request checked. `GH_TOKEN` is the one channel the agent
-        # credential travels on: an adapter that finds it in `secrets` must use it, never mint
-        # its own (S7).
-        #
-        # A resume mints a NEW one rather than reusing the run's original: that token was scoped
-        # for an hour at spawn and the ticket may have sat parked past it. Same scope, same
-        # permission request, still the orchestrator doing the minting.
-        minted = await tick.github.client.mint_run_token(
-            repo, requested_permissions(resolved.manifest.permissions)
-        )
-        secrets[GH_TOKEN_KEY] = minted.token
-        if tick.github.bot_login:
-            secrets[BOT_LOGIN_KEY] = SecretStr(tick.github.bot_login)
+    )
     return RunSecrets(secrets, runtime_held)
 
 
@@ -744,18 +692,12 @@ async def sandbox_delivery(
     return tuple(routes), tuple(exposed)
 
 
-async def release_gitlab_run_token(tick: _Tick, run_id: int) -> None:
-    """Delete the project token minted for a finished run. A GitHub run has nothing to delete."""
-    if getattr(tick, "source_kind", "github") != "gitlab":
-        return
-    from orchestrator.gitlab.run_token import revoke_project_run_tokens
-
-    client = tick.gitlab
-    if client is None:
-        return
+async def release_run_credential(tick: _Tick, run_id: int) -> None:
+    """Delete the per-run credential the forge minted. A GitHub run has nothing to delete."""
     try:
-        await revoke_project_run_tokens(client, tick.project.github_repo, run_id)
+        await tick.host().forge.release_run_credential(tick.project.github_repo, run_id)
     except Exception:
         logger.exception(
-            "ticket %s: could not revoke the GitLab token for run %s", tick.ticket.id, run_id
+            "ticket %s: could not release the run credential for run %s", tick.ticket.id, run_id
         )
+

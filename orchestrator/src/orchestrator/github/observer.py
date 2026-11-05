@@ -28,9 +28,7 @@ from githubkit import GitHub, TokenAuthStrategy
 from githubkit.exception import RequestFailed
 from githubkit.utils import UNSET
 
-from orchestrator.events.types import aware_time
-from orchestrator.github.client import GitHubClient, split_repo
-from orchestrator.github.state import (
+from orchestrator.adapters.state import (
     AsyncKeyedMemo,
     AsyncOnce,
     BranchState,
@@ -43,6 +41,8 @@ from orchestrator.github.state import (
     ReviewVerdict,
     StateSource,
 )
+from orchestrator.events.types import aware_time
+from orchestrator.github.client import GitHubClient, split_repo
 
 __all__ = [
     "BranchProtection",

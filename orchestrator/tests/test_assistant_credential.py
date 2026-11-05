@@ -49,14 +49,12 @@ async def _organization(
     organization = Organization(slug=f"org-{uuid4().hex[:12]}", name="Acme", updated_by="test")
     session.add(organization)
     await session.flush()
-    await svc.save_assistant_settings(
-        session,
-        organization.id,
-        AssistantSettings.model_validate({"enabled": True, **settings}),
-        by="test",
-    )
+    saved = AssistantSettings.model_validate({"enabled": True, **settings})
+    await svc.save_assistant_settings(session, organization.id, saved, by="test")
     if credential is not None:
-        await svc.set_assistant_credential(session, organization.id, credential, by="test")
+        await svc.set_assistant_credential(
+            session, organization.id, saved.backend, saved.auth_mode, credential, by="test"
+        )
     return organization
 
 

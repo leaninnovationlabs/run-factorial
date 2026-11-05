@@ -319,6 +319,17 @@ export type AuthProviders = {
   multi_org?: boolean;
   /** The install is empty and its first account must send FACTORIAL_AUTH__BOOTSTRAP_TOKEN. */
   setup_token?: boolean;
+  /** The deployment sends email: a password signup verifies its address, and a forgotten
+   *  password can be reset (design.md §7.19 items 16 and 17). */
+  mail?: boolean;
+};
+
+export type AuthMe = {
+  email: string;
+  verified?: boolean;
+  /** Mail is configured and this session's email is not verified: it reaches nothing until the
+   *  link in its email is opened. */
+  must_verify?: boolean;
 };
 
 export function googleLoginUrl(next = "/"): string {
@@ -339,7 +350,19 @@ export const api = {
 
   /** With the cookie even across origins: in development the API is another port, and the
    *  terminal connects by the Google session when there is one (decision 57). */
-  authMe: () => request<{ email: string }>("/auth/me", { credentials: "include" }),
+  authMe: () => request<AuthMe>("/auth/me", { credentials: "include" }),
+
+  /** Send the signed-in account a new verification link. */
+  sendVerification: () => send<void>("POST", "/auth/email/verification"),
+
+  /** Redeem a verification link: only a session of the account it was sent to can. */
+  verifyEmail: (token: string) => send<void>("POST", "/auth/email/verify", { token }),
+
+  /** Answers the same whether the email has an account or not. */
+  forgotPassword: (email: string) => send<void>("POST", "/auth/password/forgot", { email }),
+
+  resetPassword: (body: { token: string; password: string }) =>
+    send<void>("POST", "/auth/password/reset", body),
 
   authLogout: () => request<void>("/auth/logout", { method: "POST", credentials: "include" }),
 
@@ -746,15 +769,16 @@ export const api = {
       credentials: "include",
     }),
 
-  setAssistantCredential: (value: string) =>
-    request<void>(orgPath("/settings/assistant/credential"), {
+  /** Refused with `settings_changed` unless the backend and auth mode are the saved ones. */
+  setAssistantCredential: (backend: string, authMode: string, value: string) =>
+    request<void>(orgPath(`/settings/assistant/credential/${backend}/${authMode}`), {
       method: "PUT",
       body: JSON.stringify({ value }),
       credentials: "include",
     }),
 
-  clearAssistantCredential: () =>
-    request<void>(orgPath("/settings/assistant/credential"), {
+  clearAssistantCredential: (backend: string, authMode: string) =>
+    request<void>(orgPath(`/settings/assistant/credential/${backend}/${authMode}`), {
       method: "DELETE",
       credentials: "include",
     }),

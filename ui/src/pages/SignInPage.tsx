@@ -42,9 +42,16 @@ export function pageLink(search: string): string {
  * configured. Nobody signs in with the API token (design.md §7.19).
  *
  * `forPage` is the screen a step's page link sends a browser to when it has no session
- * (`api/routes/pages.py`): the same doors, under a heading that says why.
+ * (`api/routes/pages.py`): the same doors, under a heading that says why. `forVerify` is the one
+ * a verification link meets: only a session of the account it was sent to can redeem it.
  */
-export function SignInPage({ forPage = false }: { forPage?: boolean }) {
+export function SignInPage({
+  forPage = false,
+  forVerify = false,
+}: {
+  forPage?: boolean;
+  forVerify?: boolean;
+}) {
   const { expired, sessionEmail } = useAuth();
   // Rendered in place of whatever route was asked for, so the URL is still that route: a
   // password sign-in comes back to it by itself, and an SSO door is told where to return.
@@ -54,6 +61,7 @@ export function SignInPage({ forPage = false }: { forPage?: boolean }) {
   const [oidc, setOidc] = useState(false);
   const [oidcLabel, setOidcLabel] = useState("SSO");
   const [signup, setSignup] = useState(false);
+  const [mail, setMail] = useState(false);
   usePageTitle([expired ? "Session expired" : "Sign in"]);
 
   // A password sign-in only reads the session again; an SSO one comes back to the link by itself.
@@ -71,6 +79,7 @@ export function SignInPage({ forPage = false }: { forPage?: boolean }) {
           if (cancelled) return;
           if (providers.google) setGoogle(true);
           if (providers.signup) setSignup(true);
+          if (providers.mail) setMail(true);
           if (providers.oidc) {
             setOidc(true);
             if (providers.oidc_label) setOidcLabel(providers.oidc_label);
@@ -102,6 +111,7 @@ export function SignInPage({ forPage = false }: { forPage?: boolean }) {
         oidc={oidc}
         oidcLabel={oidcLabel}
         signup={signup}
+        forgot={mail}
         expired={expired}
         notice={signInNotice(location.search)}
         next={
@@ -112,6 +122,7 @@ export function SignInPage({ forPage = false }: { forPage?: boolean }) {
               : inOrganization(org, withoutNotice(location))
         }
         forPage={forPage}
+        forVerify={forVerify}
       />
     </div>
   );
@@ -123,6 +134,8 @@ type SignInCardProps = {
   oidcLabel?: string;
   /** The deployment lets a stranger create an account here (`/auth/providers`). */
   signup?: boolean;
+  /** The deployment sends email, so a forgotten password can be reset. */
+  forgot?: boolean;
   /** Reached through a 401 rather than by arriving signed out. */
   expired: boolean;
   /** Back from an SSO sign-in that did not end in a session. */
@@ -131,6 +144,8 @@ type SignInCardProps = {
   next: string;
   /** Signing in to read a step's page. */
   forPage?: boolean;
+  /** Signing in to redeem a verification link. */
+  forVerify?: boolean;
 };
 
 /** The password form first, then each SSO door as one button of the same height and hairline. */
@@ -139,10 +154,12 @@ export function SignInCard({
   oidc = false,
   oidcLabel = "SSO",
   signup = false,
+  forgot = false,
   expired,
   notice = null,
   next,
   forPage = false,
+  forVerify = false,
 }: SignInCardProps) {
   return (
     <div className="relative grid w-full max-w-2xl grid-cols-1 overflow-hidden rounded-lg border border-default bg-surface shadow-raised sm:grid-cols-2">
@@ -152,6 +169,13 @@ export function SignInCard({
           <div className="text-center">
             <h1 className="text-heading-md text-default">Sign in to read this page</h1>
             <p className="mt-1 text-body text-subtle">The page opens after you sign in.</p>
+          </div>
+        ) : forVerify ? (
+          <div className="text-center">
+            <h1 className="text-heading-md text-default">Sign in to verify your email</h1>
+            <p className="mt-1 text-body text-subtle">
+              Use the account you created. The link works only there.
+            </p>
           </div>
         ) : expired ? (
           <div className="text-center">
@@ -171,7 +195,7 @@ export function SignInCard({
             It took too long, or it started in another tab. Try again.
           </SectionMessage>
         )}
-        <PasswordSignInForm signup={signup && !forPage} />
+        <PasswordSignInForm signup={signup && !forPage && !forVerify} forgot={forgot} />
         {(google || oidc) && (
           <div className="flex items-center gap-3 text-body-sm text-subtlest">
             <span className="h-px flex-1 bg-neutral" />

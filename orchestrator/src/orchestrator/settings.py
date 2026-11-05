@@ -14,6 +14,7 @@ import os
 import socket
 import tempfile
 from datetime import timedelta
+from email.utils import parseaddr
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Final, Literal
@@ -300,9 +301,7 @@ class TerminalSettings(BaseModel):
             return None
         url = value.strip().rstrip("/")
         parts = urlsplit(url)
-        if url and (
-            normalized_origin(url) is None or parts.path or parts.query or parts.fragment
-        ):
+        if url and (normalized_origin(url) is None or parts.path or parts.query or parts.fragment):
             raise ValueError(
                 f"FACTORIAL_TERMINAL__PUBLIC_URL must be an http(s) origin with no path: {url}"
             )
@@ -374,6 +373,44 @@ class AssistantProcessSettings(BaseModel):
     #: Set by the image's `assistant` service, where the process runs as its own OS user: a
     #: master key in reach there is a leak, so the process refuses to start (design.md §7.18).
     own_user: bool = False
+
+
+class MailSettings(BaseModel):
+    """The one SMTP server the deployment sends email through (tech-stack decision 91). An empty
+    host turns mail off: nothing is sent, and the email-verification gate is off."""
+
+    smtp_host: str = ""
+    #: Unset, 465 for `tls` and 587 otherwise.
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    #: `starttls` upgrades a plain connection (port 587), `tls` opens one (port 465), `none` is
+    #: for a server on the same machine or network that takes no credential.
+    security: Literal["starttls", "tls", "none"] = "starttls"
+    #: The sender, `no-reply@example.com` or `Factorial <no-reply@example.com>`.
+    from_address: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.smtp_host.strip())
+
+    @model_validator(mode="after")
+    def _complete(self) -> MailSettings:
+        if self.security == "tls" and "smtp_port" not in self.model_fields_set:
+            self.smtp_port = 465
+        if not self.enabled:
+            return self
+        if "@" not in parseaddr(self.from_address)[1]:
+            raise ValueError(
+                "FACTORIAL_MAIL__FROM_ADDRESS must be an address when FACTORIAL_MAIL__SMTP_HOST "
+                f"is set, got {self.from_address!r}"
+            )
+        if self.security == "none" and self.smtp_password.get_secret_value():
+            raise ValueError(
+                "FACTORIAL_MAIL__SECURITY=none would send FACTORIAL_MAIL__SMTP_PASSWORD in the "
+                "clear; use starttls or tls"
+            )
+        return self
 
 
 class MultiOrgSettings(BaseModel):
@@ -451,8 +488,7 @@ class AuthSettings(BaseModel):
 
     def resolved_oidc_client_secret(self) -> str:
         return (
-            self.oidc_client_secret.get_secret_value()
-            or self.okta_client_secret.get_secret_value()
+            self.oidc_client_secret.get_secret_value() or self.okta_client_secret.get_secret_value()
         )
 
     def resolved_oidc_label(self) -> str:
@@ -627,6 +663,7 @@ class Settings(BaseSettings):
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     assistant: AssistantProcessSettings = Field(default_factory=AssistantProcessSettings)
     multi_org: MultiOrgSettings = Field(default_factory=MultiOrgSettings)
+    mail: MailSettings = Field(default_factory=MailSettings)
 
     @property
     def dashboard_origins(self) -> frozenset[str]:
@@ -712,6 +749,25 @@ class Settings(BaseSettings):
     @classmethod
     def _split_origins(cls, value: object) -> object:
         return _split_list(value)
+
+
+def mail_problems(settings: Settings) -> list[str]:
+    """What keeps the API from starting. Open signup without verification lets a stranger take
+    an invite to an address they registered (design.md §7.19 item 17), and a link needs an
+    origin that is configuration, never the request's `Host`. The image's startup check names
+    them too, because there a crashing API reads as a working app."""
+    found: list[str] = []
+    if settings.multi_org.enabled and not settings.mail.enabled:
+        found.append(
+            "FACTORIAL_MULTI_ORG__ENABLED needs mail: set FACTORIAL_MAIL__SMTP_HOST, so a "
+            "password signup can verify its email"
+        )
+    if settings.mail.enabled and not settings.auth.external_url.strip():
+        found.append(
+            "FACTORIAL_MAIL__SMTP_HOST needs FACTORIAL_AUTH__EXTERNAL_URL: every link in an "
+            "email starts with it"
+        )
+    return found
 
 
 def is_loopback_host(host: str) -> bool:

@@ -135,6 +135,26 @@ describe("the project's dashboard page", () => {
     expect(byText(root, "button", "Activate")).toBeFalsy();
   });
 
+  it("opens a GitLab project's repository on its own GitLab host", async () => {
+    const root = await page(
+      withProject({
+        github_repo: "finance/harbor-invoices",
+        settings: { gitlab: { base_url: "https://gitlab.example.com" } },
+        ticket_source: {
+          id: 1,
+          project_id: PROJECT_ID,
+          kind: "gitlab",
+          external_ref: "finance/harbor-invoices",
+          webhook_secret_ref: null,
+          last_polled_at: null,
+          created_at: "2026-07-02T14:18:03Z",
+        },
+      }),
+    );
+    const repo = byText(root, "a", "finance/harbor-invoices");
+    expect(repo?.getAttribute("href")).toBe("https://gitlab.example.com/finance/harbor-invoices");
+  });
+
   it("asks the API for all time, even from an old link that names a shorter window", async () => {
     await page(undefined, "?span=4w");
     const read = requested().find((url) => url.pathname.endsWith("/dashboard"));

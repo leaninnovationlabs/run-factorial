@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocket
 
 from orchestrator.access import Permission
-from orchestrator.access.accounts import session_ended, verified_since
+from orchestrator.access.accounts import needs_verification, session_ended, verified_since
 from orchestrator.access.decision import allowed_on_run, caller_named
 from orchestrator.api.sessions import (
     SESSION_COOKIE,
@@ -302,8 +302,16 @@ class Gateway:
         handshake, and again at every recheck, so a removal or a demotion ends an open terminal
         too. A run that does not exist is left to the admission rule, which says so."""
         async with self.session_factory() as session:
-            if isinstance(credential, SessionCookie) and await session_ended(
-                session, email=credential.by, verified=credential.verified, epoch=credential.epoch
+            if isinstance(credential, SessionCookie) and (
+                needs_verification(
+                    verified=credential.verified, mail=self.settings.mail.enabled
+                )
+                or await session_ended(
+                    session,
+                    email=credential.by,
+                    verified=credential.verified,
+                    epoch=credential.epoch,
+                )
             ):
                 return False
             if isinstance(credential, Ticket) and (

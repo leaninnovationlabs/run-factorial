@@ -64,7 +64,7 @@ from orchestrator.worker.failures import (
 from orchestrator.worker.inputs import (
     RetryBriefing,
     _resolve_inputs,
-    release_gitlab_run_token,
+    release_run_credential,
     run_secrets,
     sandbox_delivery,
 )
@@ -222,7 +222,7 @@ async def _start_attempt(
             extra_inputs=(briefing.failure,) if briefing is not None else (),
         )
     except (LeaseLost, AgentRuntimeError):
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
         # A structural guard, not a note. Both are `RuntimeError` subclasses, so without this the
         # bare `RuntimeError` in `_PERMANENT_CONFIG_ERRORS` is protected only by call-site
         # ordering — a future reorder (a lease renewal inside `_build_run_spec`, a helper that
@@ -242,7 +242,7 @@ async def _start_attempt(
         await _fail_permanently(tick, step, run, exc)
         return run
     except Exception:
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
         raise
     # The one write site that knows `runtime_kind`: the resolved agent's manifest, already folded
     # into `RunSpec.runtime_options`. A gate, action or check row leaves it NULL.
@@ -330,7 +330,7 @@ async def _start_attempt(
             spec = fresh
             handle = await adapter.spawn(spec)
     except SpawnError as exc:
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
         if not _permanent_spawn(exc):
             raise
         # `run` is flushed inside the SAVEPOINT above, so failing it here keeps it: the row, both
@@ -339,7 +339,7 @@ async def _start_attempt(
         await _fail_permanently(tick, step, run, exc)
         return run
     except Exception:
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
         raise
     # First, before anything that can still raise: from here a rollback erases the only record
     # of a live run, and the pass's settle cancels it (decision 87).
@@ -353,7 +353,7 @@ async def _start_attempt(
                 step=step.name,
                 attempt=attempt,
                 repo=tick.project.github_repo,
-                gitlab=tick.gitlab if tick.source_kind == "gitlab" else None,
+                forge=tick.bindings.forge if tick.bindings is not None else None,
             )
         )
     run.runtime_run_id = handle.run_id
@@ -627,7 +627,7 @@ async def _build_run_spec(
         resolved,
         repo,
         runtime_id=runtime.id,
-        gitlab_run_id=run_id,
+        run_id=run_id,
     )
     secrets = run_secret_set.values
     # Only a sandbox keeps secrets out of the agent's environment, so only it needs telling.
@@ -877,7 +877,7 @@ async def _poll_run(tick: _Tick, step: AgentStep, run: StepRun) -> None:
         return
 
     run.status = StepRunStatus.SUCCEEDED
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     await _emit_completed(tick, step, run, result)
     await _accept(tick, step, run)
 

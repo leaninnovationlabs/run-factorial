@@ -370,7 +370,8 @@ async def test_disabled_or_unconfigured_assistant_fails_the_turn_with_config(
     elif setup == "no_credential":
         await enable_assistant(maker)
         async with maker() as session:
-            await svc.clear_assistant_credential(session, await default_organization_id(session))
+            ours = await default_organization_id(session)
+            await svc.clear_assistant_credential(session, ours, "claude_sdk", "api_key")
             await session.commit()
     turn = await sent(maker)
     backend = FakeBackend([TurnDone(stop=TurnStop.END)])

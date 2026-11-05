@@ -13,19 +13,24 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict
-from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.access import Permission
+from orchestrator.adapters.registry import (
+    display_of,
+    forge_of,
+    host_registries,
+    resolve_bindings,
+)
 from orchestrator.api.access import SIGNED_IN, GrantDep, needs, require_dashboard_origin
 from orchestrator.api.auth import PersonDep, PrincipalDep
 from orchestrator.api.deps import (
-    GITLAB_NOT_CONFIGURED,
     AccessReaderDep,
     ConfigBranchReaderDep,
     ConfigBranchSeederDep,
@@ -44,7 +49,6 @@ from orchestrator.api.deps import (
 )
 from orchestrator.api.guards import NoEchoRoute, refuse_bad_name
 from orchestrator.api.readiness import (
-    CONNECT_DOCS,
     access_item,
     all_label_palettes,
     behind_access,
@@ -52,10 +56,10 @@ from orchestrator.api.readiness import (
     ci_workflows_item,
     config_branch_items,
     default_or_note,
-    forge_of,
     gate_approvers_item,
     github_standing,
     gitlab_access_item,
+    host_of,
     label_item,
     named_runtimes,
     parse_snapshot,
@@ -85,6 +89,7 @@ from orchestrator.api.schemas import (
     DefaultProcessIn,
     DefaultProcessMovedOut,
     FileProposalOut,
+    ForgeDisplayOut,
     GitHubConnectionIn,
     GitHubConnectionOut,
     LabelsCreated,
@@ -145,7 +150,6 @@ from orchestrator.db.models import (
     ProcessVersion,
     Project,
     TicketSource,
-    TicketSourceKind,
 )
 from orchestrator.events import EventType, append
 from orchestrator.factorial import CONFIG_BRANCH, DEFAULT_KEY
@@ -164,7 +168,6 @@ from orchestrator.factorial.runtime_policy import (
 from orchestrator.github import (
     ConfigBranchExists,
     ContentsNotFound,
-    GitHubStateSource,
     RepoNotVisible,
 )
 from orchestrator.github.connection import CONNECTION_SECRETS, github_bag
@@ -172,7 +175,6 @@ from orchestrator.gitlab.client import GitLabError
 from orchestrator.gitlab.hosts import HostRefused, check_base_url
 from orchestrator.secrets import store
 from orchestrator.settings import APP_PREFIX, Settings
-from orchestrator.worker.admission import GitHubCandidates, pending_issues
 
 log = logging.getLogger(__name__)
 
@@ -297,7 +299,13 @@ async def list_projects(
     }
     items = [
         ProjectListItem(
-            **ProjectOut.model_validate(row.project).model_dump(),
+            **ProjectOut.model_validate(row.project).model_dump(exclude={"forge"}),
+            forge=ForgeDisplayOut(
+                **display_of(
+                    row.project,
+                    sources[row.project.id].kind if row.project.id in sources else None,
+                ).payload()
+            ),
             runtime=(
                 None
                 if row.runtime is None
@@ -409,9 +417,10 @@ async def get_project_readiness(
     versions = await _latest_process_versions(session, project_id)
     configs, _ = parse_snapshots(versions)
     read_protection = shared_protection(read_protection)
-    forge = forge_of(await ticket_source(session, project_id))
+    source = await ticket_source(session, project_id)
+    host = host_of(project, source)
     gitlab_client = None
-    if forge == "gitlab":
+    if not host.github_app:
         from orchestrator.gitlab.project_client import client_for_project
 
         gitlab_client = await client_for_project(session, project)
@@ -424,13 +433,13 @@ async def get_project_readiness(
     # row is irrelevant, and the row is dropped rather than muted — see `protection_item`.
     access_row, branch_rows, label_row, protection_row, ci_row, gate_row = await asyncio.gather(
         gitlab_access_item(gitlab_client, project)
-        if forge == "gitlab"
+        if not host.github_app
         else access_item(read_access),
-        config_branch_items(read_config_branch, session, config_source, project, forge=forge),
-        label_item(read_labels, project, configs, forge=forge),
-        protection_item(read_protection, project, configs, forge=forge),
-        ci_workflows_item(read_workflows, project, configs, forge=forge),
-        gate_approvers_item(read_protection, project, configs, forge=forge),
+        config_branch_items(read_config_branch, session, config_source, project, host=host),
+        label_item(read_labels, project, configs, host=host),
+        protection_item(read_protection, project, configs, host=host),
+        ci_workflows_item(read_workflows, project, configs, host=host),
+        gate_approvers_item(read_protection, project, configs, host=host),
     )
     rows: list[ReadinessItem] = [
         access_row,
@@ -468,13 +477,8 @@ async def create_project_labels(
     """
     project, configs = await _require_configs(session, project_id)
     if read_labels is None or write_label is None:
-        gitlab = forge_of(await ticket_source(session, project_id)) == "gitlab"
-        detail = (
-            f"{GITLAB_NOT_CONFIGURED} Create the labels by hand."
-            if gitlab
-            else "This project has no GitHub connection. Connect it on Ticket source, or create "
-            f"the labels by hand, as {CONNECT_DOCS} describes."
-        )
+        host = host_of(project, await ticket_source(session, project_id))
+        detail = f"{host.unconfigured} {host.labels_hand}"
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
     palette = all_label_palettes(configs)
@@ -500,9 +504,9 @@ async def update_project(project_id: int, payload: ProjectPatch, session: Sessio
     project = await _require_project(session, project_id, for_update=True)
     fields = payload.model_dump(exclude_unset=True, exclude_none=True)
     if payload.github_repo is not None:
-        gitlab = forge_of(await ticket_source(session, project_id)) == "gitlab"
+        host = host_of(project, await ticket_source(session, project_id))
         try:
-            fields["github_repo"] = checked_repo(payload.github_repo, gitlab=gitlab)
+            fields["github_repo"] = checked_repo(payload.github_repo, gitlab=not host.github_app)
         except ValueError as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, as_sentence(str(exc))
@@ -972,24 +976,20 @@ async def list_pending_issues(
     source = await ticket_source(session, project_id)
     if source is None:
         return []
-    if source.kind == TicketSourceKind.GITLAB:
-        from orchestrator.gitlab.observer import GitLabStateSource
-        from orchestrator.gitlab.project_client import client_for_project
-        from orchestrator.worker.admission import GitLabCandidates
+    from orchestrator.worker.admission import pending_bound
+    from orchestrator.worker.context import ProjectGitHub
 
-        gitlab_client = await client_for_project(session, project)
-        if gitlab_client is None:
-            return []
-        candidates = GitLabCandidates(gitlab_client)
-        state_source = partial(GitLabStateSource, gitlab_client)
-        bot_login = gitlab_client.settings.bot_login
-    else:
-        github = await github_for(project)
-        if github is None:
-            return []
-        candidates = GitHubCandidates(client=github.client)
-        state_source = partial(GitHubStateSource, github.client)
-        bot_login = github.bot_login
+    async def github(_session: AsyncSession, found: Project) -> ProjectGitHub | None:
+        api = await github_for(found)
+        if api is None:
+            return None
+        return ProjectGitHub.over(api.client, api.contents, bot_login=api.bot_login)
+
+    trackers, forges = host_registries(github)
+    bindings = await resolve_bindings(session, project, trackers=trackers, forges=forges)
+    if bindings is None:
+        return []
+
     return [
         PendingIssueOut(
             external_key=row.external_key,
@@ -1000,14 +1000,7 @@ async def list_pending_issues(
             awaiting=list(row.awaiting),
             needs=list(row.needs),
         )
-        for row in await pending_issues(
-            session,
-            project,
-            source,
-            candidates,
-            state_source,
-            bot_login,
-        )
+        for row in await pending_bound(session, project, source, bindings)
     ]
 
 
@@ -1323,16 +1316,10 @@ async def create_config_branch(
         row = (
             await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
         ).scalar_one_or_none()
-        if row is not None and row.kind == TicketSourceKind.GITLAB:
-            detail = (
-                "GitLab is not configured for this project, so the config branch cannot be "
-                "seeded. Set the GitLab URL and save GITLAB_TOKEN."
-            )
-        else:
-            detail = (
-                "This project has no GitHub connection, so the config branch cannot be seeded. "
-                "Connect it on Ticket source."
-            )
+        detail = (
+            f"{display_of(project, row.kind if row is not None else None).unconfigured} "
+            "The config branch cannot be seeded."
+        )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
     async def record(sha: str) -> None:
@@ -1514,16 +1501,10 @@ async def commit_config(
         row = (
             await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
         ).scalar_one_or_none()
-        if row is not None and row.kind == TicketSourceKind.GITLAB:
-            detail = (
-                "GitLab is not configured for this project. Set the GitLab URL and save "
-                "GITLAB_TOKEN, or commit the config by hand."
-            )
-        else:
-            detail = (
-                "This project has no GitHub connection. Connect it on Ticket source, or commit "
-                "the config by hand."
-            )
+        detail = (
+            f"{display_of(project, row.kind if row is not None else None).unconfigured} "
+            "Commit the config by hand, or connect the project."
+        )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
     draft = ConfigDraft(
         content=payload.content,

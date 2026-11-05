@@ -313,7 +313,7 @@ export function RepositorySetupBody({
   const configRules = row("config_branch_rules");
   const ci = row("ci_workflows");
   const approvers = row("gate_approvers");
-  const forge = forgeHost(project.ticket_source, project.settings);
+  const forge = forgeHost(project.ticket_source, project.settings, project.forge);
   const [repo, setRepo] = useState(project.github_repo);
   // The checks read the saved repository, so they wait until the form holds it: a URL being typed
   // or edited is not yet the repository they describe.
@@ -743,8 +743,10 @@ function TicketSourceForm({
   // The connection route is the only writer of `settings.github`, so the form never sends it back.
   const { github: _github, ...settings } = project.settings ?? {};
   const stored = (settings.gitlab ?? {}) as Record<string, unknown>;
+  // A saved source decides. `settings.forge` is only the choice New Project made, and it stays
+  // behind when the source goes back to GitHub, so it counts only before a source exists.
   const [tracker, setTracker] = useState<"github" | "gitlab">(
-    source?.kind === "gitlab" || settings.forge === "gitlab" ? "gitlab" : "github",
+    (source ? source.kind : settings.forge) === "gitlab" ? "gitlab" : "github",
   );
   const gitlab = tracker === "gitlab";
   const [issues, setIssues] = useState(source?.external_ref ?? project.github_repo);

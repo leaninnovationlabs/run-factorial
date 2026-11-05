@@ -20,6 +20,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from orchestrator.access import Permission
+from orchestrator.access.accounts import verified_by
 from orchestrator.access.decision import (
     Forbidden,
     NotMember,
@@ -28,7 +29,7 @@ from orchestrator.access.decision import (
 )
 from orchestrator.api.ratelimit import client_address
 from orchestrator.api.services.actor import Actor
-from orchestrator.db.models import McpAccess, McpToken
+from orchestrator.db.models import McpAccess, McpMintedVia, McpToken
 from orchestrator.events.types import RequestedVia
 from orchestrator.mcp_server.context import McpDeps
 from orchestrator.mcp_server.tokens import READ_SCOPE, jti_digest, read_mcp_jwt
@@ -88,6 +89,14 @@ class FactorialTokenVerifier(TokenVerifier):
                 or row.audience != aud
                 or row.access == McpAccess.CHAT
             ):
+                return None
+            if (
+                settings.mail.enabled
+                and row.minted_via == McpMintedVia.SESSION
+                and not await verified_by(session, email=row.principal, moment=row.created_at)
+            ):
+                # Minted before the account proved its email: before mail was configured, maybe
+                # by a stranger who registered the address.
                 return None
             try:
                 # Removing a member stops their tokens here, on the next request.

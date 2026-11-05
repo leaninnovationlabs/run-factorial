@@ -182,3 +182,45 @@ async def test_the_dashboard_tool_answers_the_route_body(
     for body in (tool_body, route_body):
         del body["as_of"], body["period"]["velocity_per_week"]
     assert tool_body == route_body
+
+
+async def test_a_gitlab_project_is_read_with_the_gitlab_run_bot_fence(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The MCP once judged a GitLab issue through a bare snapshot whose comment check knew only
+    the configured bot login, so a run token's own comments (`project_<id>_bot_…`) never counted
+    there, though the worker counted them."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from orchestrator.adapters import CompositeStateSource
+    from orchestrator.db.models import TicketSource, TicketSourceKind
+    from orchestrator.mcp_server.context import ToolContext
+    from tests.api_harness import port
+
+    async with maker() as session:
+        project = await seed_project(session)
+        session.add(
+            TicketSource(
+                project_id=project.id,
+                kind=TicketSourceKind.GITLAB,
+                external_ref=project.github_repo,
+            )
+        )
+        await session.flush()
+        settings = mcp_settings()
+        client = SimpleNamespace(settings=SimpleNamespace(bot_login=""))
+        deps = replace(mcp_deps_for(settings, None), gitlab=port(client))
+        tc = ToolContext(
+            session=session,
+            settings=settings,
+            deps=deps,
+            organization_id=project.organization_id,
+        )
+        bindings = await tc.bindings(project)
+        assert bindings is not None
+        source = bindings.snapshot(project.github_repo, "7")
+        assert isinstance(source, CompositeStateSource)
+        assert source.tracker.is_delivery_author("project_42_bot_0a1b2c")
+        assert source.forge.is_delivery_author("project_42_bot_0a1b2c")
+        await session.rollback()

@@ -25,7 +25,7 @@ from orchestrator.factorial import AgentResolutionError
 from orchestrator.github import (
     LABEL_BLOCKED,
 )
-from orchestrator.worker.inputs import release_gitlab_run_token
+from orchestrator.worker.inputs import release_run_credential
 from orchestrator.worker.tick_context import _apply_outcome, _ordinal, _retry_policy, _Tick
 from runtime.contract import (
     SpawnError,
@@ -181,7 +181,7 @@ async def _fail_run(
     run.status = status
     run.failure_reason = failure_reason
     run.ended_at = tick.now
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     await tick.emit(
         event_type,
         run=run,

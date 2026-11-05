@@ -10,16 +10,17 @@
  * cookie, which every reader of the dashboard holds.
  *
  * Two waits are told apart, because only one of them is loading anything: a file whose attempt is
- * still going is not recorded yet, while one whose attempt has ended is being read from GitHub by
- * the worker, and a framed file is read from GitHub by the API on every load.
+ * still going is not recorded yet, while one whose attempt has ended is being read from the forge
+ * by the worker, and a framed file is read from the forge by the API on every load.
  *
  * A missing file lists the paths the step did leave on its branch, so whoever wrote the config can
- * correct it. They are paths and GitHub links only: nothing in the list is served.
+ * correct it. They are paths and forge links only: nothing in the list is served.
  */
 
 import { useState } from "react";
 import { apiUrl } from "../../api/client";
 import type { ChangedFile, OutputEntry, StepRun } from "../../api/types";
+import { type ForgeHost, forgeName } from "../../forge";
 import { shortSha } from "../../format";
 import { Button, EmptyState, LinkButton, Spinner, Tooltip } from "../ui";
 import { hasEnded } from "./runs";
@@ -37,13 +38,16 @@ export function FilePane({
   run,
   step,
   changed,
+  forge,
 }: {
   file: OutputEntry;
   run: StepRun;
   step: string;
   /** The paths the step left on its branch (`RunOutputs.changed_files`). */
   changed: ChangedFile[];
+  forge?: ForgeHost;
 }) {
+  const host = forgeName(forge);
   const [framed, setFramed] = useState(() => (file.url ? apiUrl(file.url) : null));
   const [reloads, setReloads] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -90,7 +94,7 @@ export function FilePane({
         )}
         {file.github_url && (
           <LinkButton href={file.github_url} appearance="outline" spacing="small">
-            GitHub
+            {host}
           </LinkButton>
         )}
       </div>
@@ -107,7 +111,7 @@ export function FilePane({
           />
           {!loaded && (
             <div className="absolute inset-0 flex items-center justify-center bg-surface">
-              <Spinner inline label="Loading the file from GitHub…" />
+              <Spinner inline label={`Loading the file from ${host}…`} />
             </div>
           )}
         </div>
@@ -120,7 +124,7 @@ export function FilePane({
         </div>
       ) : (
         <>
-          <EmptyState headingLevel={3} {...whyNoFrame(file, run)} />
+          <EmptyState headingLevel={3} {...whyNoFrame(file, run, host)} />
           {file.status === "missing" && changed.length > 0 && <ChangedFiles files={changed} />}
         </>
       )}
@@ -155,7 +159,11 @@ function ChangedFiles({ files }: { files: ChangedFile[] }) {
   );
 }
 
-function whyNoFrame(file: OutputEntry, run: StepRun): { header: string; description: string } {
+function whyNoFrame(
+  file: OutputEntry,
+  run: StepRun,
+  host: string,
+): { header: string; description: string } {
   switch (file.status) {
     case "pending":
       return {
@@ -176,18 +184,18 @@ function whyNoFrame(file: OutputEntry, run: StepRun): { header: string; descript
       };
     case "lookup_failed":
       return {
-        header: "Couldn't load this file from GitHub",
+        header: `Couldn't load this file from ${host}`,
         description: file.reason ? sentence(file.reason) : "Try again in a minute.",
       };
     case "published":
       return file.too_large
         ? {
             header: "The file is over 1 MB",
-            description: "Files over 1 MB can't be shown here. Open it on GitHub.",
+            description: `Files over 1 MB can't be shown here. Open it on ${host}.`,
           }
         : {
             header: "The file has no link",
-            description: `This file can't be shown here.${file.github_url ? " Open it on GitHub." : ""}`,
+            description: `This file can't be shown here.${file.github_url ? ` Open it on ${host}.` : ""}`,
           };
   }
 }

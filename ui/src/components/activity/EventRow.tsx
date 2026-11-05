@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { TimelineEntry } from "../../api/types";
-import type { ForgeHost } from "../../forge";
+import { type ForgeHost, forgeName } from "../../forge";
 import { formatAbsolute, formatElapsed, formatRelative } from "../../format";
 import {
   type ConditionTone,
@@ -63,7 +63,14 @@ export function EventRow({
       >
         {facts.dueAt ? <RetryDue at={facts.dueAt} /> : facts.primary}
       </span>
-      {link && <RowLink link={link} tone={facts.tone} pulse={linkPulse(held, facts.significant)} />}
+      {link && (
+        <RowLink
+          link={link}
+          host={forgeName(forge)}
+          tone={facts.tone}
+          pulse={linkPulse(held, facts.significant)}
+        />
+      )}
       {facts.long && (
         <IconButton
           icon="maximize"
@@ -134,7 +141,7 @@ function ToneMark({ tone }: { tone: ConditionTone }) {
 }
 
 /**
- * The row's one GitHub link, as a button.
+ * The row's one link to the forge, as a button.
  *
  * Colour and motion go together and mean one thing: this is what the ticket needs from you. The
  * row the ticket is stopped at takes its status colour and the graph's beat; every other row —
@@ -144,10 +151,13 @@ function ToneMark({ tone }: { tone: ConditionTone }) {
  */
 function RowLink({
   link,
+  host,
   tone,
   pulse,
 }: {
   link: EventLink;
+  /** The forge's name, for a link with nothing to open there yet. */
+  host: string;
   tone: ConditionTone;
   pulse: LinkPulse;
 }) {
@@ -172,7 +182,7 @@ function RowLink({
           {link.label}
         </span>
         <InlineMessage iconLabel={`About ${link.label}`} title="Not a link yet">
-          The agent had not chosen this name yet, so there is nothing on GitHub to open.
+          The agent had not chosen this name yet, so there is nothing on {host} to open.
         </InlineMessage>
       </span>
     );

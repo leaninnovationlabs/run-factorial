@@ -23,10 +23,10 @@ from orchestrator.api.services.config import (
     read_config,
 )
 from orchestrator.api.services.errors import Unavailable
-from orchestrator.api.services.refs import resolve_project, ticket_source
+from orchestrator.api.services.refs import resolve_project
 from orchestrator.config.loader import MAX_CONFIG_CHARS
 from orchestrator.config.scaffold.assemble import FileEdit
-from orchestrator.db.models import Project, TicketSourceKind
+from orchestrator.db.models import Project
 from orchestrator.factorial import RepoConfigSource
 from orchestrator.mcp_server.auth import current_actor
 from orchestrator.mcp_server.context import ToolContext, tool_context
@@ -410,20 +410,10 @@ async def forge_config_source(tc: ToolContext, project: Project) -> RepoConfigSo
     github = await tc.deps.config_source(project)
     chosen = await config_source_for(tc.session, project, github=github, gitlab=tc.deps.gitlab)
     if chosen is None:
-        source = await ticket_source(tc.session, project.id)
-        if source is not None and source.kind == TicketSourceKind.GITLAB:
-            raise Unavailable(tc.deps.gitlab_missing)
-        raise Unavailable(tc.deps.github_missing)
+        raise Unavailable(await tc.unbound(project))
     return chosen
 
 
 async def forge_commit_writer(tc: ToolContext, project: Project):
     """The forge this project commits `.factorial/` to."""
-    from functools import partial
-
-    from orchestrator.gitlab.files_commit import commit_config_files
-
-    source = await ticket_source(tc.session, project.id)
-    if source is not None and source.kind == TicketSourceKind.GITLAB:
-        return partial(commit_config_files, await tc.gitlab(project))
     return await tc.commit_writer(project)

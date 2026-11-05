@@ -167,6 +167,25 @@ def test_the_api_warns_without_a_setup_token_whether_organizations_are_open_or_n
     assert "FACTORIAL_AUTH__BOOTSTRAP_TOKEN is unset" in caplog.text
 
 
+def test_open_signup_without_mail_does_not_start() -> None:
+    """Design.md §7.19 item 17: a stranger could take an invite to an address they registered."""
+    from orchestrator.api.main import refuse_mail_misconfiguration
+
+    with pytest.raises(RuntimeError, match="FACTORIAL_MAIL__SMTP_HOST"):
+        refuse_mail_misconfiguration(build(multi_org={"enabled": True}))
+    refuse_mail_misconfiguration(build(multi_org={"enabled": False}))
+
+
+def test_mail_without_an_external_url_does_not_start() -> None:
+    """Every link in an email starts with it; the request's Host is never trusted for one."""
+    from orchestrator.api.main import refuse_mail_misconfiguration
+
+    mail = {"smtp_host": "smtp.test", "from_address": "no-reply@example.com"}
+    refuse_mail_misconfiguration(build(mail=mail, auth={"external_url": "https://f.example.com"}))
+    with pytest.raises(RuntimeError, match="FACTORIAL_AUTH__EXTERNAL_URL"):
+        refuse_mail_misconfiguration(build(mail=mail))
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [

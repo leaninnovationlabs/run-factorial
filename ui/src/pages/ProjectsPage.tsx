@@ -154,7 +154,7 @@ export function ProjectsPage() {
               repo: (
                 <RepoLink
                   repo={project.github_repo}
-                  forge={forgeHost(project.ticket_source, project.settings)}
+                  forge={forgeHost(project.ticket_source, project.settings, project.forge)}
                 />
               ),
               runtime: <RuntimeCell runtime={project.runtime} isLinked={canRuntimes} />,

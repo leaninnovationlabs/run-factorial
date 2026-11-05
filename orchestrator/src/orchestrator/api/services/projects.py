@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.registry import display_of
 from orchestrator.api.bindings import Binding, process_bindings
 from orchestrator.api.readiness import (
     blockers,
@@ -23,7 +24,12 @@ from orchestrator.api.readiness import (
     runtime_items,
     secret_gap,
 )
-from orchestrator.api.schemas import ProjectDetail, SecretDeliveryOut, TicketSourceOut
+from orchestrator.api.schemas import (
+    ForgeDisplayOut,
+    ProjectDetail,
+    SecretDeliveryOut,
+    TicketSourceOut,
+)
 from orchestrator.api.services.refs import ticket_source
 from orchestrator.db.models import ProcessVersion, Project, Ticket, TicketStatus
 from orchestrator.events.read_models import blocked_clause
@@ -151,6 +157,9 @@ async def project_detail(
         settings=project.settings,
         active=project.active,
         created_at=project.created_at,
+        forge=ForgeDisplayOut(
+            **display_of(project, source.kind if source else None).payload()
+        ),
         ticket_source=TicketSourceOut.model_validate(source) if source else None,
         processes=process_summaries(
             versions, default=default, adopted=await adopters(session, project.id)

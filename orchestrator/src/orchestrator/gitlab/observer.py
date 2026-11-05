@@ -10,7 +10,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from orchestrator.github.state import (
+from orchestrator.adapters.split import SourceForge, SourceTracker, views_from_source
+from orchestrator.adapters.state import (
     AsyncKeyedMemo,
     AsyncOnce,
     BranchState,
@@ -24,8 +25,9 @@ from orchestrator.github.state import (
     StateSource,
 )
 from orchestrator.gitlab.client import GitLabClient, GitLabError, quote_project
+from runtime.gitlab_delivery import gitlab_delivery_author
 
-__all__ = ["GitLabStateSource", "list_issues", "repo_issue"]
+__all__ = ["GitLabStateSource", "gitlab_views", "list_issues", "repo_issue"]
 
 
 def _labels(raw: Any) -> frozenset[str]:
@@ -74,12 +76,15 @@ async def list_issues(
 
 
 async def repo_issue(client: GitLabClient, repo: str, issue_number: int) -> IssueState:
-    payload = await client.get(
-        f"/projects/{quote_project(repo)}/issues/{issue_number}"
-    )
+    payload = await client.get(f"/projects/{quote_project(repo)}/issues/{issue_number}")
     if not isinstance(payload, dict):
         raise GitLabError(f"issue {issue_number} in {repo} was not an object")
     return _issue_from(payload)
+
+
+def gitlab_views(source: StateSource, *, bot_login: str = "") -> tuple[SourceTracker, SourceForge]:
+    """Split a GitLab snapshot so a later composite can pair it with a different tracker."""
+    return views_from_source(source, bot_login=bot_login, author=gitlab_delivery_author)
 
 
 class GitLabStateSource(StateSource):
@@ -211,9 +216,7 @@ class GitLabStateSource(StateSource):
         )
 
     async def repo_permission(self, login: str) -> RepoPermission:
-        rows = await self._client.paginate(
-            f"/projects/{self._pid}/members/all", query=login
-        )
+        rows = await self._client.paginate(f"/projects/{self._pid}/members/all", query=login)
         level = max(
             (
                 int(row.get("access_level") or 0)
@@ -360,9 +363,7 @@ def _verdict_from_gitlab_reviews(reviews: tuple[_GitLabReview, ...]) -> ReviewVe
             continue
         latest[review.login] = review
     return ReviewVerdict(
-        approvals=tuple(
-            login for login, review in latest.items() if review.state == "APPROVED"
-        ),
+        approvals=tuple(login for login, review in latest.items() if review.state == "APPROVED"),
         changes_requested=tuple(
             login for login, review in latest.items() if review.state == "CHANGES_REQUESTED"
         ),
@@ -419,9 +420,7 @@ def _gitlab_gate_verdict(
 
 def _human_notes(rows: Sequence[object]) -> tuple[CommentState, ...]:
     return tuple(
-        _note(row)
-        for row in rows
-        if isinstance(row, dict) and row.get("system") is not True
+        _note(row) for row in rows if isinstance(row, dict) and row.get("system") is not True
     )
 
 

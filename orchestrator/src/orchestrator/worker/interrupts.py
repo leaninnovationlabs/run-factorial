@@ -26,7 +26,7 @@ from orchestrator.github.media import ItemRef
 from orchestrator.github.state import CommentState
 from orchestrator.worker.attachments import TextItem, attachment_details, resolve_attachments
 from orchestrator.worker.exits import RESETS, pending_request
-from orchestrator.worker.inputs import media_for, release_gitlab_run_token, run_secrets
+from orchestrator.worker.inputs import media_for, release_run_credential, run_secrets
 from orchestrator.worker.projection import _steady_label
 from orchestrator.worker.sessions import _terminal, _terminal_link, _when
 from orchestrator.worker.tick_context import _runs_for, _Tick, latest_current_run
@@ -91,7 +91,7 @@ async def _honour_interrupt(tick: _Tick, step: AgentStep, run: StepRun) -> None:
     adapter = await tick.deps.adapter_for_run(tick.session, run)
     assert run.runtime_run_id is not None
     await adapter.interrupt(run.runtime_run_id)
-    await release_gitlab_run_token(tick, run.id)
+    await release_run_credential(tick, run.id)
     await park_interrupted(tick, step, run, REQUESTED_VIA_WORDS[await _interrupt_via(tick, run)])
 
 
@@ -193,9 +193,6 @@ async def _steering_images(
             )
         )
     ).scalar_one()
-    from orchestrator.github.media import media_refs
-    from orchestrator.gitlab.media import gitlab_media_refs
-
     return await resolve_attachments(
         media_for(tick),
         tick.source.repo,
@@ -210,7 +207,7 @@ async def _steering_images(
             )
         ],
         prefix=f"resume{prior + 1}-image",
-        refs=gitlab_media_refs if tick.source_kind == "gitlab" else media_refs,
+        refs=tick.host().media_refs,
     )
 
 
@@ -406,7 +403,7 @@ async def _resume_session(
             resolved,
             tick.project.github_repo,
             runtime_id=run.runtime_id,
-            gitlab_run_id=run.id,
+            run_id=run.id,
         )
     ).values
 
@@ -415,7 +412,7 @@ async def _resume_session(
     except SubstrateUnavailable:
         raise
     except AgentRuntimeError as exc:
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
         return str(exc)
 
     # A stop requested after the tick that parked the run read its requests: the park overtook

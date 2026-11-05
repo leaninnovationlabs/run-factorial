@@ -76,6 +76,7 @@ export function OutputDrawer({
   latest,
   spawn,
   repo,
+  forge,
   hasPreview,
   declaresFiles,
   named,
@@ -206,6 +207,7 @@ export function OutputDrawer({
             run={run}
             gate={reviewGate}
             pr={reviewPr}
+            forge={forge}
             startOpen={changesOpen > 0}
             onSent={(sent) => {
               drawer.current?.close();
@@ -247,6 +249,7 @@ export function OutputDrawer({
                 key={run.id}
                 run={run}
                 step={step}
+                forge={forge}
                 autoStart={run.id === latest?.id}
                 selected={entry}
                 onSelect={setEntry}
@@ -285,6 +288,7 @@ export function OutputDrawer({
                             key={entry.id}
                             entry={entry}
                             repo={repo}
+                            forge={forge}
                             held={null}
                             onOpenText={setText}
                           />

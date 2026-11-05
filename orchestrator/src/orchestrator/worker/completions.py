@@ -41,7 +41,7 @@ from orchestrator.worker.acceptance import (
 from orchestrator.worker.agent_steps import _emit_completed, _record_result
 from orchestrator.worker.check_steps import check_accepted
 from orchestrator.worker.exits import pending_request, request_run
-from orchestrator.worker.inputs import release_gitlab_run_token
+from orchestrator.worker.inputs import release_run_credential
 from orchestrator.worker.interrupts import park_interrupted, pending_resume_request
 from orchestrator.worker.runtime_adapters import RuntimeRefused
 from orchestrator.worker.tick_context import (
@@ -427,7 +427,7 @@ async def _end_session(
         )
         return "refused"
     if from_status == StepRunStatus.IDLE:
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
     try:
         result = await adapter.result(run.runtime_run_id)
     except (AgentRuntimeError, RuntimeRefused) as exc:

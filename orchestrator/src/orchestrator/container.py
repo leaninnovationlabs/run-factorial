@@ -27,7 +27,7 @@ from orchestrator.secrets.crypto import (
     SecretsConfigurationError,
     decode_master_key,
 )
-from orchestrator.settings import ENV_PREFIX, Settings
+from orchestrator.settings import ENV_PREFIX, Settings, mail_problems
 from orchestrator.worker.context import adapter_options
 from runtime.adapters import create_adapter
 from runtime.contract import AdapterUnavailable
@@ -142,6 +142,7 @@ def problems(
             create_adapter(kind, **adapter_options(settings, kind))
         except AdapterUnavailable as exc:
             found.append(str(exc))
+    found += mail_problems(settings)
     # The image always names a state root, so an offer is what turns E2B on.
     if not settings.runtime.e2b.deployment and any(
         offer.endswith("@e2b") for offer in settings.offers

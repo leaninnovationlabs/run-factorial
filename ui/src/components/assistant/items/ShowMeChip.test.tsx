@@ -20,7 +20,14 @@ let view: Mounted | null = null;
 
 const SETTINGS = {
   settings: { enabled: true },
-  credential: { set: true, updated_by: null, updated_at: null },
+  credentials: [
+    {
+      backend: "claude_sdk",
+      auth_mode: "api_key",
+      updated_by: "operator@example.com",
+      updated_at: "2026-10-01T09:00:00Z",
+    },
+  ],
   ready_to_send: true,
   backends: [],
   status: null,

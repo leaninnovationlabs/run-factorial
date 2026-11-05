@@ -25,6 +25,9 @@ const LEGACY_TOKEN_KEY = "sf.apiToken";
 interface AuthValue {
   /** The signed-in account's email, when there is a session. */
   sessionEmail: string | null;
+  /** The session's email must be verified before it reaches anything (design.md §7.19 item
+   *  17): the app shows only the page that says so, and the link's own page. */
+  mustVerify: boolean;
   /** True while the initial session probe is in flight; render nothing rather than flash the
    * sign-in page at someone who is already signed in. */
   checking: boolean;
@@ -56,6 +59,7 @@ safeSet(LEGACY_TOKEN_KEY, null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [mustVerify, setMustVerify] = useState(false);
   const [checking, setChecking] = useState(true);
   const [expired, setExpired] = useState(false);
 
@@ -75,7 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     api
       .authMe()
       .then((me) => {
-        if (!cancelled) setSessionEmail(me.email);
+        if (cancelled) return;
+        setSessionEmail(me.email);
+        setMustVerify(me.must_verify === true);
       })
       .catch(() => {
         // 401 (no session), or an API that predates /auth — either way, no session.
@@ -91,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshSession = useCallback(async () => {
     const me = await api.authMe();
     setSessionEmail(me.email);
+    setMustVerify(me.must_verify === true);
     setExpired(false);
   }, []);
 
@@ -113,8 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ sessionEmail, checking, expired, refreshSession, signOut, signInAgain }),
-    [sessionEmail, checking, expired, refreshSession, signOut, signInAgain],
+    () => ({ sessionEmail, mustVerify, checking, expired, refreshSession, signOut, signInAgain }),
+    [sessionEmail, mustVerify, checking, expired, refreshSession, signOut, signInAgain],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -16,7 +16,7 @@ from orchestrator.events import EventType
 from orchestrator.events.types import REQUESTED_VIA_WORDS, RequestedVia, requested_via
 from orchestrator.github import EXIT_LABELS, LABEL_EXIT
 from orchestrator.github.state import IssueState
-from orchestrator.worker.inputs import release_gitlab_run_token
+from orchestrator.worker.inputs import release_run_credential
 from orchestrator.worker.runtime_adapters import RuntimeRefused
 from orchestrator.worker.tick_context import _runs_for, _Tick
 from runtime.contract import AgentRuntimeError
@@ -185,7 +185,7 @@ async def cancel_live_run(tick: _Tick, *, reason: str, force: bool) -> LiveRunSt
     latest.status = StepRunStatus.CANCELLED
     latest.ended_at = tick.now
     latest.failure_reason = reason
-    await release_gitlab_run_token(tick, latest.id)
+    await release_run_credential(tick, latest.id)
     return LiveRunStop(latest=latest, cancelled=latest, unstoppable=unstoppable)
 
 

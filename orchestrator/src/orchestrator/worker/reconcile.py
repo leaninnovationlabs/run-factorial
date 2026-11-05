@@ -45,6 +45,7 @@ from typing import Final
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.bindings import Bindings
 from orchestrator.config import (
     ActionStep,
     AgentStep,
@@ -71,7 +72,6 @@ from orchestrator.github import (
     PARKING_LABELS,
 )
 from orchestrator.github.state import IssueState, SeededIssue, StateSource
-from orchestrator.gitlab.client import GitLabClient
 from orchestrator.logs import note, revert_on_error
 from orchestrator.predicates import EvalContext, evaluate, needs
 from orchestrator.worker.action_steps import _action_step
@@ -90,7 +90,7 @@ from orchestrator.worker.completions import (
     answer_completion,
     refuse_completion,
 )
-from orchestrator.worker.context import ProjectGitHub, Projector, ReconcileDeps
+from orchestrator.worker.context import ReconcileDeps
 from orchestrator.worker.exits import (
     RESETS,
     _asked_since,
@@ -204,46 +204,19 @@ async def reconcile_ticket(
     project = await _load_project(session, ticket.project_id)
     note(org_id=project.organization_id)
 
-    # `external_key` is the issue number on both GitHub and GitLab.
-    issue_number = int(ticket.external_key)
-    from orchestrator.db.models import TicketSource
-    source_row = await session.get(TicketSource, ticket.ticket_source_id)
-    kind = source_row.kind if source_row is not None else "github"
-    forge_projector = None
-    github = None
-    project_client = None
-    if kind == "gitlab":
-        from orchestrator.gitlab import GitLabProjector, GitLabStateSource
-        from orchestrator.gitlab.project_client import client_for_project
-
-        project_client = await client_for_project(session, project)
-        if project_client is None:
-            raise RuntimeError(
-                f"project {project.name!r} has a GitLab ticket source, but the GitLab URL was "
-                "refused or GITLAB_TOKEN is not set"
-            )
-        source: StateSource = GitLabStateSource(
-            project_client, project.github_repo, issue_number
-        )
-        bot_login = project_client.settings.bot_login
-        forge_projector = GitLabProjector(project_client, project.github_repo)
-    else:
-        github = await deps.github_for(session, project)
-        if github is None:
-            # Held, not failed: a raise would count toward `worker.quarantine_after`, and
-            # anything past here reads or writes GitHub. The ticket resumes where it was once
-            # the project is connected.
-            logger.debug("project %s has no GitHub connection; holding its tickets", project.name)
-            return
-        if (until := github.client.backoff_until(project.github_repo)) is not None:
-            # Held for the same reason: its connection waits out a rate limit.
-            logger.debug("project %s waits for GitHub until %s", project.name, until)
-            return
-        source = github.state_source(project.github_repo, issue_number)
-        bot_login = github.bot_login
+    bindings = await deps.bindings_or_hold(session, project)
+    if bindings is None:
+        return
+    if (until := bindings.forge.hold_until(project.github_repo)) is not None:
+        logger.debug("project %s waits for its forge until %s", project.name, until)
+        return
+    source: StateSource = bindings.snapshot(project.github_repo, ticket.external_key)
+    bot_login = bindings.bot_login
     labels = PARKING_LABELS_BY_STATUS.get(ticket.status)
-    if github is not None and listings is not None and labels is not None:
-        seeded = await listings.issue(github.client, project.github_repo, issue_number, labels)
+    if labels is not None:
+        seeded = await bindings.forge.listed_issue(
+            project.github_repo, ticket.external_key, labels, listings
+        )
         if seeded is not None:
             # Observed this tick by the repo's parked listing, so seeding keeps the source's
             # one-snapshot-per-tick promise; the parked path reads nothing else, except a due
@@ -304,10 +277,7 @@ async def reconcile_ticket(
         lease_owner=lease_owner,
         lease_ttl=lease_ttl,
         bot_login=bot_login,
-        source_kind=kind,
-        forge_projector=forge_projector,
-        github=github,
-        gitlab=project_client,
+        bindings=bindings,
         launches=launches,
     )
 
@@ -534,10 +504,7 @@ async def _tick_for(
     lease_owner: str,
     lease_ttl: timedelta,
     bot_login: str,
-    source_kind: str,
-    forge_projector: Projector | None,
-    github: ProjectGitHub | None,
-    gitlab: GitLabClient | None,
+    bindings: Bindings,
     launches: Launches | None,
 ) -> _Tick:
     values = {
@@ -567,10 +534,7 @@ async def _tick_for(
         plan=_Plan(),
         lease_owner=lease_owner,
         lease_ttl=lease_ttl,
-        source_kind=source_kind,
-        forge_projector=forge_projector,
-        github=github,
-        gitlab=gitlab,
+        bindings=bindings,
         launches=launches,
     )
 

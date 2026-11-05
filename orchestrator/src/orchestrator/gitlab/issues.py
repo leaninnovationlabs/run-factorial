@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from orchestrator.adapters.state import IssueState
 from orchestrator.github.issues import MarkerUnconfirmed, marker_line
-from orchestrator.github.state import IssueState
 from orchestrator.gitlab.client import GitLabClient, GitLabError, quote_project
 from orchestrator.gitlab.observer import repo_issue
 from orchestrator.gitlab.readiness import repo_labels
@@ -107,9 +107,7 @@ class GitLabIssueWriter:
         if marked:
             return min(marked, key=lambda issue: issue.number)
         if capped:
-            raise MarkerUnconfirmed(
-                f"{repo}: no marked issue in the first {_RECOVERY_PAGES} pages"
-            )
+            raise MarkerUnconfirmed(f"{repo}: no marked issue in the first {_RECOVERY_PAGES} pages")
         return None
 
 

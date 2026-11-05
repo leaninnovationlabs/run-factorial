@@ -1,6 +1,6 @@
 # Factorial — Data Model
 
-**Status:** v0.13 · 2026-10-25 · Postgres. DDL: Alembic revision 0001; the SQLAlchemy models are
+**Status:** v0.14 · 2026-11-03 · Postgres. DDL: Alembic revision 0001; the SQLAlchemy models are
 the source of truth (tech-stack decision 2).
 
 ## Decisions (agreed 2026-08-19)
@@ -104,6 +104,7 @@ erDiagram
     ORGANIZATION ||--o{ ORGANIZATION_REMOVAL : "remembers"
     ORGANIZATION |o--o{ ROLE : "defines (custom, later)"
     APP_USER ||--o{ ORGANIZATION_MEMBER : "belongs"
+    APP_USER ||--o{ EMAIL_VERIFICATION : "proves its mailbox"
     ROLE ||--o{ ORGANIZATION_MEMBER : "grants"
     ROLE ||--o{ ORGANIZATION_INVITE : "offers"
     ROLE ||--o{ ROLE_PERMISSION : "holds"
@@ -137,7 +138,7 @@ erDiagram
         text email "unique; lowercase"
         text name
         text password_hash "argon2id; null for an SSO-only account"
-        timestamptz email_verified_at "set by an SSO sign-in"
+        timestamptz email_verified_at "set by SSO, a verification link or a reset"
         integer failed_sign_ins
         timestamptz locked_until
         integer session_epoch "a session minted under another is refused"
@@ -186,6 +187,16 @@ erDiagram
         bigint accepted_by FK "app_user; SET NULL"
         timestamptz revoked_at
         text revoked_by
+    }
+    EMAIL_VERIFICATION {
+        bigint id PK
+        bigint user_id FK "app_user; CASCADE"
+        text email "lowercase; the address the link went to"
+        text purpose "verify | reset"
+        bytea token_hash "unique; sha256 of the token"
+        timestamptz created_at
+        timestamptz expires_at "a day for verify, an hour for reset"
+        timestamptz consumed_at "used, or replaced by a newer token"
     }
     ORGANIZATION_REMOVAL {
         bigint organization_id PK,FK "RESTRICT"
@@ -644,9 +655,10 @@ The migration seeds `default`, and the downgrade refuses while a second one exis
 
 **app_user** (revision 0035) — one account per email, stored lowercase, because the session
 cookie carries the email and an SSO provider may return it in any case. `password_hash` is null
-for an account that has only signed in by SSO. `email_verified_at` is set by an SSO sign-in
-only, until email verification exists; that sign-in also clears the password of an account
-whose email was unverified (design.md §7.19). `failed_sign_ins` and `locked_until` are not
+for an account that has only signed in by SSO. `email_verified_at` is set by a verified SSO
+sign-in, a verification link or a password reset (`email_verification`). An SSO sign-in clears
+the password of an account whose email was unverified, and a reset replaces it (design.md
+§7.19). `failed_sign_ins` and `locked_until` are not
 used: the API counts failed sign-ins per account and client address in process memory.
 `session_epoch` (revision 0040) is signed into each session cookie, and a cookie whose epoch
 differs is refused: signing out everywhere and setting a password bump it, so they end every
@@ -673,6 +685,16 @@ unique index on `(organization_id, email)` where `accepted_at` and `revoked_at` 
 one pending invite per address. `created_by` is text, because the operator's first invite to
 `default` comes through the shared token and has no account.
 
+**email_verification** (revision 0041) — a link that proves the mailbox, sent by the
+API's mailer (design.md §7.19 item 16). `purpose` is `verify` or `reset`, held by a CHECK. Only
+`token_hash`, the SHA-256 of 32 random bytes, is stored. `email` is the address the link went
+to, and a token whose `email` is not its account's works no more. `consumed_at` is set when the
+token is used or when a newer one for the same account and purpose replaces it; a partial
+unique index on `(user_id, purpose)` where it is null keeps one live token for each. The send
+limits count an account's rows of the last day, and issuing a token deletes that account's rows
+older than a day. CASCADE from the account. These rows are not events: a token says nothing a
+reader of the audit trail needs.
+
 **organization_removal** (revision 0036) — who was removed from an organization, or left it.
 Keyed `(organization_id, email)`, as the account and the invite are, so the row outlives the
 account. RESTRICT from the organization. Only the allowed-domain SSO join reads it; accepting an
@@ -691,8 +713,8 @@ a setting means nothing without its organization.
 `(organization_id, name)`. The name is `assistant:<backend>:<auth_mode>`, so a switch of backend or
 auth mode reads a different slot. Ciphertext and key id only, with the AAD
 `org:<organization_id>:<name>`, so a blob copied from another organization, or from the project
-or runtime store, never authenticates here. The API cannot read a value back; it can say only
-whether one is set and who set it last. It replaced `app_credential`: revision 0027 moves each
+or runtime store, never authenticates here. The API cannot read a value back; it lists only
+which names are set and who set each last. It replaced `app_credential`: revision 0027 moves each
 row to `default`, decrypted under `app:<name>` and encrypted again under `org:<id>:<name>`, then
 drops the table.
 
@@ -730,7 +752,8 @@ mirrored from the child's local copy, which dies with its per-turn config dir. U
 `(conversation_id, key, seq)`.
 
 **chat_spend** (revision 0024) — each person's estimated assistant spend per organization and UTC
-day, the daily budget's ledger, keyed `(organization_id, owner, day)` since revision 0027. The `chat_turn_record_spend` trigger, AFTER INSERT OR
+day, the daily budgets' ledger, keyed `(organization_id, owner, day)` since revision 0027. A
+person's budget reads one row; the organization's budget sums the day's rows. The `chat_turn_record_spend` trigger, AFTER INSERT OR
 UPDATE OF `cost_usd` on `chat_turn`, adds the change (`NEW.cost_usd − OLD.cost_usd`, skipped when
 it is zero or null) to the row of the conversation's organization and owner for the UTC date of
 `started_at`. So a cost reported

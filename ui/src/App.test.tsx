@@ -2,7 +2,7 @@
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, PAGE_SIGN_IN_PATH, PROBE_GRACE_MS, SessionCheck } from "./App";
+import { App, PAGE_SIGN_IN_PATH, PROBE_GRACE_MS, SessionCheck, VERIFY_EMAIL_PATH } from "./App";
 import { api } from "./api/client";
 import { AuthProvider } from "./auth";
 import { click, type Mounted, mount, settle } from "./testDom";
@@ -129,5 +129,133 @@ describe("App", () => {
     await settle();
 
     expect(view.container.querySelector("h1")?.textContent).toBe("Catalogue");
+  });
+
+  it("shows an unverified session only the page that asks it to verify", async () => {
+    vi.spyOn(api, "authMe").mockResolvedValue({
+      email: "ada@example.com",
+      verified: false,
+      must_verify: true,
+    });
+    await import("./pages/emailPages");
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={["/overview"]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(view.container.querySelector("h1")?.textContent).toBe("Verify your email");
+    expect(view.container.textContent).toContain("ada@example.com");
+  });
+
+  it("sends a verification link's token once the browser is signed in as its account", async () => {
+    const token = "a".repeat(43);
+    vi.spyOn(api, "authMe").mockResolvedValue({
+      email: "ada@example.com",
+      verified: false,
+      must_verify: true,
+    });
+    const verify = vi.spyOn(api, "verifyEmail").mockResolvedValue(undefined);
+    await import("./pages/emailPages");
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`${VERIFY_EMAIL_PATH}#${token}`]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(verify).toHaveBeenCalledWith(token);
+    expect(view.container.querySelector("h1")?.textContent).toBe("Your email is verified");
+  });
+
+  it("asks a signed-out browser to sign in before it sends a verification link", async () => {
+    vi.spyOn(api, "authMe").mockRejectedValue(new Error("401"));
+    vi.spyOn(api, "authProviders").mockResolvedValue({
+      google: false,
+      oidc: false,
+      oidc_label: "",
+    });
+    const verify = vi.spyOn(api, "verifyEmail");
+    await import("./pages/SignInPage");
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`${VERIFY_EMAIL_PATH}#${"a".repeat(43)}`]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(view.container.textContent).toContain("Sign in to verify your email");
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unverified session on its wall when a page link sends it to sign in", async () => {
+    // The page link refuses an unverified session, so sending it back there would loop.
+    vi.spyOn(api, "authMe").mockResolvedValue({
+      email: "ada@example.com",
+      verified: false,
+      must_verify: true,
+    });
+    await import("./pages/emailPages");
+    const link = "/factorial/pages/7?blob=b&expires=1&signature=s";
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`${PAGE_SIGN_IN_PATH}?next=${encodeURIComponent(link)}`]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(view.container.querySelector("h1")?.textContent).toBe("Verify your email");
+  });
+
+  it("says a verified session is verified when SSO dropped the link's token", async () => {
+    vi.spyOn(api, "authMe").mockResolvedValue({
+      email: "ada@example.com",
+      verified: true,
+      must_verify: false,
+    });
+    const verify = vi.spyOn(api, "verifyEmail");
+    await import("./pages/emailPages");
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={[VERIFY_EMAIL_PATH]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(verify).not.toHaveBeenCalled();
+    expect(view.container.querySelector("h1")?.textContent).toBe("Your email is verified");
+  });
+
+  it("opens a reset link with no session", async () => {
+    vi.spyOn(api, "authMe").mockRejectedValue(new Error("401"));
+    await import("./pages/emailPages");
+    view = await mount(
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`/reset-password#${"a".repeat(43)}`]}>
+          <App />
+        </MemoryRouter>
+      </AuthProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(view.container.querySelector("h1")?.textContent).toBe("Set a new password");
   });
 });

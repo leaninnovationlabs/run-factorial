@@ -15,7 +15,7 @@ from orchestrator.api.services import assistant_settings as svc
 from orchestrator.api.services.errors import as_sentence
 from orchestrator.api.services.organizations import conversation_organization_id
 from orchestrator.assistant.items import append_item, notify_items
-from orchestrator.assistant.turns import NOT_SET_UP, enqueue_turn, live_turn, spent_today
+from orchestrator.assistant.turns import NOT_SET_UP, budget_spent, enqueue_turn, live_turn
 from orchestrator.db.base import JsonDict
 from orchestrator.db.models import ChatItemKind, ChatTurn, ChatTurnTrigger
 
@@ -69,12 +69,19 @@ async def queue_user_message(
         )
     if await live_turn(session, conversation_id) is not None:
         raise SendRefused(409, "turn_live", TURN_LIVE)
-    spent = await spent_today(session, organization_id, owner, now=datetime.now(UTC))
-    if spent >= assistant.daily_budget_usd:
+    spent = await budget_spent(session, organization_id, owner, assistant, now=datetime.now(UTC))
+    if spent == "person":
         raise SendRefused(
             429,
             "daily_budget",
             f"Today's assistant budget of {assistant.daily_budget_usd} USD is spent.",
+        )
+    if spent == "organization":
+        raise SendRefused(
+            429,
+            "daily_budget",
+            f"Today's assistant budget of {assistant.organization_daily_budget_usd} USD for this "
+            "organization is spent.",
         )
     turn = await enqueue_turn(session, conversation_id, trigger=ChatTurnTrigger.USER)
     if turn is None:

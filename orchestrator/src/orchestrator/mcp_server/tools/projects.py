@@ -9,26 +9,25 @@ from typing import Annotated, Literal
 
 from fastmcp.dependencies import Depends
 from fastmcp.tools.base import ToolResult
-from githubkit.exception import RequestFailed
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.display import GITHUB_DISPLAY, HostDisplay
+from orchestrator.adapters.registry import display_for_settings, display_of, host_failure
 from orchestrator.api.services.projects import list_projects, project_detail
 from orchestrator.api.services.refs import resolve_project, ticket_source
-from orchestrator.db.models import Project, TicketSource, TicketSourceKind, intake_column
+from orchestrator.db.models import Project, TicketSource, intake_column
 from orchestrator.events.read_models import in_flight_runs, pipeline_board, project_spend
-from orchestrator.github import GitHubStateSource
 from orchestrator.mcp_server.context import ToolContext, tool_context
 from orchestrator.mcp_server.registry import ToolSpec, tool
 from orchestrator.mcp_server.results import Untrusted, respond, untrusted
 from orchestrator.mcp_server.tokens import READ_SCOPE
 from orchestrator.mcp_server.tools.params import ProjectArg
 from orchestrator.worker.admission import (
-    GitHubCandidates,
     Pending,
     PendingReason,
-    pending_issues,
+    pending_bound,
 )
 
 __all__ = [
@@ -53,8 +52,8 @@ class ProjectRepos:
     #: What issue links use, as the dashboard's do. It differs from `intake` only on a project
     #: whose ticket source names another repo.
     github_repo: str
-    forge: str = "github"
-    origin: str = "https://github.com"
+    #: Where the project's tickets and code live on the web.
+    host: HostDisplay = GITHUB_DISPLAY
 
 
 async def project_repos(
@@ -79,18 +78,11 @@ async def project_repos(
     ).all()
     repos: dict[int, ProjectRepos] = {}
     for row in rows:
-        kind = str(row[4] or "github")
-        origin = "https://github.com"
-        if kind == TicketSourceKind.GITLAB:
-            from orchestrator.gitlab.urls import gitlab_origin
-
-            origin = gitlab_origin(row[5])
         repos[int(row[0])] = ProjectRepos(
             name=row[1],
             intake=row[2],
             github_repo=row[3],
-            forge=kind,
-            origin=origin,
+            host=display_for_settings(row[4], row[5]),
         )
     return repos
 
@@ -333,54 +325,23 @@ async def factorial_project_get(
 async def _pending(tc: ToolContext, project: Project) -> tuple[Sequence[Pending], str | None]:
     """Up to one more than `PENDING_SHOWN` declined issues, or a note saying why none were read.
 
-    A diagnostic, like the dashboard's pending list: GitHub being down or unconfigured becomes a
+    A diagnostic, like the dashboard's pending list: its host being down or unconfigured becomes a
     warning on the project rather than a failed read of everything else.
     """
     source = await ticket_source(tc.session, project.id)
     if source is None:
         return (), None
-    if source.kind == TicketSourceKind.GITLAB:
-        from orchestrator.gitlab.client import GitLabError
-        from orchestrator.gitlab.observer import GitLabStateSource
-        from orchestrator.worker.admission import GitLabCandidates
-
-        gitlab = await tc.deps.gitlab(project)
-        if gitlab is None:
-            return (), f"pending issues not read: {tc.deps.gitlab_missing}"
-        try:
-            rows = await pending_issues(
-                tc.session,
-                project,
-                source,
-                GitLabCandidates(gitlab),
-                lambda repo, number: GitLabStateSource(gitlab, repo, number),
-                gitlab.settings.bot_login,
-                limit=PENDING_SHOWN + 1,
-            )
-        except GitLabError as exc:
-            return (
-                (),
-                f"pending issues not read: GitLab answered HTTP {exc.status_code or 'unknown'}",
-            )
-        return rows, None
-    if source.kind != TicketSourceKind.GITHUB:
-        return (), None
-    github = await tc.deps.github(project)
-    if github is None:
-        return (), f"pending issues not read: {tc.deps.github_missing}"
-    client = github.client
+    bindings = await tc.bindings(project)
+    if bindings is None:
+        return (), f"pending issues not read: {await tc.unbound(project)}"
     try:
-        rows = await pending_issues(
-            tc.session,
-            project,
-            source,
-            GitHubCandidates(client=client),
-            lambda repo, number: GitHubStateSource(client, repo, number),
-            github.bot_login,
-            limit=PENDING_SHOWN + 1,
-        )
-    except RequestFailed as exc:
-        return (), f"pending issues not read: GitHub answered HTTP {exc.response.status_code}"
+        rows = await pending_bound(tc.session, project, source, bindings, limit=PENDING_SHOWN + 1)
+    except Exception as exc:
+        failure = host_failure(exc)
+        if failure is None:
+            raise
+        name = display_of(project, source.kind).name
+        return (), f"pending issues not read: {name} answered HTTP {failure.status or 'unknown'}"
     return rows, None
 
 

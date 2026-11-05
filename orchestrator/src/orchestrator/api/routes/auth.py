@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.access.accounts import (
     InvalidAccountInput,
     end_sessions,
+    needs_verification,
     session_ended,
     sso_sign_in,
     user_by_email,
@@ -353,6 +354,7 @@ async def providers(
         "signup": settings.multi_org.enabled or empty,
         "multi_org": settings.multi_org.enabled,
         "setup_token": empty and awaits_owner,
+        "mail": settings.mail.enabled,
     }
 
 
@@ -597,7 +599,9 @@ async def live_session(
 @router.get("/auth/me")
 async def me(
     request: Request, settings: SettingsDep, account_sessions: AccountSessionsDep
-) -> dict[str, str]:
+) -> dict[str, str | bool]:
+    """Who is signed in, and whether they must verify their email before anything else
+    (design.md §7.19 item 17)."""
     signed = _signed(request, settings)
     if signed is not None:
         # Only a validly signed cookie costs a connection.
@@ -607,7 +611,11 @@ async def me(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="You are not signed in."
         )
-    return {"email": signed.email}
+    return {
+        "email": signed.email,
+        "verified": signed.verified,
+        "must_verify": needs_verification(verified=signed.verified, mail=settings.mail.enabled),
+    }
 
 
 def _clear_session_cookies(response: Response) -> None:

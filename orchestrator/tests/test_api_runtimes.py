@@ -45,6 +45,8 @@ from orchestrator.db.models import (
     StepRun,
     StepRunStatus,
     Ticket,
+    TicketSource,
+    TicketSourceKind,
     TicketStatus,
 )
 from orchestrator.events import EventType, append
@@ -1659,6 +1661,14 @@ async def test_a_runtimes_projects_route_lists_what_is_bound_to_it(
     slug = _slug()
     one = await _seed_with_runtime(async_session, slug)
     two = await _seed_with_runtime(async_session, slug)
+    # A GitLab project on its own host: its repository link opens there, not on github.com.
+    two.settings = {**(two.settings or {}), "gitlab": {"base_url": "https://gitlab.example.com"}}
+    source = await async_session.scalar(
+        select(TicketSource).where(TicketSource.project_id == two.id)
+    )
+    assert source is not None
+    source.kind = TicketSourceKind.GITLAB
+    await async_session.flush()
     await _seed_with_runtime(async_session, "vanished")
     await seed_probe_project(async_session)
     async with client_for(build_app(make_settings(), async_session)) as client:
@@ -1666,9 +1676,14 @@ async def test_a_runtimes_projects_route_lists_what_is_bound_to_it(
         empty = await _create(client, auth, type="codex_api")
         listed = await client.get(f"/api/runtimes/{row['id']}/projects", headers=auth)
         assert listed.status_code == 200
-        assert listed.json() == [
-            {"id": one.id, "name": one.name, "github_repo": one.github_repo},
-            {"id": two.id, "name": two.name, "github_repo": two.github_repo},
+        rows = listed.json()
+        assert [(r["id"], r["name"], r["github_repo"]) for r in rows] == [
+            (one.id, one.name, one.github_repo),
+            (two.id, two.name, two.github_repo),
+        ]
+        assert [(r["forge"]["kind"], r["forge"]["origin"]) for r in rows] == [
+            ("github", "https://github.com"),
+            ("gitlab", "https://gitlab.example.com"),
         ]
         none = await client.get(f"/api/runtimes/{empty['id']}/projects", headers=auth)
         assert none.json() == []

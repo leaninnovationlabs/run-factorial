@@ -61,7 +61,7 @@ from orchestrator.db.session import dispose_engine
 from orchestrator.logs import bind
 from orchestrator.mcp_server.app import MCP_PATH, build_mcp_app
 from orchestrator.mcp_server.context import McpDeps
-from orchestrator.settings import APP_PREFIX, Settings, get_settings
+from orchestrator.settings import APP_PREFIX, Settings, get_settings, mail_problems
 
 __all__ = ["RequestIds", "app", "create_app", "create_site"]
 
@@ -94,12 +94,18 @@ def warn_without_setup_token(settings: Settings) -> None:
         )
 
 
+def refuse_mail_misconfiguration(settings: Settings) -> None:
+    if found := mail_problems(settings):
+        raise RuntimeError("; ".join(found))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Nothing to open: the engine is created lazily on first use, so an API that starts before
     # Postgres does still comes up and answers /healthz. The chat hub connects on its first
     # stream, for the same reason.
     settings = get_settings()
+    refuse_mail_misconfiguration(settings)
     warn_without_external_url(settings)
     warn_without_setup_token(settings)
     hub: ChatStreamHub = app.state.chat_hub

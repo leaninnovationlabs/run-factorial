@@ -111,24 +111,7 @@ async def _start_action(tick: _Tick, step: ActionStep, *, attempt: int) -> None:
         )
 
     try:
-        if tick.source_kind == "gitlab":
-            from orchestrator.gitlab import GitLabContractOps
-
-            if tick.gitlab is None:
-                raise RuntimeError(
-                    f"project {tick.project.name!r} runs on GitLab, but the GitLab URL was "
-                    "refused or GITLAB_TOKEN is not set"
-                )
-            contract = GitLabContractOps(tick.gitlab, tick.project.github_repo)
-        elif tick.github is None or tick.github.contract_github is None:
-            # Mirrors `_build_run_spec`'s `resolve_agent is None` guard, permanent for the same
-            # reason: no retry makes a dependency nobody wired in appear.
-            raise RuntimeError(
-                "no GitHub action surface is configured; the worker cannot execute actions "
-                "(see orchestrator.worker.context.production_deps)"
-            )
-        else:
-            contract = tick.github.contract_github(tick.project.github_repo)
+        contract = tick.host().forge.contract(tick.project.github_repo)
 
         ctx = ActionContext(
             source=tick.source,

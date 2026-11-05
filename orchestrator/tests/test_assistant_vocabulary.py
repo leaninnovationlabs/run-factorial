@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.assistant.config import AssistantSettings
-from orchestrator.assistant.vocabulary import BACKENDS, credential_slot
+from orchestrator.assistant.vocabulary import (
+    BACKENDS,
+    credential_slot,
+    parse_credential_slot,
+    stores_credential,
+)
 
 
 def test_credential_names_match_the_adapter_constants() -> None:
@@ -37,12 +42,42 @@ def test_every_vocabulary_kind_is_registered() -> None:
 
 
 def test_the_default_model_is_the_settings_default() -> None:
-    assert BACKENDS["claude_sdk"].default_model == AssistantSettings().model
+    assert BACKENDS["claude_sdk"].default_models["api_key"] == AssistantSettings().model
+
+
+def test_every_auth_mode_has_a_default_model() -> None:
+    for vocab in BACKENDS.values():
+        assert set(vocab.default_models) == set(vocab.credentials)
+
+
+def test_codex_defaults_follow_the_sign_in() -> None:
+    """A key and a subscription serve different models (`codex_cli/auth.py`)."""
+    assert BACKENDS["codex_cli"].default_models == {
+        "api_key": "gpt-5.3-codex",
+        "subscription": "gpt-5.6-terra",
+        "bedrock": "us.xai.grok-4.6",
+    }
 
 
 def test_credential_slot_names_backend_and_mode() -> None:
     assert credential_slot("claude_sdk", "api_key") == "assistant:claude_sdk:api_key"
 
+
+
+def test_a_credential_slot_reads_back_as_its_backend_and_mode() -> None:
+    assert parse_credential_slot(credential_slot("codex_cli", "subscription")) == (
+        "codex_cli",
+        "subscription",
+    )
+    assert parse_credential_slot("runtime:x") is None
+    assert parse_credential_slot("assistant:claude_sdk") is None
+
+
+def test_a_minted_or_unknown_mode_stores_no_credential() -> None:
+    assert stores_credential("claude_sdk", "api_key") is True
+    assert stores_credential("codex_cli", "subscription") is True
+    assert stores_credential("codex_cli", "bedrock") is False
+    assert stores_credential("gemini", "api_key") is False
 
 def test_settings_refuse_an_alias_and_an_unknown_backend() -> None:
     with pytest.raises(ValidationError, match="alias"):
@@ -64,12 +99,20 @@ def test_settings_refuse_an_auth_mode_the_backend_lacks() -> None:
         ("max_steps", 0),
         ("max_steps", 101),
         ("daily_budget_usd", "1000.01"),
+        ("organization_daily_budget_usd", "0"),
+        ("organization_daily_budget_usd", "10000.01"),
         ("effort", "extreme"),
     ],
 )
 def test_settings_refuse_out_of_range_values(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
         AssistantSettings(**{field: value})  # type: ignore[arg-type]
+
+
+def test_the_organization_budget_is_off_until_set() -> None:
+    assert AssistantSettings().organization_daily_budget_usd is None
+    capped = AssistantSettings(organization_daily_budget_usd=Decimal("150"))
+    assert capped.organization_daily_budget_usd == Decimal("150")
 
 
 def test_settings_refuse_an_unknown_field() -> None:

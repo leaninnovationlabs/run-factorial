@@ -19,9 +19,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from orchestrator.config.conditions import PREDICATE_ARITY
 from orchestrator.github.projector import CHANGE_REQUEST_MARKER, LABEL_PREFIXES, step_from_label
 from orchestrator.github.state import CheckRunState, PullRequestState
-from orchestrator.gitlab.observer import GitLabStateSource
 from orchestrator.predicates.globs import matches_path, matches_ref, resolve_refs
-from runtime.gitlab_delivery import gitlab_delivery_author
 
 if TYPE_CHECKING:
     # Deferred: `evaluator.py` imports `PREDICATES` from here, so a top-level import would be
@@ -196,11 +194,24 @@ async def ticket_has_assignee(ctx: EvalContext, *args: str) -> bool:
     return bool((await ctx.source.issue()).assignees)
 
 
-def _delivery_comment_author(ctx: EvalContext, author: str) -> bool:
-    """GitHub: configured App bot only. GitLab: that login or a minted project access token bot."""
-    if isinstance(ctx.source, GitLabStateSource):
-        return gitlab_delivery_author(author, ctx.bot_login)
-    return bool(ctx.bot_login) and author.casefold() == ctx.bot_login.casefold()
+def _login_matches(login: str, bot_login: str) -> bool:
+    return bool(bot_login) and login.casefold() == bot_login.casefold()
+
+
+def _tracker_delivery_author(ctx: EvalContext, author: str) -> bool:
+    """Issue-comment fence: the tracker's own delivery author, else the configured bot login."""
+    tracker = getattr(ctx.source, "tracker", None)
+    if tracker is not None:
+        return tracker.is_delivery_author(author)
+    return _login_matches(author, ctx.bot_login)
+
+
+def _forge_delivery_author(ctx: EvalContext, author: str) -> bool:
+    """PR-comment fence: the forge's own delivery author, else the configured bot login."""
+    forge = getattr(ctx.source, "forge", None)
+    if forge is not None:
+        return forge.is_delivery_author(author)
+    return _login_matches(author, ctx.bot_login)
 
 
 async def issue_comment_contains(ctx: EvalContext, *args: str) -> bool:
@@ -216,10 +227,10 @@ async def issue_comment_contains(ctx: EvalContext, *args: str) -> bool:
     (marker,) = args
     if not marker:
         return False
-    if not isinstance(ctx.source, GitLabStateSource) and not ctx.bot_login:
+    if getattr(ctx.source, "tracker", None) is None and not ctx.bot_login:
         return False
     return any(
-        _delivery_comment_author(ctx, comment.author) and marker in comment.body
+        _tracker_delivery_author(ctx, comment.author) and marker in comment.body
         for comment in await ctx.source.issue_comments()
     )
 
@@ -238,7 +249,7 @@ async def pr_comment_contains(ctx: EvalContext, *args: str) -> bool:
     head, marker = args
     if not marker:
         return False
-    if not isinstance(ctx.source, GitLabStateSource) and not ctx.bot_login:
+    if getattr(ctx.source, "forge", None) is None and not ctx.bot_login:
         return False
     for pr in await ctx.source.pull_requests():
         if not matches_ref(head, pr.head_ref):
@@ -246,7 +257,7 @@ async def pr_comment_contains(ctx: EvalContext, *args: str) -> bool:
         for comment in await ctx.source.pr_comments(pr.number):
             if comment.body.startswith(CHANGE_REQUEST_MARKER):
                 continue
-            if _delivery_comment_author(ctx, comment.author) and marker in comment.body:
+            if _forge_delivery_author(ctx, comment.author) and marker in comment.body:
                 return True
     return False
 

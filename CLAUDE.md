@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 This repo is the **factorial** ADLC orchestrator (`orchestrator/` + `runtime/` + `ui/`):
-GitHub Issues flow through the Agent Development Life Cycle, AI agents do the work of each
+GitHub or GitLab issues flow through the Agent Development Life Cycle, AI agents do the work of each
 phase on runtime adapters (`claude_cli`, `codex_cli`, and both CLIs in an E2B sandbox:
 `claude_e2b`, `codex_e2b`), and humans approve at defined gates.
 
@@ -138,8 +138,8 @@ be pinned; `@latest` is refused at parse time.
 
 ## Editing conventions
 
-- Scope discipline: this phase is **GitHub only** (Issues + PRs + Actions). App Runtime, Jira,
-  deploy steps, multi-repo tickets, and Projects v2 are explicit non-goals (design.md §9).
+- Scope discipline: this phase is **GitHub or GitLab** (issues, PRs/MRs, and CI). App Runtime,
+  Jira, deploy steps, multi-repo tickets, and Projects v2 are explicit non-goals (design.md §9).
 - The scripts' header comments are load-bearing documentation. Keep them true when you change
   behavior — stale comments have cost this project full validation runs.
 

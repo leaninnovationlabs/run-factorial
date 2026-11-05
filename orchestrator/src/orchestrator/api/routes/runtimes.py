@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.access import Permission
+from orchestrator.adapters.registry import display_of
 from orchestrator.api import device_login
 from orchestrator.api.access import SIGNED_IN, needs
 from orchestrator.api.bindings import process_bindings
@@ -43,6 +44,7 @@ from orchestrator.api.schemas import (
     AuthFailureOut,
     CredentialCheckOut,
     CredentialTestOut,
+    ForgeDisplayOut,
     RuntimeCheckIn,
     RuntimeCheckOut,
     RuntimeCredentialIn,
@@ -67,6 +69,7 @@ from orchestrator.db.models import (
     StepRun,
     StepRunStatus,
     Ticket,
+    TicketSource,
 )
 from orchestrator.events import EventType
 from orchestrator.factorial.runtimes import (
@@ -594,15 +597,32 @@ async def list_runtime_projects(runtime_id: int, session: SessionDep) -> list[Ru
     """The projects bound to this runtime — the rows `connected_projects` counts. One row per
     project however many of its lanes name the runtime."""
     await _require_runtime(session, runtime_id)
+    bindings = await process_bindings(session, runtime_ids=[runtime_id])
+    ids = {binding.project_id for binding in bindings}
+    projects = {
+        row.id: row
+        for row in (await session.execute(select(Project).where(Project.id.in_(ids)))).scalars()
+    }
+    sources = await session.execute(
+        select(TicketSource.project_id, TicketSource.kind).where(TicketSource.project_id.in_(ids))
+    )
+    kinds: dict[int, str] = {project_id: kind for project_id, kind in sources}
     seen: set[int] = set()
     rows: list[RuntimeProjectOut] = []
-    for binding in await process_bindings(session, runtime_ids=[runtime_id]):
+    for binding in bindings:
         if binding.project_id in seen:
             continue
         seen.add(binding.project_id)
         rows.append(
             RuntimeProjectOut(
-                id=binding.project_id, name=binding.project_name, github_repo=binding.github_repo
+                id=binding.project_id,
+                name=binding.project_name,
+                github_repo=binding.github_repo,
+                forge=ForgeDisplayOut(
+                    **display_of(
+                        projects[binding.project_id], kinds.get(binding.project_id)
+                    ).payload()
+                ),
             )
         )
     return rows

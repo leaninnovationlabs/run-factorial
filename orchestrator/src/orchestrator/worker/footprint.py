@@ -48,8 +48,7 @@ _REF_ARGUMENT: Final[Mapping[str, int]] = {
 async def remove_footprint(tick: _Tick, plan: Footprint, comment: str) -> None:
     """Close `plan`'s pull requests with `comment` and delete its branches. The caller has
     checked the project's `contract_github` is wired."""
-    assert tick.github is not None and tick.github.contract_github is not None
-    github = tick.github.contract_github(tick.project.github_repo)
+    github = tick.host().forge.contract(tick.project.github_repo)
     for pr in plan.close:
         await github.close_pull_request(pr.number, comment=comment)
     for name in plan.branches:

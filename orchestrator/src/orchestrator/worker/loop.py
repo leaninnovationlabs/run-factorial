@@ -53,8 +53,6 @@ from orchestrator.db.models import (
     StepRun,
     StepRunStatus,
     Ticket,
-    TicketSource,
-    TicketSourceKind,
 )
 from orchestrator.db.session import SessionScope, session_scope
 from orchestrator.events import WAKE_CHANNEL, WAKE_LISTENER, EventType, append
@@ -65,7 +63,6 @@ from orchestrator.settings import Settings, get_settings
 from orchestrator.worker.admission import (
     CandidateFactory,
     admit_all,
-    admit_gitlab_all,
     admit_issue,
 )
 from orchestrator.worker.context import ReconcileDeps, adapter_options, github_once_per_tick
@@ -141,16 +138,10 @@ async def tick(
     lease_ttl = ttl if ttl is not None else timedelta(seconds=resolved.worker.lease_seconds)
 
     with github_once_per_tick():
-        if candidates is not None:
-            try:
-                await admit_all(scope, deps, candidates)
-            except Exception:
-                logger.exception("admission pass failed")
-
         try:
-            await admit_gitlab_all(scope)
+            await admit_all(scope, deps, candidates)
         except Exception:
-            logger.exception("gitlab admission pass failed")
+            logger.exception("admission pass failed")
 
         # Claim until a claim comes back short. One claim per tick would serve the same lowest
         # ids every tick — `acquire_leases` orders by id, the tick releases at its end — and
@@ -369,23 +360,10 @@ async def _announce_quarantine(
             if ticket is None:
                 return
             project = await _load_project(session, ticket.project_id)
-            from orchestrator.db.models import TicketSource
-
-            source_row = await session.get(TicketSource, ticket.ticket_source_id)
-            kind = source_row.kind if source_row is not None else "github"
-            if kind == "gitlab":
-                from orchestrator.gitlab.project_client import client_for_project
-                from orchestrator.gitlab.projector import GitLabProjector
-
-                client = await client_for_project(session, project)
-                if client is None:
-                    return
-                projector = GitLabProjector(client, project.github_repo)
-            else:
-                github = await deps.github_for(session, project)
-                if github is None:
-                    return
-                projector = github.projector(project.github_repo)
+            bindings = await deps.bindings_for(session, project)
+            if bindings is None:
+                return
+            projector = bindings.projector(project.github_repo)
             await projector.comment(
                 int(ticket.external_key),
                 "Factorial stopped working on this ticket after "
@@ -423,10 +401,10 @@ async def run_forever(
     admissions = _Admissions()
     scope = sessions if sessions is not None else session_scope
     try:
-        await _sweep_gitlab_tokens(scope)
+        await _sweep_run_credentials(scope, deps)
     except Exception:
         # Same hygiene as the credential-file sweep: a worker that cannot run it still ticks.
-        logger.exception("the startup GitLab token sweep failed")
+        logger.exception("the startup run-credential sweep failed")
 
     handlers = _install_signals(stopping) if install_signal_handlers else ()
     # After the handlers: a SIGTERM during its wait stops the worker once it returns.
@@ -609,44 +587,44 @@ async def _log_spawn_refusals(hosts: Sequence[RuntimeAdapter]) -> None:
                 type(adapter).__name__,
                 why,
             )
-async def _sweep_gitlab_tokens(scope: SessionScope) -> None:
-    """Revoke project tokens left by terminal runs while preserving live sessions."""
-    from orchestrator.gitlab.project_client import client_for_project
-    from orchestrator.gitlab.run_token import sweep_project_run_tokens
+async def _sweep_run_credentials(scope: SessionScope, deps: ReconcileDeps) -> None:
+    """Revoke per-run forge credentials left by terminal runs while preserving live sessions.
 
-    deleted = 0
+    Each project sweeps in its own session, and a failure skips that project only: one broken
+    connection must not leave every later project's run tokens unrevoked.
+    """
     async with scope() as session:
-        projects = (
-            await session.scalars(
-                select(Project)
-                .join(TicketSource, TicketSource.project_id == Project.id)
-                .where(TicketSource.kind == TicketSourceKind.GITLAB)
+        project_ids = list(await session.scalars(select(Project.id).order_by(Project.id)))
+    deleted = 0
+    for project_id in project_ids:
+        try:
+            async with scope() as session:
+                deleted += await _sweep_project(session, deps, project_id)
+        except ConnectionBackoff as exc:
+            logger.warning("the run-credential sweep skips project id=%s: %s", project_id, exc)
+        except Exception:
+            logger.exception("the run-credential sweep skips project id=%s", project_id)
+    logger.info("startup sweep revoked %d stale run credential(s)", deleted)
+
+
+async def _sweep_project(session: AsyncSession, deps: ReconcileDeps, project_id: int) -> int:
+    project = await session.get(Project, project_id)
+    if project is None:
+        return 0
+    bindings = await deps.bindings_for(session, project)
+    if bindings is None:
+        return 0
+    active = frozenset(
+        await session.scalars(
+            select(StepRun.id)
+            .join(Ticket, Ticket.id == StepRun.ticket_id)
+            .where(
+                Ticket.project_id == project.id,
+                StepRun.status.in_([StepRunStatus.RUNNING, StepRunStatus.IDLE]),
             )
-        ).all()
-        for project in projects:
-            try:
-                client = await client_for_project(session, project)
-            except ConnectionBackoff as exc:
-                logger.warning("the GitLab token sweep skips project %s: %s", project.name, exc)
-                continue
-            if client is None:
-                continue
-            active = frozenset(
-                await session.scalars(
-                    select(StepRun.id)
-                    .join(Ticket, Ticket.id == StepRun.ticket_id)
-                    .where(
-                        Ticket.project_id == project.id,
-                        StepRun.status.in_(
-                            [StepRunStatus.RUNNING, StepRunStatus.IDLE]
-                        ),
-                    )
-                )
-            )
-            deleted += await sweep_project_run_tokens(
-                client, project.github_repo, active_run_ids=active
-            )
-    logger.info("startup sweep revoked %d stale GitLab run token(s)", deleted)
+        )
+    )
+    return await bindings.forge.sweep_run_credentials(project.github_repo, active_run_ids=active)
 
 
 def _requested_inspect(payload: str) -> bool:

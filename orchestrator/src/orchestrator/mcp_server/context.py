@@ -1,9 +1,9 @@
-"""What a tool reaches: one database session per call, the settings, and the GitHub ports.
+"""What a tool reaches: one database session per call, the settings, and the host ports.
 
 The ports are the API's own (`api/deps.py`), each resolved for the project a tool acts on, so a
-project's client and its installation tokens are shared with the routes. A project with no
-GitHub is refused here, once. A tool reaches GitHub only through `deps`, never through
-`api/deps.py` itself, so a test can stub it.
+project's client and its installation tokens are shared with the routes. A project whose host is
+not connected is refused here, once. A tool reaches GitHub or GitLab only through `deps`, never
+through `api/deps.py` itself, so a test can stub it.
 """
 
 from __future__ import annotations
@@ -17,17 +17,24 @@ from fastmcp.exceptions import AuthorizationError
 from fastmcp.server.dependencies import get_access_token, get_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.bindings import Bindings
+from orchestrator.adapters.registry import (
+    display_of,
+    host_registries,
+    resolve_bindings,
+    tracker_kind_for,
+)
 from orchestrator.api.deps import (
     GITHUB_NOT_CONNECTED,
     ApiGitHub,
     ConfigCommitWriter,
     RepoReader,
-    github_config_commit_writer,
     github_config_source,
-    github_issue_writer,
     github_repo_reader,
+    project_config_commit_writer,
     project_github,
     project_gitlab,
+    project_issue_writer,
 )
 from orchestrator.api.services.errors import Unavailable
 from orchestrator.db.models import Project
@@ -63,11 +70,14 @@ GITLAB_MISSING = (
 class McpDeps:
     settings: Callable[[], Settings] = get_settings
     sessions: Sessions = session_scope
-    issue_writer: Callable[[Project], Awaitable[IssueWriter | None]] = github_issue_writer
+    #: Opens an issue where the project's tickets live, on either host. Writes only ever go
+    #: through this port and `commit_writer`, never `bindings`: the assistant leaves both empty,
+    #: while its read ports still answer.
+    issue_writer: Callable[[Project], Awaitable[IssueWriter | None]] = project_issue_writer
     #: The GitHub port. A GitLab project's tools read through `gitlab` (`tools/config.py`).
     config_source: Callable[[Project], Awaitable[RepoConfigSource | None]] = github_config_source
     commit_writer: Callable[[Project], Awaitable[ConfigCommitWriter | None]] = (
-        github_config_commit_writer
+        project_config_commit_writer
     )
     #: The project's client and bot login.
     github: Callable[[Project], Awaitable[ApiGitHub | None]] = project_github
@@ -94,20 +104,35 @@ class ToolContext:
     async def commit_writer(self, project: Project) -> ConfigCommitWriter:
         writer = await self.deps.commit_writer(project)
         if writer is None:
-            raise Unavailable(self.deps.github_missing)
+            raise Unavailable(await self.unbound(project))
         return writer
 
     async def issue_writer(self, project: Project) -> IssueWriter:
         writer = await self.deps.issue_writer(project)
         if writer is None:
-            raise Unavailable(self.deps.github_missing)
+            raise Unavailable(await self.unbound(project))
         return writer
 
-    async def gitlab(self, project: Project) -> GitLabClient:
-        client = await self.deps.gitlab(project)
-        if client is None:
-            raise Unavailable(self.deps.gitlab_missing)
-        return client
+    async def bindings(self, project: Project) -> Bindings | None:
+        """The project's tracker and forge over this context's read ports, for reading only."""
+        from orchestrator.worker.context import ProjectGitHub
+
+        async def github(_session: AsyncSession, found: Project) -> ProjectGitHub | None:
+            api = await self.deps.github(found)
+            if api is None:
+                return None
+            return ProjectGitHub.over(api.client, api.contents, bot_login=api.bot_login)
+
+        async def gitlab(_session: AsyncSession, found: Project) -> GitLabClient | None:
+            return await self.deps.gitlab(found)
+
+        trackers, forges = host_registries(github, gitlab=gitlab)
+        return await resolve_bindings(self.session, project, trackers=trackers, forges=forges)
+
+    async def unbound(self, project: Project) -> str:
+        """What a tool says when the project's host is not connected."""
+        host = display_of(project, await tracker_kind_for(self.session, project))
+        return self.deps.github_missing if host.github_app else self.deps.gitlab_missing
 
     async def repo_reader(self, project: Project) -> RepoReader:
         reader = await self.deps.repo_reader(project)

@@ -1,12 +1,13 @@
 """The assistant's settings document and credential: where they live and how they are read.
 
-Both are an organization's (design.md §2.11). The document is an `organization_setting` row; the
-credential is an `organization_credential` row in the slot the document's backend and auth mode
-name. Switching either reads a different slot, so a key set for one mode is never used for
-another. The credential has no read path out of this module except `assistant_credential`, which
-only the API's credential route calls, for the assistant's process. The process's own health is
-the deployment's, an `app_setting` row, because whether a backend starts is a fact about the
-host.
+Both are an organization's (design.md §2.11). The document is an `organization_setting` row; a
+credential is an `organization_credential` row in the slot a backend and auth mode name. A turn
+reads only the slot the document names, so a key set for one mode is never used for another;
+the settings page writes and removes the slot it names. A value has no read path out of this
+module except `assistant_credential`, which only the API's credential route calls, for the
+assistant's process; `stored_credentials` lists who set each slot and when. The process's own
+health is the deployment's, an `app_setting` row, because whether a backend starts is a fact
+about the host.
 """
 
 from __future__ import annotations
@@ -23,7 +24,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.assistant.config import AssistantSettings
-from orchestrator.assistant.vocabulary import credential_slot
+from orchestrator.assistant.vocabulary import (
+    BACKENDS,
+    SLOT_PREFIX,
+    credential_slot,
+    parse_credential_slot,
+)
 from orchestrator.db.base import JsonDict
 from orchestrator.db.models import AppSetting, OrganizationSetting
 from orchestrator.factorial.bedrock_token import BedrockMintError, mint_bearer
@@ -34,6 +40,7 @@ __all__ = [
     "SETTING_KEY",
     "STATUS_KEY",
     "CredentialState",
+    "StoredCredential",
     "assistant_credential",
     "assistant_ready_to_send",
     "clear_assistant_credential",
@@ -41,9 +48,11 @@ __all__ = [
     "host_bedrock_refused",
     "load_assistant_settings",
     "load_assistant_status",
+    "model_refused",
     "save_assistant_settings",
     "save_assistant_status",
     "set_assistant_credential",
+    "stored_credentials",
 ]
 
 SETTING_KEY: Final = "assistant"
@@ -79,6 +88,18 @@ async def _host_can_mint(region: str) -> bool:
     return ok
 
 
+def model_refused(assistant: AssistantSettings) -> str | None:
+    """Why a save's model belongs to the other vendor, or None. Checked on save only: a document
+    stored before the rule must still load."""
+    is_claude = assistant.model.startswith("claude-")
+    if assistant.backend == "claude_sdk" and not is_claude:
+        return "A Claude backend needs a Claude model id, such as claude-opus-5-5."
+    if assistant.backend == "codex_cli" and is_claude:
+        example = BACKENDS["codex_cli"].default_models[assistant.auth_mode]
+        return f"Codex can't run a Claude model. Use a model such as {example}."
+    return None
+
+
 def host_bedrock_refused(assistant: AssistantSettings, *, multi_org: bool) -> bool:
     return multi_org and assistant.backend == "codex_cli" and assistant.auth_mode == "bedrock"
 
@@ -105,7 +126,9 @@ async def load_assistant_settings(session: AsyncSession, organization_id: int) -
 async def save_assistant_settings(
     session: AsyncSession, organization_id: int, value: AssistantSettings, *, by: str
 ) -> None:
-    document = value.model_dump(mode="json")
+    # The settings forbid unknown keys, so an unset cap stays out of the row: an older release
+    # reads it after a rollback.
+    document = value.model_dump(mode="json", exclude_none=True)
     insert = pg_insert(OrganizationSetting).values(
         organization_id=organization_id, key=SETTING_KEY, value=document, updated_by=by
     )
@@ -140,15 +163,41 @@ def _slot(settings: AssistantSettings) -> str:
 
 
 async def set_assistant_credential(
-    session: AsyncSession, organization_id: int, value: str, *, by: str
+    session: AsyncSession,
+    organization_id: int,
+    backend: str,
+    auth_mode: str,
+    value: str,
+    *,
+    by: str,
 ) -> None:
-    settings = await load_assistant_settings(session, organization_id)
-    await store.put_for_organization(session, organization_id, _slot(settings), value, by=by)
+    name = credential_slot(backend, auth_mode)
+    await store.put_for_organization(session, organization_id, name, value, by=by)
 
 
-async def clear_assistant_credential(session: AsyncSession, organization_id: int) -> bool:
-    settings = await load_assistant_settings(session, organization_id)
-    return await store.delete_for_organization(session, organization_id, _slot(settings))
+async def clear_assistant_credential(
+    session: AsyncSession, organization_id: int, backend: str, auth_mode: str
+) -> bool:
+    name = credential_slot(backend, auth_mode)
+    return await store.delete_for_organization(session, organization_id, name)
+
+
+@dataclass(frozen=True)
+class StoredCredential:
+    backend: str
+    auth_mode: str
+    updated_by: str
+    updated_at: datetime
+
+
+async def stored_credentials(session: AsyncSession, organization_id: int) -> list[StoredCredential]:
+    rows = await store.organization_credentials_meta(session, organization_id, SLOT_PREFIX)
+    found = [
+        StoredCredential(slot[0], slot[1], by, at)
+        for name, by, at in rows
+        if (slot := parse_credential_slot(name)) is not None
+    ]
+    return sorted(found, key=lambda credential: (credential.backend, credential.auth_mode))
 
 
 async def assistant_credential(

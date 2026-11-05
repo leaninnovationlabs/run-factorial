@@ -12,9 +12,11 @@ import { api } from "../../api/client";
 import { holding } from "../../api/organization.fixture";
 import type { StepRun } from "../../api/types";
 import { AuthProvider } from "../../auth";
+import { type ForgeHost, forgeHost } from "../../forge";
 import { run } from "../../pages/TicketPage.fixture";
 import { byText, click, type Mounted, mount, settle } from "../../testDom";
 import { FakeSocket, xterm } from "../terminal/testFakes";
+import type { ActivitySegment } from "./activity";
 import { OutputDrawer } from "./OutputDrawer";
 
 vi.mock("../terminal/XtermView", async () => {
@@ -73,6 +75,8 @@ type Shown = {
   latest?: StepRun | null;
   reviewGate?: string;
   changesOpen?: number;
+  segment?: ActivitySegment | null;
+  forge?: ForgeHost;
 };
 
 const drawerOf = (
@@ -85,6 +89,8 @@ const drawerOf = (
     latest = shown,
     reviewGate,
     changesOpen,
+    segment = null,
+    forge,
   }: Shown = {},
 ) => (
   <QueryClientProvider client={qc}>
@@ -93,10 +99,11 @@ const drawerOf = (
         ticketId={1}
         step="build"
         run={shown}
-        segment={null}
+        segment={segment}
         latest={latest}
         spawn={undefined}
         repo="acme/app"
+        forge={forge}
         hasPreview={hasPreview}
         declaresFiles={declaresFiles}
         named={named}
@@ -362,6 +369,45 @@ describe("OutputDrawer", () => {
     expect(drawer.textContent).toContain("Done.");
   });
 
+  it("links a run's events on the project's own host", async () => {
+    const gate = run(5, "review", 1, "succeeded", { kind: "human_gate" }) as StepRun;
+    const drawer = await open(gate, {
+      segment: {
+        key: "review#1",
+        nodeId: "review",
+        step: "review",
+        attempt: 1,
+        kind: "human_gate",
+        run: gate,
+        entries: [
+          {
+            id: 7,
+            type: "gate_waiting",
+            details: { step: "review", pr_number: 42 },
+            created_at: "2026-08-25T09:00:00Z",
+          },
+        ],
+        status: "info",
+        generation: 1,
+      },
+      forge: {
+        kind: "gitlab",
+        name: "GitLab",
+        origin: "https://gitlab.example.com",
+        pull_noun: "MR",
+        issue_path: "/-/issues/{key}",
+        pull_path: "/-/merge_requests/{number}",
+        tree_path: "/-/tree/{branch}",
+        commit_path: "/-/commit/{sha}",
+      },
+    });
+    await click(transcriptSwitch(drawer) as HTMLButtonElement);
+    const link = [...drawer.querySelectorAll("a")].find((a) => a.textContent?.includes("#42"));
+    expect(link?.getAttribute("href")).toBe(
+      "https://gitlab.example.com/acme/app/-/merge_requests/42",
+    );
+  });
+
   it("words a run's transcript facts and keeps its id behind a copy button", async () => {
     vi.mocked(api.getRunActivity).mockResolvedValue({
       step_run_id: 2,
@@ -407,5 +453,21 @@ describe("the change request footer", () => {
     expect(form?.textContent).toContain(
       "This rejects code_review_gate and starts attempt 2 of build, which receives this text as its change request. The text is also posted, with your email, to pull request #42.",
     );
+  });
+
+  it("names a GitLab project's merge request and host", async () => {
+    const forge = forgeHost({ kind: "gitlab" }, {});
+    const drawer = await open(build("succeeded"), { reviewGate: "code_review_gate", forge });
+    expect(drawer.textContent).toContain(
+      "Approve the merge request on GitLab, or request changes here.",
+    );
+    await view?.unmount();
+
+    const form = await open(build("succeeded"), {
+      reviewGate: "code_review_gate",
+      changesOpen: 1,
+      forge,
+    });
+    expect(form.textContent).toContain("posted, with your email, to merge request #42.");
   });
 });

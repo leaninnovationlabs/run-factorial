@@ -15,9 +15,9 @@ from typing import Final, Protocol
 
 from githubkit.exception import RequestFailed
 
+from orchestrator.adapters.state import IssueState
 from orchestrator.github.client import GitHubClient, split_repo
 from orchestrator.github.observer import _issue_from_raw, capped_issue_listing, repo_labels
-from orchestrator.github.state import IssueState
 
 __all__ = ["GitHubIssueWriter", "IssueWriter", "MarkerUnconfirmed", "marker_line"]
 

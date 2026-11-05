@@ -17,13 +17,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Final
+from typing import Final, Literal
 
 from sqlalchemy import exists, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.items import (
     SUMMARY_CAP,
     append_notice,
@@ -43,6 +44,7 @@ from runtime.assistant.contract import TurnFailure
 __all__ = [
     "NOT_SET_UP",
     "RESTART_NOTICE",
+    "budget_spent",
     "claim_turn",
     "current_turn",
     "enqueue_turn",
@@ -51,6 +53,7 @@ __all__ = [
     "recover_lost_turns",
     "renew_lease",
     "spent_today",
+    "spent_today_in_organization",
     "wake_queue",
 ]
 
@@ -268,3 +271,34 @@ async def spent_today(
         )
     )
     return Decimal(total or 0)
+
+
+async def spent_today_in_organization(
+    session: AsyncSession, organization_id: int, *, now: datetime
+) -> Decimal:
+    total = await session.scalar(
+        select(func.sum(ChatSpend.cost_usd)).where(
+            ChatSpend.organization_id == organization_id,
+            ChatSpend.day == now.astimezone(UTC).date(),
+        )
+    )
+    return Decimal(total or 0)
+
+
+async def budget_spent(
+    session: AsyncSession,
+    organization_id: int,
+    owner: str,
+    assistant: AssistantSettings,
+    *,
+    now: datetime,
+) -> Literal["person", "organization"] | None:
+    """Which of today's budgets is spent, the person's first."""
+    if await spent_today(session, organization_id, owner, now=now) >= assistant.daily_budget_usd:
+        return "person"
+    cap = assistant.organization_daily_budget_usd
+    if cap is not None and await spent_today_in_organization(
+        session, organization_id, now=now
+    ) >= cap:
+        return "organization"
+    return None

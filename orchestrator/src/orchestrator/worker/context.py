@@ -24,7 +24,8 @@ sources share the repo's branch and PR listings (`RepoListings`), held on the ti
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
+import logging
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -35,6 +36,15 @@ from typing import Any, Literal, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.actions import ContractGitHub
+from orchestrator.adapters.bindings import Bindings
+from orchestrator.adapters.registry import (
+    ForgeFactory,
+    TrackerFactory,
+    display_of,
+    host_registries,
+    resolve_bindings,
+    tracker_kind_for,
+)
 from orchestrator.db.models import Project, Runtime, StepRun
 from orchestrator.factorial import AgentPins, RepoConfigSource, ResolvedAgent, resolve_agent
 from orchestrator.github import (
@@ -246,6 +256,12 @@ async def _once_per_tick(
     return entry.github
 
 
+logger = logging.getLogger(__name__)
+
+#: Projects held for want of a tracker or forge, so the warning is said once per hold.
+_held: set[int] = set()
+
+
 @dataclass(frozen=True, slots=True)
 class ReconcileDeps:
     """Injected collaborators for one worker process."""
@@ -253,6 +269,10 @@ class ReconcileDeps:
     #: Each project's GitHub (`github_for`). `None` leaves every GitHub project unconnected.
     #: A run's `GH_TOKEN` is minted on the project's own client (`inputs.run_secrets`).
     resolve_github: GitHubSource | None = None
+    #: Tracker factories by kind, beside the shipped hosts (`host_registries`); an entry here wins.
+    trackers: Mapping[str, TrackerFactory] = field(default_factory=dict)
+    #: Forge factories by kind, beside the shipped hosts; an entry here wins.
+    forges: Mapping[str, ForgeFactory] = field(default_factory=dict)
     now: Callable[[], datetime] = utc_now
     resolve_agent: AgentSource | None = None
     #: The registry (`runtime` rows a process names by `runtime: <slug>`): one adapter instance
@@ -292,6 +312,36 @@ class ReconcileDeps:
         if resolve is None:
             return None
         return await _once_per_tick(project.id, lambda: resolve(session, project))
+
+    async def bindings_for(self, session: AsyncSession, project: Project) -> Bindings | None:
+        """The tracker and forge this project uses. None when either side cannot be built."""
+        trackers, forges = host_registries(self.github_for)
+        return await resolve_bindings(
+            session,
+            project,
+            trackers={**trackers, **self.trackers},
+            forges={**forges, **self.forges},
+        )
+
+    async def bindings_or_hold(self, session: AsyncSession, project: Project) -> Bindings | None:
+        """`bindings_for`, for the paths that hold a project without them: reconcile and
+        admission. Held, not failed, on either host: a raise would count toward quarantine, which
+        only a person's Requeue undoes, and the tickets should resume by themselves once the
+        project is connected. So the hold is said once, at warning, and its end once more."""
+        bindings = await self.bindings_for(session, project)
+        if bindings is None:
+            if project.id not in _held:
+                _held.add(project.id)
+                host = display_of(project, await tracker_kind_for(session, project))
+                logger.warning(
+                    "project %s is held: %s Its tickets wait and resume once it is connected.",
+                    project.name,
+                    host.unconfigured,
+                )
+        elif project.id in _held:
+            _held.discard(project.id)
+            logger.info("project %s is connected again; its tickets resume", project.name)
+        return bindings
 
     async def adapter_for_run(self, session: AsyncSession, run: StepRun) -> RuntimeAdapter:
         """The one adapter that owns `run`, for every verb after the spawn.

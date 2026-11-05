@@ -37,6 +37,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.bindings import Bindings, TrackerPort
 from orchestrator.config import (
     AllOf,
     AnyOf,
@@ -54,7 +55,6 @@ from orchestrator.db.models import (
     Project,
     Ticket,
     TicketSource,
-    TicketSourceKind,
     TicketStatus,
     intake_repo,
 )
@@ -75,9 +75,8 @@ from orchestrator.github import (
 from orchestrator.github.client import GitHubClient, is_rate_limited
 from orchestrator.github.state import SeededIssue
 from orchestrator.gitlab.client import GitLabClient
-from orchestrator.gitlab.observer import GitLabStateSource
 from orchestrator.predicates import EvalContext, Evaluation, evaluate, failures, needs
-from orchestrator.worker.context import ProjectGitHub, ReconcileDeps
+from orchestrator.worker.context import ReconcileDeps
 from orchestrator.worker.selection import (
     NotSelected,
     SelectionRefusal,
@@ -104,6 +103,7 @@ __all__ = [
     "admit_project",
     "entry_plan",
     "lane_for",
+    "pending_bound",
     "pending_issue",
     "pending_issues",
 ]
@@ -227,6 +227,26 @@ async def admit_project(
         if ticket is not None:
             admitted.append(ticket)
     return admitted
+
+
+async def pending_bound(
+    session: AsyncSession,
+    project: Project,
+    ticket_source: TicketSource,
+    bindings: Bindings,
+    *,
+    limit: int | None = None,
+) -> Sequence[Pending]:
+    """`pending_issues` through a resolved tracker/forge pair."""
+    return await pending_issues(
+        session,
+        project,
+        ticket_source,
+        _TrackerCandidates(bindings.tracker),
+        lambda repo, number: bindings.snapshot(repo, str(number)),
+        bindings.bot_login,
+        limit=limit,
+    )
 
 
 async def pending_issues(
@@ -629,48 +649,60 @@ async def lane_for(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _TrackerCandidates:
+    """Open issues from the project's tracker port."""
+
+    tracker: TrackerPort
+
+    async def open_issues(self, repo: str) -> Sequence[IssueState]:
+        return await self.tracker.candidates(repo)
+
+
 async def admit_all(
-    scope: SessionScope, deps: ReconcileDeps, candidates: CandidateFactory
+    scope: SessionScope,
+    deps: ReconcileDeps,
+    candidates: CandidateFactory | None = None,
 ) -> Sequence[Ticket]:
-    """Run admission for every ACTIVE project with a GitHub ticket source, through each project's
-    own GitHub; a project with no connection admits nothing.
+    """Admit every ACTIVE project through its tracker.
 
     `project.active` is the operator's switch (api/routes/admin.py): a project mid-configuration
     must not start pulling issues in before someone says so. Deactivating stops admission only —
     tickets already in flight keep reconciling, because abandoning one halfway would strand a
-    branch and a PR.
+    branch and a PR. `candidates` is a test override for a GitHub client; production walks each
+    tracker's own listing.
     """
-    admit = partial(_admit_github, deps=deps, candidates=candidates)
-    return await _admit_active(scope, TicketSourceKind.GITHUB, admit)
+    return await _admit_active(scope, deps, candidates)
 
 
-async def admit_gitlab_all(scope: SessionScope) -> Sequence[Ticket]:
-    """`admit_all` for GitLab ticket sources, each through the project's own credentials. A
-    project without them admits nothing: the deployment's token must never read a repository a
-    tenant named."""
-    return await _admit_active(scope, TicketSourceKind.GITLAB, _admit_gitlab)
+async def admit_gitlab_all(
+    scope: SessionScope, deps: ReconcileDeps | None = None
+) -> Sequence[Ticket]:
+    """One pass over every tracker. Kept so existing tests still have this name."""
+    return await admit_all(scope, deps or ReconcileDeps())
+
+
+def _active() -> Select[tuple[Project, TicketSource]]:
+    return (
+        select(Project, TicketSource)
+        .join(TicketSource, TicketSource.project_id == Project.id)
+        .where(Project.active.is_(True))
+        .order_by(Project.id)
+    )
 
 
 type _Admit = Callable[[AsyncSession, Project, TicketSource], Awaitable[Sequence[Ticket]]]
 
 
-def _active(kind: TicketSourceKind) -> Select[tuple[Project, TicketSource]]:
-    return (
-        select(Project, TicketSource)
-        .join(TicketSource, TicketSource.project_id == Project.id)
-        .where(Project.active.is_(True), TicketSource.kind == kind)
-        .order_by(Project.id)
-    )
-
-
 async def _admit_active(
-    scope: SessionScope, kind: TicketSourceKind, admit: _Admit
+    scope: SessionScope, deps: ReconcileDeps, candidates: CandidateFactory | None
 ) -> Sequence[Ticket]:
     async with scope() as session:
-        project_ids = [project.id for project, _ in (await session.execute(_active(kind))).all()]
+        project_ids = [project.id for project, _ in (await session.execute(_active())).all()]
+    admit = partial(_admit_bound, deps=deps, candidates=candidates)
     admitted: list[Ticket] = []
     for project_id in project_ids:
-        admitted.extend(await _isolated(scope, kind, project_id, admit))
+        admitted.extend(await _isolated(scope, project_id, admit))
     return admitted
 
 
@@ -681,48 +713,46 @@ async def admit_issue(
     tickets admitted, none or one.
 
     The delivery only names the issue; the verdict comes from reading it through the project's
-    own forge client, as the fleet pass's does, so a forged or stale delivery admits nothing
-    the pass would not. It runs isolated like one project's pass, and a paused project admits
-    nothing here either. The fleet pass still lists every open issue, so a dropped wake waits
-    for it.
+    own tracker, as the fleet pass's does, so a forged or stale delivery admits nothing the pass
+    would not. It runs isolated like one project's pass, and a paused project admits nothing
+    here either. The fleet pass still lists every open issue, so a dropped wake waits for it.
     """
-    async with scope() as session:
-        kind = await session.scalar(
-            select(TicketSource.kind).where(TicketSource.project_id == project_id)
-        )
-    admit: _Admit
-    if kind == TicketSourceKind.GITHUB:
-        admit = partial(_admit_github_issue, deps=deps, number=number)
-    elif kind == TicketSourceKind.GITLAB:
-        admit = partial(_admit_gitlab_issue, number=number)
-    else:
-        return ()
-    admitted = await _isolated(scope, TicketSourceKind(kind), project_id, admit)
+    admit = partial(_admit_bound_issue, deps=deps, number=number)
+    admitted = await _isolated(scope, project_id, admit)
     return [ticket.id for ticket in admitted]
 
 
-async def _admit_github(
+async def _admit_bound(
     session: AsyncSession,
     project: Project,
     ticket_source: TicketSource,
     *,
     deps: ReconcileDeps,
-    candidates: CandidateFactory,
+    candidates: CandidateFactory | None,
 ) -> Sequence[Ticket]:
-    github = await _github_to_admit_through(session, project, ticket_source, deps)
-    if github is None:
+    bindings = await _bindings_to_admit_through(session, project, ticket_source, deps)
+    if bindings is None:
         return ()
+    if candidates is not None:
+        github = await deps.github_for(session, project)
+        source: CandidateSource = (
+            candidates(github.client)
+            if github is not None
+            else _TrackerCandidates(bindings.tracker)
+        )
+    else:
+        source = _TrackerCandidates(bindings.tracker)
     return await admit_project(
         session,
         project,
         ticket_source,
-        candidates(github.client),
-        state_source=github.state_source,
-        bot_login=github.bot_login,
+        source,
+        state_source=lambda repo, number: bindings.snapshot(repo, str(number)),
+        bot_login=bindings.bot_login,
     )
 
 
-async def _admit_github_issue(
+async def _admit_bound_issue(
     session: AsyncSession,
     project: Project,
     ticket_source: TicketSource,
@@ -730,74 +760,34 @@ async def _admit_github_issue(
     deps: ReconcileDeps,
     number: int,
 ) -> Sequence[Ticket]:
-    github = await _github_to_admit_through(session, project, ticket_source, deps)
-    if github is None:
-        return ()
-    return await _admit_named(
-        session, project, ticket_source, number, github.state_source, github.bot_login
-    )
-
-
-async def _github_to_admit_through(
-    session: AsyncSession, project: Project, ticket_source: TicketSource, deps: ReconcileDeps
-) -> ProjectGitHub | None:
-    github = await deps.github_for(session, project)
-    if github is None:
-        logger.debug("project %s has no GitHub connection; admitting nothing", project.name)
-        return None
-    if (until := github.client.backoff_until(intake_repo(project, ticket_source))) is not None:
-        logger.info("project %s waits for GitHub until %s; admitting nothing", project.name, until)
-        return None
-    return github
-
-
-async def _admit_gitlab(
-    session: AsyncSession, project: Project, ticket_source: TicketSource
-) -> Sequence[Ticket]:
-    client = await _gitlab_to_admit_through(session, project)
-    if client is None:
-        return ()
-    return await admit_project(
-        session,
-        project,
-        ticket_source,
-        GitLabCandidates(client),
-        state_source=partial(GitLabStateSource, client),
-        bot_login=client.settings.bot_login,
-    )
-
-
-async def _admit_gitlab_issue(
-    session: AsyncSession, project: Project, ticket_source: TicketSource, *, number: int
-) -> Sequence[Ticket]:
-    client = await _gitlab_to_admit_through(session, project)
-    if client is None:
+    bindings = await _bindings_to_admit_through(session, project, ticket_source, deps)
+    if bindings is None:
         return ()
     return await _admit_named(
         session,
         project,
         ticket_source,
         number,
-        partial(GitLabStateSource, client),
-        client.settings.bot_login,
+        lambda repo, issue_number: bindings.snapshot(repo, str(issue_number)),
+        bindings.bot_login,
     )
 
 
-async def _gitlab_to_admit_through(session: AsyncSession, project: Project) -> GitLabClient | None:
-    from orchestrator.gitlab.project_client import client_for_project
-
-    client = await client_for_project(session, project)
-    if client is None:
-        logger.warning(
-            "project %s has no GitLab credentials or names a refused host; admitting nothing",
-            project.name,
+async def _bindings_to_admit_through(
+    session: AsyncSession, project: Project, ticket_source: TicketSource, deps: ReconcileDeps
+) -> Bindings | None:
+    bindings = await deps.bindings_or_hold(session, project)
+    if bindings is None:
+        return None
+    if (until := bindings.forge.hold_until(intake_repo(project, ticket_source))) is not None:
+        logger.info(
+            "project %s waits for its forge until %s; admitting nothing", project.name, until
         )
-    return client
+        return None
+    return bindings
 
 
-async def _isolated(
-    scope: SessionScope, kind: TicketSourceKind, project_id: int, admit: _Admit
-) -> Sequence[Ticket]:
+async def _isolated(scope: SessionScope, project_id: int, admit: _Admit) -> Sequence[Ticket]:
     """One project's admission in its own session and transaction, under a deadline: a 404 repo,
     a bad config, or a hung or broken connection costs that project its pass, never another
     tenant's. A deadline that cancels a query mid-flight can leave a connection unusable, so no
@@ -809,7 +799,7 @@ async def _isolated(
     name = f"id={project_id}"
     try:
         async with scope() as session, asyncio.timeout(ADMISSION_DEADLINE_SECONDS):
-            row = (await session.execute(_active(kind).where(Project.id == project_id))).first()
+            row = (await session.execute(_active().where(Project.id == project_id))).first()
             if row is None:
                 return ()
             project, ticket_source = row

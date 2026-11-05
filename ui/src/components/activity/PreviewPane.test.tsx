@@ -13,6 +13,7 @@ import { ApiError, api } from "../../api/client";
 import { keys } from "../../api/keys";
 import type { OutputEntry, RunOutputs, RunPreview, StepRun } from "../../api/types";
 import { AuthProvider } from "../../auth";
+import { type ForgeHost, forgeHost } from "../../forge";
 import { run } from "../../pages/TicketPage.fixture";
 import { choose, click, hover, type Mounted, mount, settle } from "../../testDom";
 import { OutputDrawer } from "./OutputDrawer";
@@ -33,7 +34,7 @@ afterEach(async () => {
 const client = () =>
   new QueryClient({ defaultOptions: { queries: { retry: false, refetchInterval: false } } });
 
-function viewer(qc: QueryClient, shown: StepRun, latest: StepRun = shown) {
+function viewer(qc: QueryClient, shown: StepRun, latest: StepRun = shown, forge?: ForgeHost) {
   return (
     <QueryClientProvider client={qc}>
       <AuthProvider>
@@ -45,6 +46,7 @@ function viewer(qc: QueryClient, shown: StepRun, latest: StepRun = shown) {
           latest={latest}
           spawn={undefined}
           repo="acme/app"
+          forge={forge}
           hasPreview
           declaresFiles={false}
           named="preview"
@@ -802,6 +804,23 @@ describe("the preview's entries", () => {
     expect(folder?.getAttribute("href")).toBe(FOLDER);
   });
 
+  it("names a GitLab project's host on the link to the rest of the folder", async () => {
+    always({});
+    outputs({
+      7: [matched("reports/12/a.html", "a.html", 60), matched("reports/12/b.html", "b.html", 60)],
+    });
+    const gitlab = forgeHost({ kind: "gitlab" }, {});
+    view = await mount(viewer(client(), build(7, 1), build(7, 1), gitlab));
+    await settle();
+    await click(tab("a.html"));
+    await settle();
+
+    const folder = [...document.querySelectorAll("a")].find(
+      (link) => link.textContent === "Open the folder on GitLab",
+    );
+    expect(folder?.getAttribute("href")).toBe(FOLDER);
+  });
+
   it("counts a capped pattern's own files, not every file with its label", async () => {
     always({});
     const other = matched("more/12/c.md", "c.md", 1, {
@@ -873,7 +892,7 @@ describe("the preview's entries", () => {
     await settle();
 
     expect(document.body.textContent).toContain(
-      "This attempt changed more than 300 files, so its record stops at GitHub's limit. A file named exactly still shows. A pattern shows only the files the record holds.",
+      "This attempt changed more than 300 files, so its record may leave some out. A file named exactly still shows. A pattern shows only the files the record holds.",
     );
   });
 

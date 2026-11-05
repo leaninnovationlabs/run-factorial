@@ -198,7 +198,9 @@ async def enable_assistant(
     async with maker() as session:
         organization_id = await default_organization_id(session)
         await svc.save_assistant_settings(session, organization_id, settings, by="test")
-        await svc.set_assistant_credential(session, organization_id, credential, by="test")
+        await svc.set_assistant_credential(
+            session, organization_id, settings.backend, settings.auth_mode, credential, by="test"
+        )
         await session.commit()
     return settings
 

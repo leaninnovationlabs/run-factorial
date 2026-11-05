@@ -35,7 +35,7 @@ from orchestrator.assistant.items import (
     notify_items,
     update_item,
 )
-from orchestrator.assistant.turns import enqueue_turn, spent_today
+from orchestrator.assistant.turns import budget_spent, enqueue_turn
 from orchestrator.db.base import JsonDict
 from orchestrator.db.models import (
     ChatConversation,
@@ -94,9 +94,13 @@ _TITLES: Final = {spec.name: spec.title for spec in ALL_TOOLS}
 _NO_SUCH: Final = "No such proposal."
 #: What to look at after a run that failed unexpectedly; every other write acts on a ticket.
 _LOOK_AT: Final = {"factorial_config_commit": "the factorial branch"}
-_BUDGET_SPENT: Final = (
-    "Your daily budget for the assistant is spent, so it will not reply until tomorrow."
-)
+_BUDGET_SPENT: Final = {
+    "person": "Your daily budget for the assistant is spent, so it will not reply until tomorrow.",
+    "organization": (
+        "The organization's daily budget for the assistant is spent, so it will not reply until "
+        "tomorrow."
+    ),
+}
 
 
 class Expired(ServiceError):
@@ -269,8 +273,8 @@ async def _settle(
     item_id: int,
 ) -> ChatProposal:
     """The run's outcome on the proposal and its card, a notice, and the continuation turn
-    unless the owner's daily budget is spent. A conversation deleted as the run went takes the
-    card with it, so only the outcome comes back."""
+    unless a daily budget, the owner's or the organization's, is spent. A conversation deleted
+    as the run went takes the card with it, so only the outcome comes back."""
     await lock_conversation(session, conversation_id)
     settled = await _locked(session, proposal_id)
     if settled is None:
@@ -283,13 +287,13 @@ async def _settle(
     settled.result = result
     await _redraw(session, settled)
     organization_id = await conversation_organization_id(session, conversation_id)
-    budget = (await load_assistant_settings(session, organization_id)).daily_budget_usd
-    spent = await spent_today(session, organization_id, owner, now=now) >= budget
+    assistant = await load_assistant_settings(session, organization_id)
+    spent = await budget_spent(session, organization_id, owner, assistant, now=now)
     await append_notice(
         session,
         conversation_id=conversation_id,
         turn_id=None,
-        text=f"{line} {_BUDGET_SPENT}" if spent else line,
+        text=f"{line} {_BUDGET_SPENT[spent]}" if spent else line,
     )
     if not spent:
         await enqueue_turn(session, conversation_id, trigger=ChatTurnTrigger.APPROVAL)

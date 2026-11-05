@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import unquote
 
+from orchestrator.adapters.display import GITLAB_DISPLAY
 from orchestrator.api.readiness import protection_item
 from orchestrator.db.models import Project
 from orchestrator.gitlab.client import GitLabError, quote_project
@@ -154,7 +155,7 @@ async def test_the_protection_row_on_gitlab_keeps_the_glab_command_and_has_no_ch
     async def read(repo: str) -> GitLabBranchProtection:
         return GitLabBranchProtection(branch="main", protected=True)
 
-    row = await protection_item(read, Project(github_repo=REPO), {}, forge="gitlab")
+    row = await protection_item(read, Project(github_repo=REPO), {}, host=GITLAB_DISPLAY)
 
     assert row is not None
     assert row.state == "warn"

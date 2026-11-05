@@ -21,7 +21,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 
 from orchestrator.access import Permission
-from orchestrator.access.accounts import session_ended
+from orchestrator.access.accounts import needs_verification, session_ended
 from orchestrator.access.decision import (
     ALL_PERMISSIONS,
     OPERATOR,
@@ -34,6 +34,7 @@ from orchestrator.access.decision import (
 )
 from orchestrator.api.auth import bearer_scheme
 from orchestrator.api.deps import AccountSessionsDep, SettingsDep
+from orchestrator.api.services.errors import Forbidden as ServiceForbidden
 from orchestrator.api.sessions import SESSION_COOKIE, verified_session
 from orchestrator.settings import Settings
 
@@ -47,11 +48,19 @@ __all__ = [
     "from_the_dashboard",
     "needs",
     "require_dashboard_origin",
+    "unverified_refusal",
 ]
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 _NEEDS: Final = "__factorial_needs__"
+
+
+def unverified_refusal() -> ServiceForbidden:
+    return ServiceForbidden(
+        "Verify your email first: open the link in the email, or ask for a new one.",
+        code="email_unverified",
+    )
 
 
 class _SignedIn:
@@ -137,6 +146,8 @@ async def authorize_request(
             session, email=signed.email, verified=signed.verified, epoch=signed.epoch
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in again.")
+        if needs_verification(verified=signed.verified, mail=settings.mail.enabled):
+            raise unverified_refusal()
         if not from_the_dashboard(request, settings):
             # 403, never 401: the dashboard signs the person out on any 401.
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Make this change from the dashboard.")

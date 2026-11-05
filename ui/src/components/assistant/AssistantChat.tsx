@@ -12,8 +12,10 @@
  * leaves it at once, back only if the API refuses. Only deleting the open one moves the Drawer on,
  * to the next not being deleted, and at the press rather than on the API's answer: a second
  * delete made before the first is answered would otherwise strand it on the first. When the
- * assistant is off or has no credential, the foot says so in place of the composer, and links
- * to its settings for a reader who may change them; what was said before stays readable.
+ * API's `ready_to_send` says a message would be refused (off, or no way to sign in: no stored
+ * credential, or no Bedrock token from the host's role), the foot says so in place of the
+ * composer, and links to its settings for a reader who may change them; what was said before
+ * stays readable. Not `credential_set`: Bedrock through the host's role stores none.
  *
  * A send the API refuses because a turn is already under way here (another tab's) keeps the
  * composer waiting until the stream shows that turn end: the stream is what says when it is over.
@@ -99,7 +101,7 @@ export function AssistantChat({
   const refusal = message.error instanceof ApiError ? message.error.code : null;
   const notSetUp =
     (refusedWith !== null && refusedWith.settings === configured) ||
-    (configured !== undefined && (!configured.enabled || !configured.credential_set));
+    (configured !== undefined && !configured.ready_to_send);
   const blocked =
     refusedAt !== null &&
     refusedAt.conversation === conversationId &&
@@ -206,7 +208,7 @@ export function AssistantChat({
   );
   const foot = notSetUp ? (
     <SectionMessage appearance="warning" title="Set up the assistant">
-      It is off, or it has no credential to run on.{" "}
+      It is off, or it has no way to sign in yet.{" "}
       {canConfigure ? (
         <DashboardLink to="/settings">Open the assistant settings</DashboardLink>
       ) : (

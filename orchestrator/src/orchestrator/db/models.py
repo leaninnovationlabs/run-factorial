@@ -55,6 +55,7 @@ __all__ = [
     "STEP_RUN_STATUSES",
     "TICKET_SOURCE_KINDS",
     "TICKET_STATUSES",
+    "VERIFICATION_PURPOSES",
     "Agent",
     "AppSetting",
     "AppUser",
@@ -71,6 +72,7 @@ __all__ = [
     "ChatTurn",
     "ChatTurnStatus",
     "ChatTurnTrigger",
+    "EmailVerification",
     "EnteredBy",
     "Event",
     "McpAccess",
@@ -100,6 +102,7 @@ __all__ = [
     "TicketSource",
     "TicketSourceKind",
     "TicketStatus",
+    "VerificationPurpose",
     "intake_column",
     "intake_repo",
 ]
@@ -235,6 +238,11 @@ class RemovalReason(StrEnum):
     LEFT = "left"
 
 
+class VerificationPurpose(StrEnum):
+    VERIFY = "verify"
+    RESET = "reset"
+
+
 class ChatTurnStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -289,6 +297,7 @@ ARTIFACT_KINDS: Final[tuple[str, ...]] = tuple(ArtifactKind)
 MCP_ACCESSES: Final[tuple[str, ...]] = tuple(McpAccess)
 MCP_MINTED_VIAS: Final[tuple[str, ...]] = tuple(McpMintedVia)
 REMOVAL_REASONS: Final[tuple[str, ...]] = tuple(RemovalReason)
+VERIFICATION_PURPOSES: Final[tuple[str, ...]] = tuple(VerificationPurpose)
 CHAT_TURN_STATUSES: Final[tuple[str, ...]] = tuple(ChatTurnStatus)
 CHAT_TURN_TRIGGERS: Final[tuple[str, ...]] = tuple(ChatTurnTrigger)
 CHAT_ITEM_KINDS: Final[tuple[str, ...]] = tuple(ChatItemKind)
@@ -907,8 +916,8 @@ class AppUser(Base):
     name: Mapped[str]
     #: argon2id. Null for an account that has only signed in by SSO.
     password_hash: Mapped[str | None]
-    #: Set by an SSO sign-in only, until email verification exists: a password proves nothing
-    #: about the mailbox.
+    #: Set by a verified SSO sign-in, a verification link or a password reset: a password proves
+    #: nothing about the mailbox.
     email_verified_at: Mapped[datetime | None]
     failed_sign_ins: Mapped[int] = mapped_column(server_default=text("0"))
     locked_until: Mapped[datetime | None]
@@ -1054,6 +1063,39 @@ class OrganizationRemoval(Base):
     #: An email, or `api-token` for the operator.
     removed_by: Mapped[str]
     removed_at: Mapped[datetime]
+
+
+class EmailVerification(Base):
+    """A link that proves the mailbox: `verify` after a password signup, `reset` to set a new
+    password (design.md §7.19 item 16). Only the token's SHA-256 is kept. `consumed_at` is set
+    when the token is used or a newer one replaces it, so one is live per account and purpose."""
+
+    __tablename__ = "email_verification"
+    __table_args__ = (
+        UniqueConstraint("token_hash"),
+        CheckConstraint("email = lower(email)", name="email_lowercase"),
+        CheckConstraint(_one_of("purpose", VERIFICATION_PURPOSES), name="purpose"),
+        Index(
+            "email_verification_live_idx",
+            "user_id",
+            "purpose",
+            unique=True,
+            postgresql_where=text("consumed_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[IdPk]
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"), index=True
+    )
+    #: The address the link went to; a token stops working if it is not the account's.
+    email: Mapped[str]
+    #: `VerificationPurpose`.
+    purpose: Mapped[str]
+    token_hash: Mapped[bytes]
+    created_at: Mapped[CreatedAt]
+    expires_at: Mapped[datetime]
+    consumed_at: Mapped[datetime | None]
 
 
 class ChatConversation(Base):

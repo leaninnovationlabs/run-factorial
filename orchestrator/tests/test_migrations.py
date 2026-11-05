@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "agent",
     "app_user",
     "artifact",
+    "email_verification",
     "event",
     "mcp_token",
     "organization",

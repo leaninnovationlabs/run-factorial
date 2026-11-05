@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.access import MEMBER, OWNER
-from orchestrator.access.accounts import create_account, user_by_email
+from orchestrator.access.accounts import create_account, user_by_email, vouch_for_email
 from orchestrator.access.decision import Caller
 from orchestrator.admin import USAGE, invite_link, main
 from orchestrator.api.services import membership
@@ -98,7 +98,22 @@ def test_the_link_is_on_the_dashboard_when_the_deployment_names_it() -> None:
     assert invite_link("t", "") == "/factorial/invite/t"
 
 
-@pytest.mark.parametrize("argv", [[], ["grant-owner"], ["make-owner", "a@b.c"]])
+@DATABASE
+async def test_verify_email_verifies_an_account_and_names_one_that_is_missing(
+    async_session: AsyncSession,
+) -> None:
+    email = f"vouched-{uuid4().hex[:8]}@example.com"
+    await create_account(async_session, email=email, name="Pat", password="x" * 12, now=NOW)
+
+    assert await vouch_for_email(async_session, f" {email.upper()} ", now=NOW) is True
+    user = await user_by_email(async_session, email)
+    assert user is not None and user.email_verified_at == NOW
+    assert await vouch_for_email(async_session, f"none-{email}", now=NOW) is False
+
+
+@pytest.mark.parametrize(
+    "argv", [[], ["grant-owner"], ["verify-email"], ["make-owner", "a@b.c"]]
+)
 def test_the_command_refuses_anything_but_one_email(
     argv: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:

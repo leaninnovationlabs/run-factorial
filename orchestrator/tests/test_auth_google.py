@@ -403,7 +403,11 @@ async def test_me_reports_the_session(async_session: AsyncSession) -> None:
         client.cookies.set(SESSION_COOKIE, token)
         response = await client.get("/auth/me")
     assert response.status_code == 200
-    assert response.json() == {"email": "p@leaninnovationlabs.com"}
+    assert response.json() == {
+        "email": "p@leaninnovationlabs.com",
+        "verified": True,
+        "must_verify": False,
+    }
 
 
 async def test_logout_clears_the_cookie(async_session: AsyncSession) -> None:
@@ -488,6 +492,7 @@ async def test_providers_reports_google_availability(async_session: AsyncSession
             "signup": False,
             "multi_org": False,
             "setup_token": False,
+            "mail": False,
         }
     async with client_for(
         build_app(make_settings(auth=enabled_auth()), session=async_session), base_url=DASH
@@ -500,6 +505,7 @@ async def test_providers_reports_google_availability(async_session: AsyncSession
             "signup": False,
             "multi_org": False,
             "setup_token": False,
+            "mail": False,
         }
 
 
@@ -601,6 +607,7 @@ async def test_providers_reports_oidc(async_session: AsyncSession) -> None:
             "signup": False,
             "multi_org": False,
             "setup_token": False,
+            "mail": False,
         }
 
 
@@ -664,6 +671,7 @@ async def test_providers_reports_okta(async_session: AsyncSession) -> None:
             "signup": False,
             "multi_org": False,
             "setup_token": False,
+            "mail": False,
         }
 
 

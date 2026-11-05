@@ -5,7 +5,7 @@ from orchestrator.gitlab.contents import GitLabContents
 from orchestrator.gitlab.contract import GitLabContractOps
 from orchestrator.gitlab.issues import GitLabIssueWriter
 from orchestrator.gitlab.media import GitLabMedia
-from orchestrator.gitlab.observer import GitLabStateSource, list_issues
+from orchestrator.gitlab.observer import GitLabStateSource, gitlab_views, list_issues
 from orchestrator.gitlab.projector import GitLabProjector
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "GitLabMedia",
     "GitLabProjector",
     "GitLabStateSource",
+    "gitlab_views",
     "list_issues",
     "quote_project",
 ]

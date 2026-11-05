@@ -12,6 +12,7 @@ The clock is injected (`Clock`); no test sleeps.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -46,7 +47,7 @@ from orchestrator.worker.admission import (
     admit_issue,
     admit_project,
 )
-from orchestrator.worker.loop import run_forever, tick
+from orchestrator.worker.loop import _sweep_run_credentials, run_forever, tick
 from orchestrator.worker.reconcile import reconcile_ticket
 from orchestrator.worker.tick_context import LeaseLost
 from runtime.contract import (
@@ -1251,10 +1252,11 @@ async def test_a_gitlab_project_without_its_own_credentials_is_never_read(
 
 
 async def test_a_gitlab_ticket_without_its_project_s_client_never_reads_github(
-    world: World, monkeypatch: pytest.MonkeyPatch
+    world: World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A GitLab source never drops into the project's GitHub: without a GitLab client of its
-    own, the tick refuses rather than observe the ticket through the GitHub connection."""
+    own, the tick holds the ticket rather than observe it through the GitHub connection. The hold
+    is said once, with what the project lacks, not once a tick."""
     async with world.sessions() as session:
         source = await session.get_one(TicketSource, world.source_id)  # type: ignore[attr-defined]
         source.kind = TicketSourceKind.GITLAB
@@ -1266,9 +1268,132 @@ async def test_a_gitlab_ticket_without_its_project_s_client_never_reads_github(
         "orchestrator.gitlab.project_client.client_for_project", no_credentials
     )
     reads = world.github.issue_reads
-    with pytest.raises(RuntimeError, match="GitLab URL was refused"):
+    with caplog.at_level(logging.WARNING, logger="orchestrator.worker.context"):
+        await run_tick(world)
         await run_tick(world)
     assert world.github.issue_reads == reads
+    held = [r.getMessage() for r in caplog.records if "is held" in r.getMessage()]
+    assert len(held) == 1
+    assert "GitLab is not configured for this project" in held[0]
+
+
+
+
+async def test_the_startup_sweep_goes_on_past_a_project_that_fails(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """One project's broken connection once ended the whole sweep, so every project after it
+    kept its stale run tokens."""
+    broken = await _build_world(maker)
+    later = await _build_world(maker)
+    swept: list[str] = []
+
+    class Sweeper:
+        async def sweep_run_credentials(
+            self, repo: str, *, active_run_ids: frozenset[int]
+        ) -> int:
+            del active_run_ids
+            swept.append(repo)
+            return 0
+
+    async def tracker(_session: AsyncSession, _project: Project) -> object:
+        return object()
+
+    async def forge(_session: AsyncSession, project: Project) -> Sweeper:
+        if project.id == broken.project_id:
+            raise RuntimeError("this project's connection is broken")
+        return Sweeper()
+
+    deps = replace(later.deps, trackers={"github": tracker}, forges={"github": forge})
+    await _sweep_run_credentials(later.sessions, deps)
+    assert later.repo in swept
+
+
+async def test_a_jira_tracker_pairs_with_the_github_forge(world: World) -> None:
+    """A tracker-only kind plus the GitHub forge runs a full reconcile tick (issue #420)."""
+    from collections.abc import Iterable
+    from dataclasses import dataclass
+
+    from orchestrator.adapters.split import SourceTracker, views_from_source
+    from orchestrator.adapters.state import SnapshotState
+    from orchestrator.github import IssueState as SharedIssue
+
+    jira_issue = SharedIssue(
+        number=12,
+        title="From Jira",
+        body="tracker body",
+        state="open",
+        labels=frozenset({"factorial:new"}),
+        assignees=("alice",),
+    )
+    writes: list[tuple[str, object]] = []
+
+    class FakeWrites:
+        async def set_labels(self, issue_number: int, labels: Iterable[str]) -> None:
+            writes.append(("labels", list(labels)))
+
+        async def close_issue(self, issue_number: int) -> None:
+            writes.append(("close", issue_number))
+
+        async def set_assignees(self, issue_number: int, logins: Iterable[str]) -> None:
+            writes.append(("assign", list(logins)))
+
+        async def comment(self, issue_number: int, body: str) -> None:
+            writes.append(("comment", body))
+
+        async def merge_pr(self, *args: object, **kwargs: object) -> str:
+            raise AssertionError("the tracker does not merge")
+
+    @dataclass
+    class FakeJira:
+        kind: str = "jira"
+        bot_login: str = "jira-bot"
+
+        def observe(self, repo: str, key: str) -> SourceTracker:
+            del repo, key
+            return SourceTracker(
+                SnapshotState(repo="jira", issue_state=jira_issue), bot_login=self.bot_login
+            )
+
+        def writes(self, repo: str) -> FakeWrites:
+            del repo
+            return FakeWrites()
+
+        def media(self, repo: str) -> None:
+            del repo
+            return None
+
+        def media_refs(self, text: str) -> tuple[()]:
+            del text
+            return ()
+
+        def is_delivery_author(self, login: str) -> bool:
+            return login == self.bot_login
+
+        async def candidates(self, repo: str) -> tuple[SharedIssue, ...]:
+            del repo
+            return (jira_issue,)
+
+        def views(self, source: object) -> object:
+            return views_from_source(source, bot_login=self.bot_login)  # type: ignore[arg-type]
+
+    fake = FakeJira()
+
+    async def factory(_session: AsyncSession, _project: Project) -> FakeJira:
+        return fake
+
+    world.deps = replace(world.deps, trackers={"jira": factory})
+    async with world.sessions() as session:
+        project = await session.get_one(Project, world.project_id)
+        project.settings = {**project.settings, "forge": "github"}
+        source = await session.get_one(TicketSource, world.source_id)  # type: ignore[attr-defined]
+        source.kind = TicketSourceKind.JIRA
+
+    reads = world.github.issue_reads
+    await run_tick(world)
+    assert (await ticket_row(world)).title == "From Jira"
+    assert world.github.issue_reads == reads
+    assert any(name == "labels" for name, _ in writes)
 
 
 # --------------------------------------------------------------------------- misc

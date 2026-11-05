@@ -1,8 +1,9 @@
 """Accounts: create one, sign in with a password or by SSO, set a password (design.md §7.19).
 
 An account is its lowercase email. A password proves nothing about the mailbox, so only an SSO
-sign-in sets `email_verified_at`, and that sign-in takes back an account whose email was
-unverified: the person who set its password may not own the address, so the password and every
+sign-in, a verification link or a password reset sets `email_verified_at` (`access.verification`
+holds the links). An SSO sign-in takes back an account whose email was unverified, and a reset
+replaces its password: the person who set it may not own the address, so the password and every
 session minted before go with it (`session_ended`). A session also ends when the account's
 `session_epoch` moves past the one it was minted under: signing out everywhere and setting a
 password move it, and revoke the MCP tokens the account's sessions minted (`end_sessions`).
@@ -45,15 +46,22 @@ __all__ = [
     "HasherBusy",
     "InvalidAccountInput",
     "SignInRefused",
+    "check_password_rules",
     "create_account",
     "end_sessions",
+    "forgive_failures",
+    "hash_password",
+    "needs_verification",
     "normalize_email",
     "password_sign_in",
+    "reset_password",
     "session_ended",
     "set_password",
     "sso_sign_in",
     "user_by_email",
+    "verified_by",
     "verified_since",
+    "vouch_for_email",
 ]
 
 PASSWORD_MIN: Final = 12
@@ -65,7 +73,7 @@ MAX_FAILED_SIGN_INS: Final = 10
 LOCKOUT: Final = timedelta(minutes=15)
 
 #: One `@`, something on each side, a dot in the domain, no whitespace. Deliverability is the
-#: email verification's job, later; this only refuses what cannot be an address.
+#: verification email's job; this only refuses what cannot be an address.
 _EMAIL: Final = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 _hasher: Final = PasswordHasher()
@@ -125,6 +133,10 @@ def _password(raw: str) -> str:
     return raw
 
 
+def check_password_rules(raw: str) -> None:
+    _password(raw)
+
+
 class _HashGate:
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -151,6 +163,10 @@ _gate: Final = _HashGate()
 
 async def _hash(password: str) -> str:
     return await _gate.run(lambda: _hasher.hash(password))
+
+
+async def hash_password(password: str) -> str:
+    return await _hash(_password(password))
 
 
 def _verify(password_hash: str | None, password: str) -> bool:
@@ -193,6 +209,11 @@ class _Lockouts:
 
 
 _lockouts: Final = _Lockouts()
+
+
+def forgive_failures(email: str, client: str) -> None:
+    """A reset link proved the mailbox, so the failures behind a lockout no longer count."""
+    _lockouts.clear((email, client))
 
 
 async def user_by_email(session: AsyncSession, email: str) -> AppUser | None:
@@ -270,6 +291,48 @@ async def sso_sign_in(session: AsyncSession, *, email: str, now: datetime) -> Ap
     user.last_sign_in_at = now
     await session.flush()
     return user
+
+
+async def reset_password(
+    session: AsyncSession, user: AppUser, *, password_hash: str, now: datetime
+) -> None:
+    """A reset link proved the mailbox: the password is the link holder's, the email is
+    verified, and every session and session-minted MCP token ends, a stranger's among them."""
+    user.password_hash = password_hash
+    if user.email_verified_at is None:
+        user.email_verified_at = now
+    await end_sessions(session, user)
+
+
+async def verified_by(session: AsyncSession, *, email: str, moment: datetime) -> bool:
+    """Whether the account was verified at `moment`. A credential minted before then came from
+    a session that may be a stranger's, and a later verification by the owner must not adopt
+    it."""
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(AppUser.email == email.lower(), AppUser.email_verified_at <= moment)
+            )
+        )
+    )
+
+
+async def vouch_for_email(session: AsyncSession, email: str, *, now: datetime) -> bool:
+    """The operator's `admin verify-email`: whether an account has the email, verified from now
+    if it was not."""
+    user = await user_by_email(session, email.strip())
+    if user is None:
+        return False
+    if user.email_verified_at is None:
+        user.email_verified_at = now
+        await session.flush()
+    return True
+
+
+def needs_verification(*, verified: bool, mail: bool) -> bool:
+    """design.md §7.19 item 17: with mail configured, an unverified session reaches only its
+    verification. Without mail there is nothing to verify with, so nothing is gated."""
+    return mail and not verified
 
 
 async def session_ended(session: AsyncSession, *, email: str, verified: bool, epoch: int) -> bool:

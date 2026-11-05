@@ -23,6 +23,7 @@ import {
 import { FleetRefresh } from "../components/tickets/FleetRefresh";
 import { SpendFigures } from "../components/tickets/SpendFigures";
 import { PageHeader, SectionMessage, staleSince, usePageTitle } from "../components/ui";
+import { forgeHost } from "../forge";
 import { formatCost, formatTokens } from "../format";
 import { useViewParams } from "../searchParams";
 
@@ -70,7 +71,10 @@ export function ProjectDashboardPage() {
         }
         bottomBar={
           <>
-            <RepoLink repo={project.github_repo} />
+            <RepoLink
+              repo={project.github_repo}
+              forge={forgeHost(project.ticket_source, project.settings, project.forge)}
+            />
             {project.description && <span className="text-subtle">{project.description}</span>}
             {/* What a project has cost is a fact about the project, so it sits in the header
                 rather than on the tickets page. From the board, which polls — see `BoardResponse`. */}

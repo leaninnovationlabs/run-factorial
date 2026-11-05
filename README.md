@@ -26,9 +26,12 @@
 [Design](docs/design.md)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/flow-dark.gif">
-  <img alt="The orchestrator admits an issue, an agent opens a pull request, the orchestrator verifies, and a human approves and merges" src="docs/diagrams/flow-light.gif" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lane-dark.webp">
+  <img alt="A ticket moves through a process: issue, plan, spec gate, build, test, code gate, security scan and deploy" src="docs/diagrams/lane-light.webp" width="100%">
 </picture>
+
+Each step waits for evidence that the orchestrator checks itself.
+[See it step by step](https://www.runfactorial.com/docs/process-lifecycle/#example-lane).
 
 </div>
 
@@ -80,10 +83,9 @@ The architecture and its numbered decisions live in [`docs/design.md`](docs/desi
 
 ## How an issue becomes merged code
 
-The animated flow at the top of this page shows the design.
-It is also an interactive page,
-[`docs/diagrams/flow.html`](docs/diagrams/flow.html): open it in a browser to trace a path,
-focus a lane, or export the picture.
+The recording at the top of this page shows one ticket on the line.
+The [Process lifecycle](https://www.runfactorial.com/docs/process-lifecycle/#example-lane)
+page shows the same line step by step.
 
 ---
 
@@ -311,4 +313,4 @@ not let an author approve its own pull request. On an App project, the App has n
 | [`docs/mcp.md`](docs/mcp.md) | Connect Claude Code or Codex to the orchestrator's MCP server |
 | [`docs/setup.md`](docs/setup.md) | The GitHub App, the credentials, the machine |
 | [`docs/writing-rules.md`](docs/writing-rules.md) | The documentation rules |
-| [`docs/diagrams/`](docs/diagrams/) | The interactive flow, and the archify source that produces it |
+| [`docs/diagrams/`](docs/diagrams/) | The recordings of the example lane, one for each theme |

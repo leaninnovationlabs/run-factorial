@@ -13,13 +13,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Final
-from urllib.parse import quote
 
 from githubkit.exception import RequestFailed
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.display import GITHUB_DISPLAY, HostDisplay, protection_command
+from orchestrator.adapters.registry import display_of
 from orchestrator.api.deps import (
     GITHUB_NOT_CONNECTED,
     GITLAB_NOT_CONFIGURED,
@@ -49,7 +50,6 @@ from orchestrator.config import (
 )
 from orchestrator.config.conditions import iter_calls
 from orchestrator.config.lint import condition_sites
-from orchestrator.config.scaffold.catalog import Forge
 from orchestrator.db.models import (
     Agent,
     ProcessVersion,
@@ -57,7 +57,6 @@ from orchestrator.db.models import (
     Runtime,
     Ticket,
     TicketSource,
-    TicketSourceKind,
 )
 from orchestrator.factorial import (
     CONFIG_BRANCH,
@@ -201,7 +200,7 @@ async def github_standing(
     webhook_reachable: bool = True,
 ) -> GitHubStanding | None:
     """None for a GitLab project, which has no GitHub connection to hold."""
-    if forge_of(source) == "gitlab":
+    if not display_of(project, source.kind if source else None).github_app:
         return None
     return GitHubStanding(
         connected=await has_connection(session, project),
@@ -515,7 +514,8 @@ async def secret_gap(
                 select(TicketSource).where(TicketSource.project_id == project.id)
             )
         ).scalar_one_or_none()
-        gap.notes.append(f"Declared secrets not checked. {_unconfigured(forge_of(source))}")
+        host = display_of(project, source.kind if source else None)
+        gap.notes.append(f"Declared secrets not checked. {host.unconfigured}")
         return gap
 
     rows = {
@@ -1084,35 +1084,19 @@ def _label_palette(config: ProcessConfig) -> dict[str, tuple[str, str]]:
     return palette
 
 
-def forge_of(source: TicketSource | None) -> Forge:
-    """Which host the repo-side probes talk to. Only GitLab is a second host; every other
-    ticket source, including none, stays on the GitHub App."""
-    if source is not None and source.kind == TicketSourceKind.GITLAB:
-        return "gitlab"
-    return "github"
+def host_of(project: Project, source: TicketSource | None) -> HostDisplay:
+    """Display metadata for the code host this project's repo-side probes talk to."""
+    return display_of(project, source.kind if source else None)
 
 
-def _unconfigured(forge: Forge) -> str:
-    if forge == "gitlab":
-        return GITLAB_NOT_CONFIGURED
-    return GITHUB_NOT_CONNECTED
+def _unconfigured(host: HostDisplay) -> str:
+    return host.unconfigured
 
 
 def _protection_remedy(
-    repo: str, branch: str, *, forge: Forge, checks: frozenset[str] = frozenset()
+    repo: str, branch: str, *, host: HostDisplay, checks: frozenset[str] = frozenset()
 ) -> str:
-    if forge == "gitlab":
-        project = quote(repo, safe="")
-        return (
-            f"glab api --method PUT projects/{project}"
-            " -f only_allow_merge_if_pipeline_succeeds=true\n"
-            f"glab api --method POST projects/{project}/protected_branches"
-            f" -f name={branch} -f allow_force_push=false"
-            " -f code_owner_approval_required=true\n"
-            f"glab api --method POST projects/{project}/approvals"
-            " -f approvals_before_merge=1 -f reset_approvals_on_push=true"
-        )
-    return protection_command(repo, branch, checks)
+    return host.protection_remedy(repo, branch, checks)
 
 
 async def label_item(
@@ -1120,7 +1104,7 @@ async def label_item(
     project: Project,
     configs: Mapping[str, ProcessConfig],
     *,
-    forge: Forge = "github",
+    host: HostDisplay = GITHUB_DISPLAY,
 ) -> ReadinessItem:
     """Whether the repo defines every label the process reads or writes (bootstrap step 6).
 
@@ -1136,16 +1120,12 @@ async def label_item(
     try:
         expected = set(all_label_palettes(configs))
         if read_labels is None:
-            hand = (
-                "Create the labels by hand."
-                if forge == "gitlab"
-                else f"Create them by hand, as {CONNECT_DOCS} describes."
-            )
+            hand = host.labels_hand
             return ReadinessItem(
                 key="labels",
                 state="unknown",
                 summary="not checked",
-                detail=f"Ticket labels not checked. {_unconfigured(forge)} {hand}",
+                detail=f"Ticket labels not checked. {host.unconfigured} {hand}",
             )
         missing = sorted(expected - await read_labels(project.github_repo))
         if missing:
@@ -1168,36 +1148,6 @@ async def label_item(
             detail=f"Ticket labels not checked ({_brief(exc)}).",
         )
 
-
-#: Applied by the operator, never by the orchestrator — see `protection_item`. Mirrors the
-#: profile CLAUDE.md fixes: one approval, CODEOWNERS, `verify`, dismiss-stale, no App bypass.
-_PROTECTION_REMEDY: Final = (
-    "gh api -X PUT repos/{repo}/branches/{branch}/protection --input - <<'JSON'\n"
-    '{{"required_status_checks":{{"strict":true,"contexts":{contexts}}},'
-    '"enforce_admins":true,'
-    '"required_pull_request_reviews":{{"required_approving_review_count":1,'
-    '"require_code_owner_reviews":true,"dismiss_stale_reviews":true}},'
-    '"restrictions":null}}\nJSON'
-)
-
-
-def protection_command(repo: str, branch: str, checks: frozenset[str] = frozenset()) -> str:
-    """The PUT that applies the whole profile. It replaces the rule, so it carries the required
-    checks the branch already has: `verify` joins them rather than replacing them."""
-    contexts = ",".join(f'"{name}"' for name in sorted(checks | {"verify"}))
-    return _PROTECTION_REMEDY.format(repo=repo, branch=branch, contexts=f"[{contexts}]")
-
-
-#: The App holds no `administration: write` (design.md §7), so it cannot write this ruleset. The
-#: bypass is the repository admin role, never the App: it is what makes the reset possible.
-_CONFIG_RULESET_REMEDY: Final = (
-    "gh api -X POST repos/{repo}/rulesets --input - <<'JSON'\n"
-    '{{"name":"factorial-config","target":"branch","enforcement":"active",'
-    '"conditions":{{"ref_name":{{"include":["refs/heads/factorial"],"exclude":[]}}}},'
-    '"rules":[{{"type":"deletion"}},{{"type":"non_fast_forward"}}],'
-    '"bypass_actors":[{{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}}]}}'
-    "\nJSON"
-)
 
 #: Another install's seed is known only to that install's database.
 _ADOPT_OR_RESEED: Final = (
@@ -1233,7 +1183,7 @@ async def config_branch_items(
     source: RepoConfigSource | None,
     project: Project,
     *,
-    forge: Forge = "github",
+    host: HostDisplay = GITHUB_DISPLAY,
 ) -> tuple[ReadinessItem, ReadinessItem]:
     """The `factorial` branch config is read from, as two rows off one read. `config_branch`:
     whether it exists on a commit the sync guard accepts, which the Process config page owns
@@ -1283,7 +1233,7 @@ async def config_branch_items(
             detail=f"The `{CONFIG_BRANCH}` branch does not exist yet, so it has no rules to "
             "check. Create it from the Process config page.",
         )
-    rules_row = _config_rules_item(rules, project.github_repo, forge=forge)
+    rules_row = _config_rules_item(rules, project.github_repo, host=host)
     if not known:
         # Every builder commit is refused until the reset happens, whatever the rules say.
         return ReadinessItem(
@@ -1298,9 +1248,9 @@ async def config_branch_items(
     ), rules_row
 
 
-def _config_rules_item(rules: ConfigBranchRules, repo: str, *, forge: Forge) -> ReadinessItem:
+def _config_rules_item(rules: ConfigBranchRules, repo: str, *, host: HostDisplay) -> ReadinessItem:
     gaps = rules.shortfalls()
-    checks = _config_rule_checks(rules, repo, forge=forge)
+    checks = _config_rule_checks(rules, repo, host=host)
     if not gaps:
         return ReadinessItem(
             key="config_branch_rules",
@@ -1330,45 +1280,29 @@ def _config_rules_item(rules: ConfigBranchRules, repo: str, *, forge: Forge) -> 
         summary=summary,
         detail=f"The `{CONFIG_BRANCH}` branch's rules fall short ({', '.join(gaps)}). Without "
         "force-push and deletion protection, a push could rewrite or delete config history. "
-        + (
-            "Factorial only reads branch protection, so run the command below."
-            if forge == "gitlab"
-            else "The App cannot write rulesets, so run the command below."
-        )
+        + host.config_rules_cannot_write
         + (f" {remove_sentence}" if remove else ""),
-        remedy=_config_protection_remedy(repo, forge=forge),
+        remedy=_config_protection_remedy(repo, host=host),
         checks=checks,
     )
 
 
-def _config_protection_remedy(repo: str, *, forge: Forge) -> str:
+def _config_protection_remedy(repo: str, *, host: HostDisplay) -> str:
     """The one command that blocks force-push and deletion on the config branch. GitLab has no
     ruleset to copy: protecting the branch is what refuses a force-push or a deleting push.
     Developers keep push access, as a GitHub ruleset leaves writers theirs, because a protected
     branch otherwise takes pushes from Maintainers only and the builder's commits would stop."""
-    if forge == "gitlab":
-        return (
-            f"glab api --method POST projects/{quote(repo, safe='')}/protected_branches"
-            f" -f name={CONFIG_BRANCH} -f push_access_level=30 -f merge_access_level=30"
-            " -f allow_force_push=false"
-        )
-    return _CONFIG_RULESET_REMEDY.format(repo=repo)
+    return host.config_protection_remedy(repo)
 
 
 def _config_rule_checks(
-    rules: ConfigBranchRules, repo: str, *, forge: Forge
+    rules: ConfigBranchRules, repo: str, *, host: HostDisplay
 ) -> list[ReadinessCheck]:
     """The config branch's rules one by one. Force-push and deletion share a remedy on purpose:
     bootstrap.md's one `factorial-config` ruleset holds both, as GitLab's branch protection does,
     and adding either only ever adds."""
-    fix = _config_protection_remedy(repo, forge=forge)
-    shared = (
-        " The command protects the branch, which blocks force-push and deletion together and "
-        "leaves Developers able to push, so the builder's commits still land."
-        if forge == "gitlab"
-        else " The command adds the factorial-config ruleset, which blocks force-push and "
-        "deletion together and lets a repository admin bypass it to reset the branch."
-    )
+    fix = _config_protection_remedy(repo, host=host)
+    shared = host.config_rules_shared
     protection = [
         ReadinessCheck(
             key="no_force_push",
@@ -1388,7 +1322,7 @@ def _config_rule_checks(
     ]
     # GitLab's reading is the branch's protected flag alone. It cannot see a rule that stops the
     # builder, so it claims no check of one.
-    if forge == "gitlab":
+    if not host.github_app:
         return protection
     blocking = rules.blocking
     return [
@@ -1455,7 +1389,7 @@ async def protection_item(
     project: Project,
     configs: Mapping[str, ProcessConfig],
     *,
-    forge: Forge = "github",
+    host: HostDisplay = GITHUB_DISPLAY,
 ) -> ReadinessItem | None:
     """Whether the default branch is protected — the control that actually stops a bad merge.
 
@@ -1484,14 +1418,14 @@ async def protection_item(
             key="branch_protection",
             state="warn" if required else "unknown",
             summary="not checked",
-            detail=f"Branch protection not checked. {_unconfigured(forge)}"
+            detail=f"Branch protection not checked. {_unconfigured(host)}"
             + (
                 " This process sets policy.branchProtection: required, so nothing verifies the "
                 "protection it requires."
                 if required
                 else ""
             ),
-            remedy=_protection_remedy(project.github_repo, "main", forge=forge),
+            remedy=_protection_remedy(project.github_repo, "main", host=host),
         )
     try:
         rule = await read_protection(project.github_repo)
@@ -1510,7 +1444,7 @@ async def protection_item(
                 if required
                 else ""
             ),
-            remedy=_protection_remedy(project.github_repo, "main", forge=forge),
+            remedy=_protection_remedy(project.github_repo, "main", host=host),
         )
     gaps = rule.shortfalls()
     # Only GitHub's rule carries the settings a check fixes one at a time. A GitLab profile has
@@ -1538,7 +1472,7 @@ async def protection_item(
         + (", and this process requires it" if required else "")
         + ". The spec pull request is the only path to the default branch, and without "
         "protection a merge does not need a person's approval.",
-        remedy=_protection_remedy(project.github_repo, rule.branch, forge=forge, checks=kept),
+        remedy=_protection_remedy(project.github_repo, rule.branch, host=host, checks=kept),
         checks=checks,
     )
 
@@ -1629,7 +1563,7 @@ async def ci_workflows_item(
     project: Project,
     configs: Mapping[str, ProcessConfig],
     *,
-    forge: Forge = "github",
+    host: HostDisplay = GITHUB_DISPLAY,
 ) -> ReadinessItem | None:
     """Whether the repo defines any GitHub Actions workflows — shown only when the process
     gates on `ci_green`, whose verdict can never hold without check runs.
@@ -1649,10 +1583,7 @@ async def ci_workflows_item(
     if not gating:
         return None
     if read_workflows is None:
-        if forge == "gitlab":
-            why = f"Workflows not checked. {GITLAB_NOT_CONFIGURED} "
-        else:
-            why = f"Workflows not checked. {GITHUB_NOT_CONNECTED} "
+        why = host.workflows_unconfigured
         return ReadinessItem(
             key="ci_workflows",
             state="unknown",
@@ -1680,9 +1611,7 @@ async def ci_workflows_item(
         summary="no workflows, but a process gates on ci_green",
         detail=f"Process(es) {', '.join(gating)} reference ci_green and {project.github_repo} "
         + (
-            "has no CI config file (default .gitlab-ci.yml) on its default branch. "
-            if forge == "gitlab"
-            else "defines nothing under .github/workflows on its default branch. "
+            host.no_ci
         )
         + "Zero check runs is never "
         "green, so every ci_green step will wait out its timeout and escalate to "
@@ -1712,7 +1641,7 @@ async def gate_approvers_item(
     project: Project,
     configs: Mapping[str, ProcessConfig],
     *,
-    forge: Forge = "github",
+    host: HostDisplay = GITHUB_DISPLAY,
 ) -> ReadinessItem | None:
     """Whether a gate a repository role may decide merges into a branch that also requires a
     code-owner review (design.md §7.12).
@@ -1729,7 +1658,7 @@ async def gate_approvers_item(
             key="gate_approvers",
             state="unknown",
             summary="not checked",
-            detail=f"Gate approvers not checked. {_unconfigured(forge)}",
+            detail=f"Gate approvers not checked. {_unconfigured(host)}",
         )
     try:
         rule = await read_protection(project.github_repo)
@@ -1750,14 +1679,10 @@ async def gate_approvers_item(
         detail=f"{', '.join(gates)} let anyone with the gate's approverPermission approve, and "
         f"{rule.branch} requires a code-owner review. A reviewer who is not a code owner can pass "
         "the gate. "
-        + ("GitLab" if forge == "gitlab" else "GitHub")
+        + host.name
         + " then refuses the merge, and the gate waits and comments until a code "
         "owner approves. "
-        + (
-            "List those reviewers as code owners, or remove approverPermission from the gate."
-            if forge == "gitlab"
-            else "List those reviewers in CODEOWNERS, or remove approverPermission from the gate."
-        ),
+        + host.gate_approvers_fix,
     )
 
 

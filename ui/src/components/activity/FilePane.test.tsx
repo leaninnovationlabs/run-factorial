@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { ChangedFile, OutputEntry, StepRun } from "../../api/types";
 import { AuthProvider } from "../../auth";
+import { type ForgeHost, forgeHost } from "../../forge";
 import { run } from "../../pages/TicketPage.fixture";
 import { byText, hover, type Mounted, mount, settle } from "../../testDom";
 import { FilePane } from "./FilePane";
@@ -46,9 +47,14 @@ const PUBLISHED: OutputEntry = {
 };
 const plan = run(7, "plan", 1, "succeeded") as StepRun;
 const frame = () => document.querySelector("iframe");
-const pane = (file: OutputEntry, shown: StepRun = plan, changed: ChangedFile[] = []) => (
+const pane = (
+  file: OutputEntry,
+  shown: StepRun = plan,
+  changed: ChangedFile[] = [],
+  forge?: ForgeHost,
+) => (
   <AuthProvider>
-    <FilePane file={file} run={shown} step="plan" changed={changed} />
+    <FilePane file={file} run={shown} step="plan" changed={changed} forge={forge} />
   </AuthProvider>
 );
 const CHANGED: ChangedFile[] = [
@@ -181,6 +187,29 @@ describe("the file pane", () => {
     expect(document.body.textContent).toContain(
       "This file can't be shown here. Open it on GitHub.",
     );
+  });
+
+  it("names a GitLab project's host on its link, its loading and its explanations", async () => {
+    const gitlab = forgeHost({ kind: "gitlab" }, {});
+    view = await mount(pane(PUBLISHED, plan, [], gitlab));
+    await settle();
+    expect(byText(document.body, "a", "GitLab")?.getAttribute("href")).toBe(PUBLISHED.github_url);
+    expect(loading()).toEqual(["Loading the file from GitLab…"]);
+    await view.unmount();
+
+    view = await mount(pane({ ...PUBLISHED, url: null }, plan, [], gitlab));
+    await settle();
+    expect(document.body.textContent).toContain(
+      "This file can't be shown here. Open it on GitLab.",
+    );
+    await view.unmount();
+
+    view = await mount(
+      pane({ ...PUBLISHED, status: "lookup_failed", reason: null, url: null }, plan, [], gitlab),
+    );
+    await settle();
+    expect(document.body.textContent).toContain("Couldn't load this file from GitLab");
+    expect(document.body.textContent).not.toContain("GitHub");
   });
 
   it("draws Reload, New tab and GitHub as small outlined buttons", async () => {

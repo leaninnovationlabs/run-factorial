@@ -1,4 +1,5 @@
-"""The assistant's settings document, stored in `app_setting` under the key `assistant`."""
+"""The assistant's settings document, one per organization in `organization_setting` under the key
+`assistant`."""
 
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ class AssistantSettings(BaseModel):
     turn_budget_usd: Decimal = Field(default=Decimal("1.00"), gt=0, le=50)
     max_steps: int = Field(default=25, ge=1, le=100)
     daily_budget_usd: Decimal = Field(default=Decimal("20.00"), gt=0, le=1000)
+    #: Everyone's spend together on one UTC day. None, the default, sets no cap.
+    organization_daily_budget_usd: Decimal | None = Field(default=None, gt=0, le=10000)
     #: Bedrock Runtime region when `backend` is `codex_cli` and `auth_mode` is `bedrock`.
     bedrock_region: str = DEFAULT_REGION
 

@@ -46,7 +46,7 @@ from orchestrator.worker.footprint import (
     footprint_lines,
     remove_footprint,
 )
-from orchestrator.worker.inputs import release_gitlab_run_token
+from orchestrator.worker.inputs import release_run_credential
 from orchestrator.worker.previews import stop_awake_previews
 from orchestrator.worker.restarts import hold_park_label, run_pair
 from orchestrator.worker.runtime_adapters import RuntimeRefused
@@ -190,13 +190,8 @@ async def redo(tick: _Tick, request: Event) -> None:
     steps = discard_set(tick.config, target)
     branches, pulls = await asyncio.gather(tick.source.branches(), tick.source.pull_requests())
     plan = footprint(tick.config, tick.values, branches, pulls, steps=steps)
-    if (plan.close or plan.branches) and (
-        tick.github is None or tick.github.contract_github is None
-    ):
-        raise RuntimeError(
-            "a redo closes pull requests and deletes branches, and this project has no "
-            "contract_github wired"
-        )
+    if plan.close or plan.branches:
+        tick.host().forge.contract(tick.project.github_repo)
     runs = list(
         (
             await tick.session.scalars(
@@ -228,7 +223,7 @@ async def redo(tick: _Tick, request: Event) -> None:
         run.status = StepRunStatus.CANCELLED
         run.ended_at = run.ended_at or tick.now
         run.failure_reason = _REDO_CANCEL_REASON
-        await release_gitlab_run_token(tick, run.id)
+        await release_run_credential(tick, run.id)
     await _answer_overtaken(tick, ended)
     await stop_awake_previews(
         tick.session,

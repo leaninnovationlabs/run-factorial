@@ -15,6 +15,7 @@ from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.assistant.config import AssistantSettings
 from orchestrator.db.models import ChatConversation, ChatItem, ChatTurn
 from orchestrator.factorial.bedrock_token import BedrockMintError
+from orchestrator.secrets import store
 from orchestrator.settings import AuthSettings, MultiOrgSettings
 from tests.api_harness import DASHBOARD, MCP_BASE, build_app, client_for, make_settings
 from tests.assistant_fakes import wipe_chat
@@ -23,6 +24,10 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
 URL = "/api/orgs/default/settings/assistant"
 CREDENTIAL = f"{URL}/credential"
+
+
+def slot(backend: str = "claude_sdk", mode: str = "api_key") -> str:
+    return f"{CREDENTIAL}/{backend}/{mode}"
 
 
 @pytest.fixture(autouse=True)
@@ -56,13 +61,13 @@ async def test_get_returns_defaults_and_never_a_credential(
     body = response.json()
     assert body["settings"]["model"] == "claude-opus-5-5"
     assert body["settings"]["enabled"] is False
-    assert body["credential"] == {"set": False, "updated_by": None, "updated_at": None}
+    assert body["credentials"] == []
     assert body["ready_to_send"] is False
     assert body["backends"][0] == {
         "kind": "claude_sdk",
         "label": "Claude",
         "auth_modes": ["api_key", "subscription"],
-        "default_model": "claude-opus-5-5",
+        "default_models": {"api_key": "claude-opus-5-5", "subscription": "claude-opus-5-5"},
     }
     assert body["status"] is None
     assert response.headers["cache-control"] == "no-store"
@@ -88,6 +93,43 @@ async def test_put_refuses_an_alias_with_422(client: AsyncClient, auth: dict[str
     assert (await client.get(URL, headers=auth)).json()["settings"]["model"] == "claude-opus-5-5"
 
 
+
+@pytest.mark.parametrize(
+    "backend, mode, model",
+    [("claude_sdk", "api_key", "gpt-5.3-codex"), ("codex_cli", "subscription", "claude-opus-5-5")],
+)
+async def test_put_refuses_a_model_from_the_other_vendor(
+    client: AsyncClient, auth: dict[str, str], backend: str, mode: str, model: str
+) -> None:
+    body = {"backend": backend, "auth_mode": mode, "model": model}
+    response = await client.put(URL, json=body, headers=auth | DASHBOARD)
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "model"]
+    assert (await client.get(URL, headers=auth)).json()["settings"]["backend"] == "claude_sdk"
+
+
+async def test_put_takes_each_backend_s_own_default(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    body = {"backend": "codex_cli", "auth_mode": "bedrock", "model": "us.xai.grok-4.6"}
+    assert (await client.put(URL, json=body, headers=auth | DASHBOARD)).status_code == 200
+
+
+async def test_a_stored_cross_vendor_model_still_loads(
+    client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    """The vendor rule guards a save. A document stored before it must still load, or every turn
+    of that organization would fail."""
+    ours = await default_organization_id(async_session)
+    mismatched = AssistantSettings(backend="claude_sdk", model="gpt-5.3-codex")
+    await svc.save_assistant_settings(async_session, ours, mismatched, by="test")
+    await async_session.commit()
+
+    response = await client.get(URL, headers=auth)
+
+    assert response.status_code == 200
+    assert response.json()["settings"]["model"] == "gpt-5.3-codex"
+
 async def test_put_needs_the_dashboard_origin(client: AsyncClient, auth: dict[str, str]) -> None:
     assert (await client.put(URL, json={}, headers=auth)).status_code == 403
     other = auth | {"Origin": "http://evil.test"}
@@ -97,24 +139,26 @@ async def test_put_needs_the_dashboard_origin(client: AsyncClient, auth: dict[st
 async def test_credential_put_needs_the_dashboard_origin(
     client: AsyncClient, auth: dict[str, str]
 ) -> None:
-    response = await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth)
+    response = await client.put(slot(), json={"value": "sk-9"}, headers=auth)
     assert response.status_code == 403
-    assert (await client.delete(CREDENTIAL, headers=auth)).status_code == 403
-    assert (await client.get(URL, headers=auth)).json()["credential"]["set"] is False
+    assert (await client.delete(slot(), headers=auth)).status_code == 403
+    assert (await client.get(URL, headers=auth)).json()["credentials"] == []
 
 
 async def test_credential_is_write_only(client: AsyncClient, auth: dict[str, str]) -> None:
-    response = await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth | DASHBOARD)
+    response = await client.put(slot(), json={"value": "sk-9"}, headers=auth | DASHBOARD)
     assert response.status_code == 204
     assert response.headers["cache-control"] == "no-store"
-    text_ = (await client.get(URL, headers=auth)).text
-    assert "sk-9" not in text_
-    assert '"set":true' in text_.replace(" ", "")
+    got = await client.get(URL, headers=auth)
+    assert "sk-9" not in got.text
+    assert [(c["backend"], c["auth_mode"]) for c in got.json()["credentials"]] == [
+        ("claude_sdk", "api_key")
+    ]
 
 
 async def test_credential_value_is_bounded(client: AsyncClient, auth: dict[str, str]) -> None:
-    for value in ("", "x" * 4097):
-        response = await client.put(CREDENTIAL, json={"value": value}, headers=auth | DASHBOARD)
+    for value in ("", "x" * 16385):
+        response = await client.put(slot(), json={"value": value}, headers=auth | DASHBOARD)
         assert response.status_code == 422
 
 
@@ -124,9 +168,9 @@ async def test_a_refused_credential_is_not_echoed_back(
     """FastAPI's own 422 repeats the refused `input`; a credential is never readable back, so
     these routes answer with where and why only, which the Assistant settings page draws under a
     field."""
-    too_long = "sk-ant-" + "q" * 4096
+    too_long = "sk-ant-" + "q" * 16384
     for value in ("", too_long):
-        response = await client.put(CREDENTIAL, json={"value": value}, headers=auth | DASHBOARD)
+        response = await client.put(slot(), json={"value": value}, headers=auth | DASHBOARD)
         assert response.status_code == 422
         assert "q" * 64 not in response.text
         [error] = response.json()["detail"]
@@ -136,17 +180,53 @@ async def test_a_refused_credential_is_not_echoed_back(
 
 
 async def test_delete_clears_the_credential(client: AsyncClient, auth: dict[str, str]) -> None:
-    await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth | DASHBOARD)
-    assert (await client.delete(CREDENTIAL, headers=auth | DASHBOARD)).status_code == 204
-    assert (await client.get(URL, headers=auth)).json()["credential"]["set"] is False
+    await client.put(slot(), json={"value": "sk-9"}, headers=auth | DASHBOARD)
+    assert (await client.delete(slot(), headers=auth | DASHBOARD)).status_code == 204
+    assert (await client.get(URL, headers=auth)).json()["credentials"] == []
 
 
 async def test_changes_record_who_made_them(client: AsyncClient, auth: dict[str, str]) -> None:
     await client.put(URL, json={"enabled": True}, headers=auth | DASHBOARD)
-    await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth | DASHBOARD)
+    await client.put(slot(), json={"value": "sk-9"}, headers=auth | DASHBOARD)
     body = (await client.get(URL, headers=auth)).json()
-    assert body["credential"]["updated_by"] == "api-token"
-    assert body["credential"]["updated_at"] is not None
+    assert body["credentials"][0]["updated_by"] == "api-token"
+    assert body["credentials"][0]["updated_at"] is not None
+
+
+async def test_a_codex_auth_json_fits(client: AsyncClient, auth: dict[str, str]) -> None:
+    """A Codex `auth.json` holds two JWTs and a refresh token: about 4 KB, more for a long email
+    or many organizations."""
+    codex = {"backend": "codex_cli", "auth_mode": "subscription", "model": "gpt-5.6-terra"}
+    await client.put(URL, json=codex, headers=auth | DASHBOARD)
+    auth_json = '{"tokens": {"id_token": "' + "j" * 6000 + '"}}'
+
+    response = await client.put(
+        slot("codex_cli", "subscription"), json={"value": auth_json}, headers=auth | DASHBOARD
+    )
+
+    assert response.status_code == 204
+
+
+async def stored_document(async_session: AsyncSession) -> dict[str, object]:
+    return (
+        await async_session.execute(
+            text("SELECT value FROM organization_setting WHERE key = :key"),
+            {"key": svc.SETTING_KEY},
+        )
+    ).scalar_one()
+
+
+async def test_an_unset_organization_budget_is_not_stored(
+    client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    """The settings forbid unknown keys, so after a rollback an older release can read a row only
+    if it carries the new key just where someone set it."""
+    await client.put(URL, json={"enabled": True}, headers=auth | DASHBOARD)
+    assert "organization_daily_budget_usd" not in await stored_document(async_session)
+
+    capped = {"organization_daily_budget_usd": "150.00"}
+    await client.put(URL, json=capped, headers=auth | DASHBOARD)
+    assert (await stored_document(async_session))["organization_daily_budget_usd"] == "150.00"
 
 
 async def test_settings_row_records_who_saved_it(
@@ -165,21 +245,110 @@ async def test_settings_row_records_who_saved_it(
 async def test_switching_auth_mode_does_not_reuse_the_other_slot(
     client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
 ) -> None:
-    await client.put(CREDENTIAL, json={"value": "sk-key"}, headers=auth | DASHBOARD)
+    await client.put(slot(), json={"value": "sk-key"}, headers=auth | DASHBOARD)
     await client.put(URL, json={"auth_mode": "subscription"}, headers=auth | DASHBOARD)
 
     body = (await client.get(URL, headers=auth)).json()
-    assert body["credential"]["set"] is False
+    assert [(c["backend"], c["auth_mode"]) for c in body["credentials"]] == [
+        ("claude_sdk", "api_key")
+    ]
     subscription = AssistantSettings(auth_mode="subscription")
     ours = await default_organization_id(async_session)
     assert await svc.assistant_credential(async_session, ours, subscription) is None
 
-    await client.put(CREDENTIAL, json={"value": "tok-sub"}, headers=auth | DASHBOARD)
+    await client.put(
+        slot("claude_sdk", "subscription"), json={"value": "tok-sub"}, headers=auth | DASHBOARD
+    )
     stored = await svc.assistant_credential(async_session, ours, subscription)
     assert stored is not None and stored.get_secret_value() == "tok-sub"
     original = await svc.assistant_credential(async_session, ours, AssistantSettings())
     assert original is not None and original.get_secret_value() == "sk-key"
 
+
+
+def places(body: dict[str, object]) -> list[tuple[str, str]]:
+    credentials = body["credentials"]
+    assert isinstance(credentials, list)
+    return [(c["backend"], c["auth_mode"]) for c in credentials]
+
+
+async def test_a_credential_for_a_place_not_saved_is_refused(
+    client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    """A page read before the backend was switched must not write the key it shows into the
+    place the switch saved."""
+    await client.put(slot(), json={"value": "sk-ant"}, headers=auth | DASHBOARD)
+
+    response = await client.put(
+        slot("codex_cli", "api_key"), json={"value": "sk-openai"}, headers=auth | DASHBOARD
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "settings_changed"
+    assert "sk-openai" not in response.text
+    ours = await default_organization_id(async_session)
+    stored = await svc.assistant_credential(async_session, ours, AssistantSettings())
+    assert stored is not None and stored.get_secret_value() == "sk-ant"
+    assert places((await client.get(URL, headers=auth)).json()) == [("claude_sdk", "api_key")]
+
+
+async def test_get_lists_every_stored_credential_and_never_a_value(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    await client.put(slot(), json={"value": "sk-ant-first"}, headers=auth | DASHBOARD)
+    codex = {"backend": "codex_cli", "auth_mode": "subscription", "model": "gpt-5.6-terra"}
+    await client.put(URL, json=codex, headers=auth | DASHBOARD)
+    await client.put(
+        slot("codex_cli", "subscription"), json={"value": "auth-json"}, headers=auth | DASHBOARD
+    )
+
+    response = await client.get(URL, headers=auth)
+
+    assert places(response.json()) == [("claude_sdk", "api_key"), ("codex_cli", "subscription")]
+    assert {c["updated_by"] for c in response.json()["credentials"]} == {"api-token"}
+    assert "sk-ant-first" not in response.text and "auth-json" not in response.text
+
+
+async def test_delete_removes_only_the_place_its_path_names(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    await client.put(slot(), json={"value": "sk-ant"}, headers=auth | DASHBOARD)
+    await client.put(URL, json={"auth_mode": "subscription"}, headers=auth | DASHBOARD)
+    await client.put(
+        slot("claude_sdk", "subscription"), json={"value": "tok"}, headers=auth | DASHBOARD
+    )
+
+    response = await client.delete(slot(), headers=auth | DASHBOARD)
+
+    assert response.status_code == 204
+    assert places((await client.get(URL, headers=auth)).json()) == [
+        ("claude_sdk", "subscription")
+    ]
+
+
+@pytest.mark.parametrize(
+    "backend, mode", [("codex_cli", "bedrock"), ("claude_sdk", "bedrock"), ("gemini", "api_key")]
+)
+async def test_put_refuses_a_place_that_stores_nothing(
+    client: AsyncClient, auth: dict[str, str], backend: str, mode: str
+) -> None:
+    response = await client.put(slot(backend, mode), json={"value": "x"}, headers=auth | DASHBOARD)
+    assert response.status_code == 422
+    assert (await client.get(URL, headers=auth)).json()["credentials"] == []
+
+
+async def test_a_leftover_place_the_vocabulary_lacks_is_listed_and_removable(
+    client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    ours = await default_organization_id(async_session)
+    await store.put_for_organization(async_session, ours, "assistant:gemini:api_key", "x", by="t")
+    await async_session.commit()
+    assert places((await client.get(URL, headers=auth)).json()) == [("gemini", "api_key")]
+
+    response = await client.delete(slot("gemini", "api_key"), headers=auth | DASHBOARD)
+
+    assert response.status_code == 204
+    assert (await client.get(URL, headers=auth)).json()["credentials"] == []
 
 async def test_get_reports_the_status_the_assistant_wrote(
     client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
@@ -210,7 +379,7 @@ async def test_settings_test_creates_an_archived_conversation_and_queues_one_tur
     client: AsyncClient, auth: dict[str, str], maker: async_sessionmaker[AsyncSession]
 ) -> None:
     await client.put(URL, json={"enabled": True}, headers=auth | DASHBOARD)
-    await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth | DASHBOARD)
+    await client.put(slot(), json={"value": "sk-9"}, headers=auth | DASHBOARD)
 
     response = await client.post(TEST, headers=auth | DASHBOARD)
 
@@ -254,7 +423,7 @@ async def test_get_ready_to_send_without_a_stored_credential_for_codex_bedrock(
         headers=auth | DASHBOARD,
     )
     body = (await client.get(URL, headers=auth)).json()
-    assert body["credential"]["set"] is False
+    assert body["credentials"] == []
     assert body["ready_to_send"] is True
 
 
@@ -363,7 +532,7 @@ async def test_settings_test_is_refused_as_a_send_is_and_leaves_nothing_behind(
     }
 
     await client.put(URL, json={"enabled": True}, headers=auth | DASHBOARD)
-    await client.put(CREDENTIAL, json={"value": "sk-9"}, headers=auth | DASHBOARD)
+    await client.put(slot(), json={"value": "sk-9"}, headers=auth | DASHBOARD)
     async with maker() as session:
         await svc.save_assistant_status(
             session, {"ok": False, "message": "claude_sdk: drift", "version": "x", "at": "x"}

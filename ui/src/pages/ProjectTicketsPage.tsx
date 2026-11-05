@@ -62,7 +62,7 @@ export function ProjectTicketsPage() {
   usePageTitle(["Tickets", project?.name]);
 
   if (!project) return <ProjectPageState projectId={projectId} query={query} />;
-  const forge = forgeHost(project.ticket_source, project.settings);
+  const forge = forgeHost(project.ticket_source, project.settings, project.forge);
 
   // Counts for the filter come from the board, which is one grouped query rather than a request
   // per filter. It only covers open tickets, so "Done" is counted from the difference — less the
@@ -106,7 +106,9 @@ export function ProjectTicketsPage() {
           ) : (
             <AdmissionTable
               issues={pending.data}
-              repo={project.github_repo}
+              // Admission lists the ticket source's repo, which can differ from the code's
+              // (`db.models.intake_repo`).
+              repo={project.ticket_source?.external_ref || project.github_repo}
               forge={forge}
               isLoading={pending.isPending}
             />

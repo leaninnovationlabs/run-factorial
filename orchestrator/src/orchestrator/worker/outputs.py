@@ -54,7 +54,7 @@ async def observe_outputs(tick: _Tick, step: AgentStep, run: StepRun) -> None:
     so a later tick asks again."""
     if (
         not declares_files(step)
-        or (tick.source_kind != "gitlab" and tick.github is None)
+        or tick.bindings is None
         or await recorded(tick, run, EventType.RUN_OUTPUTS_OBSERVED)
     ):
         return
@@ -84,7 +84,7 @@ async def observe_pending_outputs(tick: _Tick) -> None:
         for step in tick.config.steps
         if isinstance(step, AgentStep) and declares_files(step)
     }
-    if not steps or (tick.source_kind != "gitlab" and tick.github is None):
+    if not steps or tick.bindings is None:
         return
     for run, superseded in await unrecorded_runs(
         tick, list(steps), EventType.RUN_OUTPUTS_OBSERVED
@@ -103,19 +103,9 @@ async def observe_pending_outputs(tick: _Tick) -> None:
 
 
 async def _contents(tick: _Tick):
-    """GitHub trees/compare, or this ticket's GitLab project client."""
-    if tick.source_kind == "gitlab":
-        from orchestrator.gitlab.contents import GitLabContents
-
-        if tick.gitlab is None:
-            raise RuntimeError(
-                f"project {tick.project.name!r} reads outputs from GitLab, but the GitLab URL "
-                "was refused or GITLAB_TOKEN is not set"
-            )
-        contents = GitLabContents(tick.gitlab)
-        return contents.tree, contents.compare
-    assert tick.github is not None
-    return tick.github.trees, tick.github.compare
+    """The forge's trees/compare for this ticket's repo."""
+    forge = tick.host().forge
+    return forge.trees, forge.compare
 
 
 async def _look_up(tick: _Tick, step: AgentStep, run: StepRun) -> dict[str, Any]:

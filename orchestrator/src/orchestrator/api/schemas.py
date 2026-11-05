@@ -42,6 +42,7 @@ __all__ = [
     "AssistantHealthOut",
     "AssistantReadyOut",
     "AssistantSettingsOut",
+    "AssistantStoredCredentialOut",
     "AuthFailureOut",
     "BoardCellOut",
     "BoardResponse",
@@ -85,6 +86,7 @@ __all__ = [
     "ExitIn",
     "ExtremesOut",
     "FileProposalOut",
+    "ForgeDisplayOut",
     "GatePullRequestOut",
     "GitHubTokenOut",
     "HealthResponse",
@@ -2129,6 +2131,20 @@ class ProjectPatch(BaseModel):
     _check_settings = field_validator("settings")(_checked_settings)
 
 
+class ForgeDisplayOut(_Out):
+    """Link templates and nouns for the project's code host. The UI uses this instead of
+    branching on the forge kind."""
+
+    kind: str
+    name: str
+    origin: str
+    pull_noun: str
+    issue_path: str
+    pull_path: str
+    tree_path: str
+    commit_path: str
+
+
 class ProjectOut(_Out):
     id: int
     #: The owning organization's slug (`Project.organization_slug`), for org-scoped links.
@@ -2140,6 +2156,7 @@ class ProjectOut(_Out):
     #: The admission switch (db.models.Project.active) — not "is anything running".
     active: bool
     created_at: datetime
+    forge: ForgeDisplayOut | None = None
 
 
 class ProjectRuntimeRef(_Out):
@@ -2433,6 +2450,8 @@ class RuntimeProjectOut(_Out):
     id: int
     name: str
     github_repo: str
+    #: Where the repository link opens.
+    forge: ForgeDisplayOut | None = None
 
 
 class RuntimeCredentialIn(BaseModel):
@@ -2564,12 +2583,24 @@ class AssistantBackendOut(_Out):
     kind: str
     label: str
     auth_modes: list[str]
-    default_model: str
+    #: auth mode -> the model the settings page switches to with it.
+    default_models: dict[str, str]
+
+
+class AssistantStoredCredentialOut(_Out):
+    """One stored credential's place and provenance, never the credential."""
+
+    backend: str
+    auth_mode: str
+    updated_by: str
+    updated_at: datetime
 
 
 class AssistantSettingsOut(_Out):
     settings: AssistantSettings
-    credential: AssistantCredentialOut
+    #: Every stored credential, the saved backend and auth mode's among them, so one left behind
+    #: by a switch can be seen and removed.
+    credentials: list[AssistantStoredCredentialOut]
     backends: list[AssistantBackendOut]
     #: Same gate as sending a message: enabled, and a stored credential or a Bedrock mint.
     ready_to_send: bool
@@ -2589,7 +2620,9 @@ class AssistantReadyOut(_Out):
 
 
 class AssistantCredentialIn(BaseModel):
-    value: str = Field(min_length=1, max_length=4096)
+    #: A Codex `auth.json` holds two JWTs and a refresh token, about 4 KB and more for some
+    #: accounts.
+    value: str = Field(min_length=1, max_length=16384)
 
 
 # ---------------------------------------------------------------------------- assistant chat

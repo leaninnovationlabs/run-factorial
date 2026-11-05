@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.bindings import Bindings, ForgePort
 from orchestrator.config import (
     ActionStep,
     AgentStep,
@@ -46,10 +47,9 @@ from orchestrator.github import (
     IssueState,
     StateSource,
 )
-from orchestrator.gitlab.client import GitLabClient
 from orchestrator.logs import keep, note
 from orchestrator.predicates import EvalContext, Unmet
-from orchestrator.worker.context import ProjectGitHub, Projector, ReconcileDeps
+from orchestrator.worker.context import Projector, ReconcileDeps
 from runtime.contract import (
     RunStatus,
     RuntimeAdapter,
@@ -158,7 +158,9 @@ class Launch:
     step: str
     attempt: int
     repo: str
-    gitlab: GitLabClient | None
+    #: Releases the run's credential with the run (`ForgePort.release_run_credential`); None
+    #: where the tick had no binding.
+    forge: ForgePort | None
 
 
 @dataclass(slots=True)
@@ -215,15 +217,13 @@ async def _cancel_orphan(launch: Launch) -> None:
             launch.ticket_id,
             launch.runtime_run_id,
         )
-    if launch.gitlab is None:
+    if launch.forge is None:
         return
-    from orchestrator.gitlab.run_token import revoke_project_run_tokens
-
     try:
-        await revoke_project_run_tokens(launch.gitlab, launch.repo, launch.step_run_id)
+        await launch.forge.release_run_credential(launch.repo, launch.step_run_id)
     except Exception:
         logger.exception(
-            "ticket id=%s: could not revoke the GitLab token for run %s",
+            "ticket id=%s: could not release the run credential for run %s",
             launch.ticket_id,
             launch.step_run_id,
         )
@@ -253,26 +253,21 @@ class _Tick:
     #: agrees with the acquisition.
     lease_owner: str
     lease_ttl: timedelta
-    #: TicketSource.kind. Default github so existing tests constructing _Tick stay valid.
-    source_kind: str = "github"
-    #: Set for GitLab tickets so gates/projection do not need FACTORIAL_GITLAB__*.
-    forge_projector: Projector | None = None
-    #: The project's GitHub. Set for every GitHub ticket; None for a GitLab one.
-    github: ProjectGitHub | None = None
-    #: The project's own GitLab client (`client_for_project`). Set for every GitLab ticket; the
-    #: deployment's GitLab token never reaches a tenant's repository.
-    gitlab: GitLabClient | None = None
+    #: The project's tracker and forge. Required for a live tick.
+    bindings: Bindings | None = None
     #: The pass's launch registry (decision 87); None where nothing settles it, as in tests that
     #: call `reconcile_ticket` directly.
     launches: Launches | None = None
 
+    def host(self) -> Bindings:
+        """The tracker/forge pair this tick observed through."""
+        if self.bindings is None:
+            raise RuntimeError(f"project {self.project.name!r} has no tracker/forge binding")
+        return self.bindings
+
     def projector(self) -> Projector:
-        """The forge's projector for this ticket's repo."""
-        if self.forge_projector is not None:
-            return self.forge_projector
-        if self.github is None:
-            raise RuntimeError(f"project {self.project.name!r} has no GitHub connection")
-        return self.github.projector(self.project.github_repo)
+        """The host's projector for this ticket's repo."""
+        return self.host().projector(self.project.github_repo)  # type: ignore[return-value]
 
     async def emit(
         self, event_type: EventType, *, run: StepRun | None = None, **details: object

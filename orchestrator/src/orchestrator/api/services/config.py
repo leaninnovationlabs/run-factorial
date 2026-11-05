@@ -22,10 +22,10 @@ from githubkit.exception import RequestFailed
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.registry import forge_of
 from orchestrator.api.deps import ConfigCommitWriter
 from orchestrator.api.readiness import (
     default_or_note,
-    forge_of,
     parse_snapshot,
     reset_command,
     unknown_head_detail,

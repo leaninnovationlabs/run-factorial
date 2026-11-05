@@ -83,7 +83,7 @@ export function inviteToken(pasted: string): string | null {
 
 /** The ground and card the sign-in page draws, for the account pages that stand outside an
  *  organization. */
-function AccountCard({ title, children }: { title: string; children: ReactNode }) {
+export function AccountCard({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div
       data-app-shell
@@ -103,7 +103,14 @@ function AccountCard({ title, children }: { title: string; children: ReactNode }
 /** The password door on the sign-in card. Signs the browser in with the session cookie, then the
  *  app reads the session again and renders the page the URL names. The way to sign up shows where
  *  the deployment allows it, and on an invite's link, whose email may sign up in every shape. */
-export function PasswordSignInForm({ signup }: { signup: boolean }) {
+export function PasswordSignInForm({
+  signup,
+  forgot = false,
+}: {
+  signup: boolean;
+  /** The deployment sends email, so a forgotten password can be reset. */
+  forgot?: boolean;
+}) {
   const { refreshSession } = useAuth();
   const { pathname } = useLocation();
   const offersSignup = signup || pathname.startsWith("/invite/");
@@ -154,6 +161,13 @@ export function PasswordSignInForm({ signup }: { signup: boolean }) {
           <Button type="submit" appearance="primary" shouldFitContainer isLoading={busy}>
             Sign in
           </Button>
+          {forgot && (
+            <p className="text-center text-body-sm text-subtle">
+              <a href={orgless("/forgot-password")} className="font-medium underline">
+                Forgot your password?
+              </a>
+            </p>
+          )}
           {offersSignup && (
             <p className="text-center text-body-sm text-subtle">
               New here?{" "}

@@ -61,6 +61,7 @@ from orchestrator.github.issues import GitHubIssueWriter, IssueWriter
 from orchestrator.github.pool import pool
 from orchestrator.github.read_token import read_token_for
 from orchestrator.gitlab.client import GitLabClient, tls_verify
+from orchestrator.mail import Mailer, mailer
 from orchestrator.settings import GitLabSettings, Settings, get_settings
 from orchestrator.worker.context import adapter_options
 from orchestrator.worker.runtime_adapters import (
@@ -102,6 +103,7 @@ __all__ = [
     "LoginRunnerDep",
     "LoginSessions",
     "LoginSessionsDep",
+    "MailerDep",
     "OrganizationDep",
     "PageBlobs",
     "PageBlobsDep",
@@ -140,12 +142,15 @@ __all__ = [
     "label_writer_dependency",
     "login_runner_dependency",
     "login_sessions_dependency",
+    "mailer_dependency",
     "organization_dependency",
     "organization_path",
     "page_blobs_dependency",
     "probe_http_dependency",
+    "project_config_commit_writer",
     "project_github",
     "project_gitlab",
+    "project_issue_writer",
     "protection_reader_dependency",
     "read_token_minter_dependency",
     "repo_reader_dependency",
@@ -203,6 +208,14 @@ def account_sessions_dependency() -> AccountSessions:
 
 AccountSessionsDep = Annotated[AccountSessions, Depends(account_sessions_dependency)]
 SettingsDep = Annotated[Settings, Depends(settings_dependency)]
+
+
+def mailer_dependency(settings: SettingsDep) -> Mailer | None:
+    """None without `FACTORIAL_MAIL__SMTP_HOST`; a test swaps in one that records."""
+    return mailer(settings.mail)
+
+
+MailerDep = Annotated[Mailer | None, Depends(mailer_dependency)]
 
 
 def organization_path(
@@ -304,6 +317,34 @@ async def github_issue_writer(project: Project) -> IssueWriter | None:
     """`None` without a connection, and `create_ticket` then refuses."""
     github = await project_github(project)
     return None if github is None else GitHubIssueWriter(github.client)
+
+
+async def _gitlab_source(project: Project) -> bool:
+    kind = await _session_of(project).scalar(
+        select(TicketSource.kind).where(TicketSource.project_id == project.id)
+    )
+    return kind == TicketSourceKind.GITLAB
+
+
+async def project_issue_writer(project: Project) -> IssueWriter | None:
+    """The writer that opens an issue where this project's tickets live; None unconfigured. A
+    GitLab source never falls back to GitHub (tech-stack decision 64)."""
+    if not await _gitlab_source(project):
+        return await github_issue_writer(project)
+    from orchestrator.gitlab.issues import GitLabIssueWriter
+
+    client = await project_gitlab(project)
+    return None if client is None else GitLabIssueWriter(client)
+
+
+async def project_config_commit_writer(project: Project) -> ConfigCommitWriter | None:
+    """`config_commit_writer_dependency` in the session that loaded `project`."""
+    if not await _gitlab_source(project):
+        return await github_config_commit_writer(project)
+    from orchestrator.gitlab.files_commit import commit_config_files as gitlab_commit
+
+    client = await project_gitlab(project)
+    return None if client is None else partial(gitlab_commit, client)
 
 
 async def github_repo_reader(project: Project) -> RepoReader | None:
