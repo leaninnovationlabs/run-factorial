@@ -558,7 +558,7 @@ async def _build_run_spec(
         )
     repo = expand(step.workspace.repo, tick.values)
     resolved = await tick.deps.resolve_agent(
-        tick.session, tick.project, step.agent, tick.agent_pins
+        tick.session, tick.project, step.agent, tick.agent_pins, tick.config_repo
     )
     manifest = resolved.manifest
 

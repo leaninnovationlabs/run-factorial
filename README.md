@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/leaninnovationlabs/run-factorial/actions/workflows/tests.yml/badge.svg)](https://github.com/leaninnovationlabs/run-factorial/actions/workflows/tests.yml)
 [![lint](https://github.com/leaninnovationlabs/run-factorial/actions/workflows/lint.yml/badge.svg)](https://github.com/leaninnovationlabs/run-factorial/actions/workflows/lint.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue?style=flat)](LICENSE)
 [![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![TypeScript and React](https://img.shields.io/badge/TypeScript-React-3178C6?style=flat&logo=typescript&logoColor=white)](ui/)
 [![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -89,109 +89,63 @@ page shows the same line step by step.
 
 ---
 
-## How to set up the orchestrator
+## How to run Factorial
 
-**You need:** Python 3.13, [uv](https://docs.astral.sh/uv/), Node 22.12+,
-[pnpm](https://pnpm.io/) and Docker (started).
+Factorial runs in three ways. Start with the public image if you only want to try it.
 
-```bash
-git clone https://github.com/leaninnovationlabs/run-factorial.git
-cd run-factorial
-```
+| Way | You need | Use it to |
+|---|---|---|
+| [The public image](#run-the-public-image) | Docker with Compose | Try a release. You do not need a copy of the code. |
+| [Docker Compose from a checkout](#run-it-with-docker-compose-from-a-checkout) | Docker and a copy of the code | Run this code in the same containers that a release uses. |
+| [Development](#set-up-for-development) | Python 3.13, uv, Node 22.12+, pnpm and Docker | Change the code. |
 
-```bash
-uv sync                              # the Python workspace: orchestrator/ + runtime/
-pnpm --dir ui install
+### Run the public image
 
-cp .env.example .env                 # then fill it in
-cp ui/.env.example ui/.env.local
+**You need:** Docker with Compose, started. The image is
+`public.ecr.aws/runfactorial/factorial`, for amd64. On Apple silicon, Docker runs it through
+emulation.
 
-make image                           # the image, which also holds the Postgres
-make db                              # that Postgres alone, on 127.0.0.1:5432
-uv run alembic upgrade head
-```
+1. Install. On macOS or Linux:
 
-`orchestrator.settings` reads everything from `.env`. The prefix is `FACTORIAL_`, and nested
-keys use `__`. [`.env.example`](.env.example) documents every variable. Set these three
-first:
+   ```bash
+   curl -fsSL https://www.runfactorial.com/install.sh | sh
+   ```
 
-| Variable | Notes |
-|---|---|
-| `FACTORIAL_API_TOKEN` | Shared secret for scripts and services that call the API. 32 characters or more: `openssl rand -base64 32` |
-| `FACTORIAL_MASTER_KEY` | Base64, 32 bytes: `python -c "import base64,os; print(base64.b64encode(os.urandom(32)).decode())"` |
-| `FACTORIAL_CORS_ORIGINS` | `http://localhost:5173`, so the dashboard can reach the API |
+   On Windows, in PowerShell:
 
-`ui/.env.local` holds one variable. `VITE_API_BASE_URL` is the origin of the API. The
-dashboard adds `/factorial` to it. The API tells the dashboard the origin of the terminal
-service. The dashboard does **not** use the API token. You sign in with an account. On a new
-database, the first account that you make is the owner.
+   ```powershell
+   irm https://www.runfactorial.com/install.ps1 | iex
+   ```
 
-## How to run it
+   You can [read install.sh](https://www.runfactorial.com/install.sh) before you run it.
+2. Start. On macOS or Linux:
 
-Three processes, each in its own terminal:
+   ```bash
+   cd ~/factorial && docker compose up -d --wait
+   ```
 
-```bash
-FACTORIAL_API_DOCS=true uv run uvicorn orchestrator.api.serve:app --reload   # API → http://localhost:8000/factorial
-uv run python -m orchestrator.worker                 # reconciliation loop
-pnpm --dir ui dev                                    # dashboard at http://localhost:5173/factorial/
-```
+   On Windows, in PowerShell:
 
-`pnpm --dir ui dev` proxies `/factorial/auth` to the API so Google or Okta can return to port 5173.
-`/api` still goes cross-origin to `VITE_API_BASE_URL`.
+   ```powershell
+   Set-Location $HOME\factorial; docker compose up -d --wait
+   ```
 
-To watch or type into a run, start the terminal service in a fourth terminal:
+3. Open http://localhost:8000/factorial/ and push **Create an account**. The first account
+   becomes the owner, so make yours before other people can reach the dashboard.
 
-```bash
-uv run python -m orchestrator.terminal               # terminal at ws://localhost:8001
-```
+The script works in `~/factorial`. On the first run only, it writes `factorial.env` with new
+keys, and `seccomp.json`. It writes `compose.yaml` with the version pinned, on the first run or
+when the version changes. The script does not start Factorial, and it never removes a volume or
+a folder.
 
-The service needs `FACTORIAL_TERMINAL__ENABLED=true`. This setting turns on the Terminal section
-only. Each run is a session when the setting is on or off. The Terminal section works with the
-API token or with a dashboard session.
-A `claude_cli` or `codex_cli` run needs tmux 3.2 or later on the host, and the CLI version that
-the adapter pins. For `codex_cli`, that is the native `codex` binary, not
-the npm package.
+To stop Factorial, run `docker compose down` in `~/factorial`. Do not add `-v`, because that
+deletes the data.
 
-The Makefile holds these commands as targets. Run `make help` for the list.
+[Quick setup](https://www.runfactorial.com/docs/run-the-public-image/) shows how to install a
+specific version. [Customize setup](https://www.runfactorial.com/docs/customize-setup/) shows
+the settings, the upgrades and what to do when Factorial does not start.
 
-The dashboard has two views. **Projects** shows one repository at a time. A project opens on
-its Dashboard page. The page shows what the project spent and what it delivered: spend by
-outcome, by ticket and by step, and the tickets closed each week. Inside a project, the left
-navigation shows the project name first. Click it to switch to a different active project.
-Below the name, the navigation lists the pages of the project: the Dashboard, the Tickets, the
-Assistant, and **Project settings**, with one page for each requirement. You can collapse the
-list of Project settings pages. The Assistant opens at the right side of the page. The Project
-settings overview lists every requirement with its state. The checks that read GitHub run when
-you open the overview or the page of one of them. Press **Check repository** to run them again.
-
-Outside a project, the left navigation shows **Overview**, **Projects** and **Assistant**. The
-Assistant opens as a full page. Below them, the **Settings** group holds **Runtimes**, **MCP
-access** and **Assistant settings**. The organization name is at the bottom of the left
-navigation. Click it to switch to a different organization.
-
-**Overview** shows the factory. It draws one square for each ticket, in a band for each
-project, in a column for the state the ticket is in. Click a column, a project or a square to
-select it. The buttons above the board color the squares by cost, by runtime, by tokens or by
-retries.
-
-The board keeps tickets that closed in the last 7 days. To change the period, add
-`?done_days=` to `GET /api/orgs/<org>/overview`.
-
-Test that it came up:
-
-```bash
-curl http://localhost:8000/factorial/healthz         # process is alive
-curl http://localhost:8000/factorial/readyz          # and can reach Postgres
-open http://localhost:8000/factorial/docs            # OpenAPI, with FACTORIAL_API_DOCS=true only
-```
-
-To point the orchestrator at a repository (project, secrets, config snapshot, labels and
-activation), follow [`docs/bootstrap.md`](docs/bootstrap.md). The `.factorial/`
-folder format has a commented reference at
-[`docs/samples/factorial-simple/`](docs/samples/factorial-simple/).
-
-
-## How to run it in one container
+### Run it with Docker Compose from a checkout
 
 One Docker image holds the full app: Postgres, the API, the worker, the terminal service, the
 assistant, tmux, and the `claude` and `codex` CLIs. The API also serves the dashboard. The
@@ -200,7 +154,12 @@ You build the image on your machine.
 On your machine, `make up` starts the app container and a second container, `database`, for
 the database. Both containers use the same image.
 
-**You need:** Docker (started) and a `.env` file.
+**You need:** Docker (started) and a copy of the code.
+
+```bash
+git clone https://github.com/leaninnovationlabs/run-factorial.git
+cd run-factorial
+```
 
 ```bash
 cp .env.example .env                 # then fill it in
@@ -209,9 +168,7 @@ make up                              # dashboard at http://localhost:8000/factor
 docker compose logs -f app
 ```
 
-Set `FACTORIAL_API_TOKEN` and `FACTORIAL_MASTER_KEY` in `.env`.
-Also set `FACTORIAL_RUNTIME__E2B__DEPLOYMENT` to a name that no other copy of factorial uses.
-The container does not start without it. The
+Set `FACTORIAL_API_TOKEN` and `FACTORIAL_MASTER_KEY` in `.env`. The
 container sets the database URL, the CORS origin and the agent folder.
 It does not use the values for these in `.env`.
 
@@ -237,9 +194,6 @@ docker volume rm factorial-data       # after make down: delete the data also
 Use `make down`, not `docker rm -f`. The terminal service needs up to 45 seconds in all to
 close its terminals. Do not use `docker compose down -v`.
 
-`make dev` uses the same database: `make db` starts the `database` container alone. The
-containers and `make dev` use the same ports, so run `make down` before `make dev`.
-
 If you ran the one container of an older version, remove it one time before `make up`. The
 volume and its data stay:
 
@@ -253,6 +207,102 @@ servers on one volume corrupt the database.
 [`docs/local-container.md`](docs/local-container.md) gives the same steps in full: each
 setting to write, each setting the container sets itself, and what to do when it stops at
 start.
+
+### Set up for development
+
+**You need:** Python 3.13, [uv](https://docs.astral.sh/uv/), Node 22.12+,
+[pnpm](https://pnpm.io/) and Docker (started).
+
+```bash
+git clone https://github.com/leaninnovationlabs/run-factorial.git
+cd run-factorial
+```
+
+```bash
+make sync                            # uv sync and pnpm --dir ui install
+
+cp .env.example .env                 # then fill it in
+cp ui/.env.example ui/.env.local
+
+make image                           # the image, which also holds the Postgres
+make dev                             # the database, the migrations, then every process
+```
+
+`orchestrator.settings` reads everything from `.env`. The prefix is `FACTORIAL_`, and nested
+keys use `__`. [`.env.example`](.env.example) documents every variable. Set these three
+first:
+
+| Variable | Notes |
+|---|---|
+| `FACTORIAL_API_TOKEN` | Shared secret for scripts and services that call the API. 32 characters or more: `openssl rand -base64 32` |
+| `FACTORIAL_MASTER_KEY` | Base64, 32 bytes: `python -c "import base64,os; print(base64.b64encode(os.urandom(32)).decode())"` |
+| `FACTORIAL_CORS_ORIGINS` | `http://localhost:5173`, so the dashboard can reach the API |
+
+`ui/.env.local` holds one variable. `VITE_API_BASE_URL` is the origin of the API. The
+dashboard adds `/factorial` to it. The API tells the dashboard the origin of the terminal
+service. The dashboard does **not** use the API token. You sign in with an account. On a new
+database, the first account that you make is the owner.
+
+`make dev` starts the API, the worker, the terminal service, the assistant and the dashboard
+together. Ctrl-C stops all of them. To run one process in its own terminal, use `make api`,
+`make worker`, `make terminal`, `make assistant` or `make ui`. Run `make help` for the full
+list.
+
+The dashboard runs at http://localhost:5173/factorial/. `pnpm --dir ui dev` proxies
+`/factorial/auth` to the API so Google or Okta can return to port 5173. `/api` still goes
+cross-origin to `VITE_API_BASE_URL`.
+
+The terminal service needs `FACTORIAL_TERMINAL__ENABLED=true`. This setting turns on the
+Terminal section only. Each run is a session when the setting is on or off. The Terminal
+section works with the API token or with a dashboard session.
+A `claude_cli` or `codex_cli` run needs tmux 3.2 or later on the host, and the CLI version that
+the adapter pins. For `codex_cli`, that is the native `codex` binary, not
+the npm package.
+
+`make dev` and `make up` use the same database container and the same ports, so run
+`make down` before `make dev`.
+
+Test that it came up:
+
+```bash
+curl http://localhost:8000/factorial/healthz         # process is alive
+curl http://localhost:8000/factorial/readyz          # and can reach Postgres
+open http://localhost:8000/factorial/docs            # OpenAPI, with FACTORIAL_API_DOCS=true only
+```
+
+## Connect a repository
+
+To point the orchestrator at a repository (project, secrets, config snapshot, labels and
+activation), follow [`docs/bootstrap.md`](docs/bootstrap.md). The GitHub App and the
+credentials are in [`docs/setup.md`](docs/setup.md). The `.factorial/`
+folder format has a commented reference at
+[`docs/samples/factorial-simple/`](docs/samples/factorial-simple/).
+
+
+## The dashboard
+
+The dashboard has two views. **Projects** shows one repository at a time. A project opens on
+its Dashboard page. The page shows what the project spent and what it delivered: spend by
+outcome, by ticket and by step, and the tickets closed each week. Inside a project, the left
+navigation shows the project name first. Click it to switch to a different active project.
+Below the name, the navigation lists the pages of the project: the Dashboard, the Tickets, the
+Assistant, and **Project settings**, with one page for each requirement. You can collapse the
+list of Project settings pages. The Assistant opens at the right side of the page. The Project
+settings overview lists every requirement with its state. The checks that read GitHub run when
+you open the overview or the page of one of them. Press **Check repository** to run them again.
+
+Outside a project, the left navigation shows **Overview**, **Projects** and **Assistant**. The
+Assistant opens as a full page. Below them, the **Settings** group holds **Runtimes**, **MCP
+access** and **Assistant settings**. The organization name is at the bottom of the left
+navigation. Click it to switch to a different organization.
+
+**Overview** shows the factory. It draws one square for each ticket, in a band for each
+project, in a column for the state the ticket is in. Click a column, a project or a square to
+select it. The buttons above the board color the squares by cost, by runtime, by tokens or by
+retries.
+
+The board keeps tickets that closed in the last 7 days. To change the period, add
+`?done_days=` to `GET /api/orgs/<org>/overview`.
 
 ## Checks
 
@@ -305,6 +355,9 @@ not let an author approve its own pull request. On an App project, the App has n
 
 | Document | When you need it |
 |---|---|
+| [Quick setup](https://www.runfactorial.com/docs/run-the-public-image/) | Install the public image, or a specific version of it |
+| [Customize setup](https://www.runfactorial.com/docs/customize-setup/) | The settings of the public image, upgrades, and what to do when it does not start |
+| [`docs/local-container.md`](docs/local-container.md) | Run the image with Docker Compose from a checkout, in full |
 | [`docs/design.md`](docs/design.md) | The architecture and its numbered decisions |
 | [`docs/data-model.md`](docs/data-model.md) | The Postgres tables and how they relate |
 | [`docs/bootstrap.md`](docs/bootstrap.md) | Point the orchestrator at a repository; `.factorial/` authoring facts |

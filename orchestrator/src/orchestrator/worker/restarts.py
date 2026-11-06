@@ -109,7 +109,11 @@ async def restart(tick: _Tick, request: Event) -> None:
             "the issue is closed. Reopen it, then restart.",
         )
         return
-    if target is None or target.retired_at is not None:
+    if (
+        target is None
+        or target.retired_at is not None
+        or target.source_repo != tick.project.github_repo
+    ):
         await refuse_restart(
             tick,
             request,
@@ -179,7 +183,7 @@ async def _start_fresh(
 ) -> None:
     ticket = tick.ticket
     from_id, from_sha, from_step = ticket.process_version_id, tick.config_sha, ticket.current_step
-    config, pins, sha = await _load_pinned_config(tick.session, target.id)
+    config, pins, sha, repo = await _load_pinned_config(tick.session, target.id)
     ticket.generation += 1
     ticket.process_version_id = target.id
     ticket.current_step = config.entry.step
@@ -192,7 +196,7 @@ async def _start_fresh(
     ticket.closed_at = None
     # `_project` reads the step label off `tick.config`, and the new entry step may not exist in
     # the old snapshot.
-    tick.config, tick.agent_pins, tick.config_sha = config, pins, sha
+    tick.config, tick.agent_pins, tick.config_sha, tick.config_repo = config, pins, sha, repo
     # Before `step_entered`, as admission orders `ticket_admitted`: the timeline files the restart
     # block ahead of the new generation's first one.
     await tick.emit(

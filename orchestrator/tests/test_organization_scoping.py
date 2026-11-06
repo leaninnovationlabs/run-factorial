@@ -47,6 +47,7 @@ async def _project_naming(session: AsyncSession, organization_id: int, slug: str
     session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key="standard",
             content={"runtime": slug},
             source_commit_sha=uuid4().hex + "0" * 8,

@@ -393,7 +393,7 @@ async def _resume_session(
         return ResumeRefusal.NO_AGENT_SOURCE
     try:
         resolved = await tick.deps.resolve_agent(
-            tick.session, tick.project, step.agent, tick.agent_pins
+            tick.session, tick.project, step.agent, tick.agent_pins, tick.config_repo
         )
     except Exception as exc:
         return f"couldn't load this agent: {exc}"

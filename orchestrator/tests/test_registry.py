@@ -1,8 +1,8 @@
 """The registry half: pins that get established and written back, and append-only snapshots.
 
 Real Postgres, because what is being tested is persistence and the unique constraint on
-`(project_id, process_key, source_commit_sha)` — including that a lost insert race leaves the
-session usable.
+`(project_id, source_repo, process_key, source_commit_sha)` — including that a lost insert race
+leaves the session usable.
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ from orchestrator.factorial.registry import (
     check_runtime_bindings,
     is_known_commit,
     known_base,
+    lane_head,
+    latest_process_versions,
 )
 from orchestrator.github import MergeProvenance
 from tests.registry_fakes import (
@@ -54,6 +56,7 @@ from tests.registry_fakes import (
     make_source,
     sample_runtime,
 )
+from tests.repo_source_fakes import sample_files
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
@@ -745,6 +748,139 @@ async def test_a_default_that_survives_the_commit_is_left_alone(
 
     assert result.default_moved is None
     assert project.settings[DEFAULT_KEY] == SAMPLE_KEY
+
+
+#: The repository a project moves to, at a commit the first one never had.
+OTHER = "acme/gadgets"
+OTHER_SHA = "d" * 40
+
+
+async def _move(session: AsyncSession, project: Project, repo: str = OTHER) -> None:
+    project.github_repo = repo
+    await session.flush()
+
+
+async def _lane_rows(session: AsyncSession, project: Project, key: str = SAMPLE_KEY) -> Any:
+    """`{(source_repo, sha): retired}` for one lane of the project."""
+    rows = await session.execute(
+        select(
+            ProcessVersion.source_repo,
+            ProcessVersion.source_commit_sha,
+            ProcessVersion.retired_at,
+        ).where(ProcessVersion.project_id == project.id, ProcessVersion.process_key == key)
+    )
+    return {(repo, sha): retired is not None for repo, sha, retired in rows.all()}
+
+
+async def test_a_fork_at_the_same_commit_is_a_new_snapshot(async_session: AsyncSession) -> None:
+    """A fork holds its parent's commits, so a sha alone would find the parent's row, and every
+    reader would go back to a repository the project has left."""
+    source, contents = make_source()
+    project = await _project(async_session)
+    await register_process_versions(async_session, source, project, ref=None)
+
+    await _move(async_session, project)
+    contents.files.update(sample_files(repo=OTHER, sha=HEAD_SHA))
+    result = await register_process_versions(async_session, source, project, ref=None)
+
+    assert [(r.process_key, r.outcome) for r in result.results] == [(SAMPLE_KEY, "created")]
+    assert await _lane_rows(async_session, project) == {
+        (REPO, HEAD_SHA): True,
+        (OTHER, HEAD_SHA): False,
+    }
+
+
+async def test_the_new_repositorys_sync_retires_the_old_ones_lanes_even_by_the_same_name(
+    async_session: AsyncSession,
+) -> None:
+    """The lane the new repository offers is its own; the old repository's rows of the same name
+    are not "a lane whose file came back", and are not offered again."""
+    source, contents = make_source()
+    project = await _project(async_session)
+    await register_process_versions(async_session, source, project, ref=None)
+
+    await _move(async_session, project)
+    contents.files.update(sample_files(repo=OTHER, sha=OTHER_SHA))
+    result = await register_process_versions(async_session, source, project, sha=OTHER_SHA)
+
+    assert [(r.process_key, r.outcome) for r in result.results] == [(SAMPLE_KEY, "created")]
+    assert await _lane_rows(async_session, project) == {
+        (REPO, HEAD_SHA): True,
+        (OTHER, OTHER_SHA): False,
+    }
+
+
+async def test_moving_back_brings_the_original_lanes_back_unchanged(
+    async_session: AsyncSession,
+) -> None:
+    """A sha is immutable in its own repository too, so the rows the first repository already
+    had are the config again, and the second repository's rows are the ones retired."""
+    source, contents = make_source()
+    project = await _project(async_session)
+    await register_process_versions(async_session, source, project, ref=None)
+    await _move(async_session, project)
+    contents.files.update(sample_files(repo=OTHER, sha=OTHER_SHA))
+    await register_process_versions(async_session, source, project, sha=OTHER_SHA)
+
+    await _move(async_session, project, REPO)
+    result = await register_process_versions(async_session, source, project, ref=None)
+
+    assert [(r.process_key, r.outcome) for r in result.results] == [(SAMPLE_KEY, "unchanged")]
+    assert await _lane_rows(async_session, project) == {
+        (REPO, HEAD_SHA): False,
+        (OTHER, OTHER_SHA): True,
+    }
+
+
+async def test_a_default_only_the_old_repository_offered_moves_on_the_first_sync_of_the_new_one(
+    async_session: AsyncSession,
+) -> None:
+    """The lanes the project leaves behind count as lanes the commit no longer offers, so a
+    default that named one of them follows the move as it follows a deleted file."""
+    source, contents = make_source()
+    project = await _project(async_session, settings={DEFAULT_KEY: SAMPLE_KEY})
+    await register_process_versions(async_session, source, project, ref=None)
+
+    await _move(async_session, project)
+    contents.files.update(sample_files(repo=OTHER, sha=OTHER_SHA))
+    del contents.files[(OTHER, f".factorial/processes/process-{SAMPLE_KEY}.yaml", OTHER_SHA)]
+    contents.files[(OTHER, ".factorial/processes/process-hotfix.yaml", OTHER_SHA)] = (
+        SAMPLE_TEXT.replace(f"name: {SAMPLE_KEY}", "name: hotfix")
+    )
+    result = await register_process_versions(async_session, source, project, sha=OTHER_SHA)
+
+    assert result.default_moved == DefaultProcessMoved(previous=SAMPLE_KEY, now="hotfix")
+    assert sorted((r.process_key, r.outcome) for r in result.results) == [
+        ("hotfix", "created"),
+        (SAMPLE_KEY, "retired"),
+    ]
+
+
+async def test_a_version_from_another_repository_is_not_offered(
+    async_session: AsyncSession,
+) -> None:
+    """Before any sync of the new repository, and even after a sync of the old one lands late:
+    a lane read elsewhere is never what a new ticket pins (issue #441)."""
+    source, _ = make_source()
+    project = await _project(async_session)
+    await register_process_versions(async_session, source, project, ref=None)
+
+    await _move(async_session, project)
+    assert await latest_process_versions(async_session, project.id) == {}
+    assert await lane_head(async_session, project.id, SAMPLE_KEY) is None
+
+    # A sync of the old repository that read before the move and wrote after it.
+    async_session.add(
+        ProcessVersion(
+            project_id=project.id,
+            source_repo=REPO,
+            process_key=SAMPLE_KEY,
+            content={},
+            source_commit_sha=OTHER_SHA,
+        )
+    )
+    await async_session.flush()
+    assert await latest_process_versions(async_session, project.id) == {}
 
 
 async def test_register_records_the_ref_it_was_asked_for(async_session: AsyncSession) -> None:

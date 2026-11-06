@@ -229,6 +229,11 @@
   /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
   --ds-opacity-disabled: 0.4;
   --ds-opacity-loading: 0.2;
+
+  /* Google's sign-in button, in Google's own colours (its branding guidelines), not ADS's. */
+  --google-button-fill: #ffffff;
+  --google-button-border: #747775;
+  --google-button-text: #1f1f1f;
 }
 
 /* Dark, chosen. Colour only (decision 50): type and shape do not change with the theme. */
@@ -383,6 +388,11 @@
   /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
   --ds-opacity-disabled: 0.4;
   --ds-opacity-loading: 0.2;
+
+  /* Google's sign-in button, in Google's own colours (its branding guidelines), not ADS's. */
+  --google-button-fill: #131314;
+  --google-button-border: #8e918f;
+  --google-button-text: #e3e3e3;
 }
 
 /* Dark, from the system: the same values as the block above. */
@@ -539,6 +549,11 @@
     /* Opacity, for composite content only: a disabled chip, a table while it reloads. */
     --ds-opacity-disabled: 0.4;
     --ds-opacity-loading: 0.2;
+
+    /* Google's sign-in button, in Google's own colours (its branding guidelines), not ADS's. */
+    --google-button-fill: #131314;
+    --google-button-border: #8e918f;
+    --google-button-text: #e3e3e3;
   }
 }
 

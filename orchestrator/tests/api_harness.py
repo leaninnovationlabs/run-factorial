@@ -44,6 +44,7 @@ from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.assistant.github_token import OrganizationTokens
 from orchestrator.assistant.runner import RunnerDeps
 from orchestrator.assistant.toolbox import TurnToolbox
+from orchestrator.assistant.vocabulary import ALL_ASSISTANT_OFFERS
 from orchestrator.db.models import (
     ChatConversation,
     ChatTurn,
@@ -125,6 +126,8 @@ def make_settings(
         runtime=RuntimeSettings(
             e2b=E2bSettings(deployment="factorial-test"), offered=sorted(ALL_OFFERS)
         ),
+        # Every assistant sign-in too, for the same reason; the default is the two API keys.
+        assistant=AssistantProcessSettings(offered=sorted(ALL_ASSISTANT_OFFERS)),
     )
 
 
@@ -278,6 +281,7 @@ async def seed_ticket(
     if version is None:
         version = ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key="p",
             content={"specVersion": "adlc/v1"},
             source_commit_sha="a" * 40,
@@ -309,6 +313,7 @@ async def seed_lane_head(
     pinned = await session.get_one(ProcessVersion, ticket.process_version_id)
     head = ProcessVersion(
         project_id=pinned.project_id,
+        source_repo=pinned.source_repo,
         process_key=pinned.process_key,
         content=pinned.content,
         source_commit_sha=sha,

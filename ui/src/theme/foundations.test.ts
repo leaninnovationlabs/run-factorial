@@ -222,6 +222,7 @@ describe("tokens.css", () => {
       ["--ds-text-subtlest", "--ds-surface-sunken"],
       ["--ds-text-subtle", "--ds-background-neutral"],
       ["--ds-text-inverse", "--ds-background-neutral-bold"],
+      ["--google-button-text", "--google-button-fill"],
       ["--ds-text-selected", "--ds-background-selected"],
       ...["danger", "warning", "success", "information", "discovery"].map((role) => [
         `--ds-text-${role}`,
@@ -237,6 +238,7 @@ describe("tokens.css", () => {
       ["--ds-border-focused", "--ds-surface"],
       ["--ds-border-selected", "--ds-surface"],
       ["--ds-icon-subtle", "--ds-surface"],
+      ["--google-button-border", "--ds-surface"],
     ];
     const themes = {
       light: palette(declarations(":root", tokens.indexOf("/* Light"))),
@@ -303,12 +305,11 @@ const TINY_FONT = /font-size:\s*(?:0\.[0-6]\d*rem|0\.7[0-4]\d*rem|(?:[0-9]|1[01]
 const LINK_COLOUR = /\b(?:[a-z-]+:)*text-link\b|--(?:ds-link|text-color-link)\b/g;
 
 /** Hex a stylesheet or component may still hold: brand assets drawn to someone else's spec — the
- *  mark's plate and the Google G's four fills. */
+ *  mark's plate. */
 const HEX_ALLOWED = (path: string) =>
   path.endsWith("theme/tokens.css") ||
   path.endsWith("LogoPlate.tsx") ||
-  path.endsWith("logoPlate.css") ||
-  path.endsWith("SignInPage.tsx");
+  path.endsWith("logoPlate.css");
 
 /** Where the design primitives live: the one place a raw control is the implementation, not a
  *  copy. */

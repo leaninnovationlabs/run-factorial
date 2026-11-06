@@ -53,7 +53,7 @@ async def start_generation(world: World, step: str) -> None:
     async with world.sessions() as session:
         ticket = await session.get(Ticket, world.ticket_id)
         assert ticket is not None
-        config, _, _ = await _load_pinned_config(session, ticket.process_version_id)
+        config, *_ = await _load_pinned_config(session, ticket.process_version_id)
         ticket.generation += 1
         await _enter_step(
             session, ticket, config, step=step, from_step=ticket.current_step, reason="restart"
@@ -248,6 +248,7 @@ async def test_the_lane_head_is_the_latest_snapshot_and_none_once_retired(world:
         assert pinned is not None
         newer = ProcessVersion(
             project_id=world.project_id,
+            source_repo=world.repo,
             process_key=pinned.process_key,
             content=pinned.content,
             source_commit_sha="b" * 40,

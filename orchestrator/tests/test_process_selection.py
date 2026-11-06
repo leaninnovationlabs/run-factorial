@@ -175,6 +175,7 @@ async def _add_lane(world: World, key: str, *, entry_label: str = "adlc:new") ->
     async with world.sessions() as session:
         row = ProcessVersion(
             project_id=world.project_id,
+            source_repo=world.repo,
             process_key=key,
             content=config.model_dump(mode="json", by_alias=True),
             source_commit_sha=f"{key}{'0' * (40 - len(key))}",

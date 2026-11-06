@@ -201,6 +201,7 @@ async def seed_probe_project(
     config = ProcessConfig.model_validate(yaml.safe_load(process_yaml))
     version = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=config.name,
         content=config.model_dump(mode="json", by_alias=True),
         source_commit_sha=MINI_SHA,

@@ -43,6 +43,7 @@ async def _seed_ticket(session: AsyncSession) -> Ticket:
     )
     version = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key="p",
         content={"specVersion": "adlc/v1"},
         source_commit_sha="a" * 40,

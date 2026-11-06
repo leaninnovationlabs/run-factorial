@@ -7,17 +7,20 @@ package present.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
 from orchestrator.factorial.bedrock_token import DEFAULT_MODEL as BEDROCK_DEFAULT_MODEL
 
 __all__ = [
+    "ALL_ASSISTANT_OFFERS",
     "BACKENDS",
     "SLOT_PREFIX",
     "BackendVocab",
+    "assistant_offer",
     "credential_slot",
+    "parse_assistant_offers",
     "parse_credential_slot",
     "stores_credential",
 ]
@@ -65,6 +68,31 @@ BACKENDS: Final[Mapping[str, BackendVocab]] = {
         },
     ),
 }
+
+
+def assistant_offer(kind: str, auth_mode: str) -> str:
+    """One backend and auth mode as `FACTORIAL_ASSISTANT__OFFERED` names it."""
+    return f"{kind}:{auth_mode}"
+
+
+#: Every `<backend>:<auth_mode>` a deployment may offer the assistant.
+ALL_ASSISTANT_OFFERS: Final[tuple[str, ...]] = tuple(
+    assistant_offer(kind, mode) for kind, vocab in BACKENDS.items() for mode in vocab.credentials
+)
+
+
+def parse_assistant_offers(entries: Iterable[str]) -> frozenset[str]:
+    """The set a deployment offers, each entry stripped; an unknown one is refused by name."""
+    offers: set[str] = set()
+    for raw in entries:
+        entry = raw.strip()
+        if entry not in ALL_ASSISTANT_OFFERS:
+            raise ValueError(
+                f"unknown assistant offer {entry!r}; expected <backend>:<auth_mode> from "
+                f"{', '.join(ALL_ASSISTANT_OFFERS)}"
+            )
+        offers.add(entry)
+    return frozenset(offers)
 
 
 def credential_slot(kind: str, auth_mode: str) -> str:

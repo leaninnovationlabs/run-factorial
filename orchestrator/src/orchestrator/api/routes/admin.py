@@ -13,7 +13,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, HTTPException, Path, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -170,6 +170,7 @@ from orchestrator.github import (
     ContentsNotFound,
     RepoNotVisible,
 )
+from orchestrator.github.client import AppNotInstalled
 from orchestrator.github.connection import CONNECTION_SECRETS, github_bag
 from orchestrator.gitlab.client import GitLabError
 from orchestrator.gitlab.hosts import HostRefused, check_base_url
@@ -497,7 +498,9 @@ async def create_project_labels(
 @needs(Permission.PROJECTS_MANAGE)
 async def update_project(project_id: int, payload: ProjectPatch, session: SessionDep) -> ProjectOut:
     """Partial update. Editing `github_repo` moves nothing retroactively: admitted tickets keep
-    the `ticket_source` they came in through, and process versions keep their read-at sha.
+    the `ticket_source` they came in through, and process versions keep the repository and sha
+    they were read at. None of them is offered once the repository changes (`offered_version`),
+    so a project admits nothing until a sync of the new repository; nothing is written here.
 
     `github_repo` takes the shape of the forge the ticket source is on, the one every repo-side
     read goes to: a nested path only on GitLab."""
@@ -1071,15 +1074,15 @@ async def get_process_version_raw(
     under `processes/` reads its own file there, and one registered before the folder existed
     reads the root `process.yaml` (`process_path_at`).
     """
-    project = await _require_project(session, project_id)
+    await _require_project(session, project_id)
     row = await _require_version(session, project_id, version_id)
     if config_source is not None:
         try:
             path = await config_source.process_path_at(
-                project.github_repo, row.process_key, row.source_commit_sha
+                row.source_repo, row.process_key, row.source_commit_sha
             )
             text = await config_source.read_process_text(
-                project.github_repo, path, row.source_commit_sha
+                row.source_repo, path, row.source_commit_sha
             )
         except Exception as exc:
             # Loud, not degraded: an editor seeded from the comment-stripped snapshot would
@@ -1087,7 +1090,7 @@ async def get_process_version_raw(
             # to prevent.
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Factorial couldn't read the pinned process file from the repository. "
+                detail=f"Factorial couldn't read the pinned process file from {row.source_repo}. "
                 "Try again.",
             ) from exc
         return ProcessVersionRawOut(content=text, source="repo")
@@ -1108,12 +1111,15 @@ async def list_process_version_files(
     because the pin is what tickets admitted under this version actually run; drift against the
     head is reported per file so an operator can see what a sync would pick up.
     """
-    project = await _require_project(session, project_id)
+    await _require_project(session, project_id)
     row = await _require_version(session, project_id, version_id)
     config, _ = parse_snapshot(row)
-    inventory = await config_inventory(
-        source, project.github_repo, pinned_sha=row.source_commit_sha, config=config
-    )
+    try:
+        inventory = await config_inventory(
+            source, row.source_repo, pinned_sha=row.source_commit_sha, config=config
+        )
+    except _UNREADABLE as exc:
+        raise _version_unreadable(row, exc) from exc
     return ConfigFilesOut(
         config_dir=inventory.config_dir,
         pinned_sha=inventory.pinned_sha,
@@ -1141,22 +1147,43 @@ async def read_process_version_file(
     not a prefix test — `.factorial/../.github/workflows/ci.yml` starts with the config folder
     and is not in it.
     """
-    project = await _require_project(session, project_id)
+    await _require_project(session, project_id)
     row = await _require_version(session, project_id, version_id)
-    listed = {e.path for e in await source.list_files(project.github_repo, row.source_commit_sha)}
+    try:
+        listed = {e.path for e in await source.list_files(row.source_repo, row.source_commit_sha)}
+    except _UNREADABLE as exc:
+        raise _version_unreadable(row, exc) from exc
     if path not in listed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{path} is not in the config folder at {row.source_commit_sha[:7]}.",
         )
     try:
-        content = await source.read_file(project.github_repo, path, row.source_commit_sha)
+        content = await source.read_file(row.source_repo, path, row.source_commit_sha)
+    except (AppNotInstalled, GitLabError) as exc:
+        raise _version_unreadable(row, exc) from exc
     except ContentsNotFound as exc:  # listed a moment ago, so this is a genuine read failure
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Factorial couldn't read {path} from the repository. Try again.",
         ) from exc
     return ConfigFileContentOut(path=path, content=content)
+
+
+#: What reading a repository the project has left can answer: the App uninstalled from its owner,
+#: or the repository deleted or taken out of the App's selection (a 404 on its tree, or GitLab's
+#: own refusal).
+_UNREADABLE: Final = (AppNotInstalled, ContentsNotFound, GitLabError)
+
+
+def _version_unreadable(row: ProcessVersion, exc: Exception) -> HTTPException:
+    """A version reads the repository it came from, which may be one the App has since left: an
+    answer about that repository, not this server failing."""
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Factorial couldn't read {row.source_repo}, where this process version came "
+        f"from. {as_sentence(str(exc))}",
+    )
 
 
 def _agent_detail(resolution: AgentResolution) -> AgentDetailOut:
@@ -1189,12 +1216,12 @@ async def list_process_version_agents(
     project_id: int, version_id: int, session: SessionDep, source: ConfigSourceDep
 ) -> list[AgentDetailOut]:
     """Every agent this version's process names, read at its pinned commit."""
-    project = await _require_project(session, project_id)
+    await _require_project(session, project_id)
     row = await _require_version(session, project_id, version_id)
     config, _ = parse_snapshot(row)
     if config is None:
         return []
-    resolved = await resolve_agents(source, project.github_repo, row.source_commit_sha, config)
+    resolved = await resolve_agents(source, row.source_repo, row.source_commit_sha, config)
     return [_agent_detail(resolution) for resolution in resolved]
 
 

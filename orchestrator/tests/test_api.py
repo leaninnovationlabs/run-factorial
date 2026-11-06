@@ -819,6 +819,7 @@ async def test_ticket_process_is_the_snapshot_the_ticket_pinned(
     async_session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key="p",
             content={"specVersion": "adlc/v1"},
             source_commit_sha="b" * 40,
@@ -2425,6 +2426,7 @@ async def test_activation_needs_a_ticket_source_and_a_process_version(
     async_session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key=sample.name,
             content=sample.model_dump(mode="json", by_alias=True),
             source_commit_sha="f" * 40,

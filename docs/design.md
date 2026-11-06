@@ -139,7 +139,10 @@ The orchestrator runs as one ECS Fargate task on AWS, behind an ALB, on RDS Post
     Which lanes are selectable at all is decided by the last sync, not by the commit history: a
     key the commit no longer offers has `retired_at` stamped on its rows and stops being
     offerable, and reintroducing the file clears it and keeps every commit the lane had. The
-    history is not a menu, or deleting a lane's file would leave it selectable for ever. A ticket already in
+    history is not a menu, or deleting a lane's file would leave it selectable for ever. A
+    snapshot is selectable only while the repository it was read from (`source_repo`) is the
+    project's own: changing a project's repository offers none of the old one's lanes, and the
+    first sync of the new one retires them, even a lane of the same name. A ticket already in
     flight is untouched by any of it — it holds `process_version_id` and reads the row by id — so
     a sync that retires a lane cannot disturb work already in it. A sync that retires the project's
     own default MOVES the default to a lane the commit does offer, and reports both ends of the
@@ -1730,7 +1733,7 @@ Seven costs are accepted:
 Every deployment has accounts, members, roles and invites (tech-stack.md decision 80). People
 sign in with a password, Google or OIDC, and never with the shared API token: the token is for
 machines (decision 12). `FACTORIAL_MULTI_ORG__ENABLED` chooses between two shapes of install, and
-the open-source build ships with it off:
+the self-hosted build ships with it off:
 
 - **Off: one organization.** `default` is the only one, and nobody creates another. An account
   comes from the first owner on an empty install (item 11), from an invite, or from a verified

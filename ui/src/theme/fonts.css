@@ -8,13 +8,13 @@
  * fallback face, so the swap from the system font moves nothing.
  */
 
-/* Google's sign-in button asks for Roboto 500 on its label; every theme. */
+/* Google's sign-in button asks for Google Sans 500 on its label; every theme. */
 @font-face {
-  font-family: "Roboto";
+  font-family: "Google Sans";
   font-style: normal;
   font-display: swap;
   font-weight: 500;
-  src: url("./fonts/roboto-latin-500-normal.woff2") format("woff2");
+  src: url("./fonts/google-sans-latin-500-normal.woff2") format("woff2");
 }
 
 @font-face {

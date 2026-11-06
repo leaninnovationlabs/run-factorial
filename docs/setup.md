@@ -65,6 +65,12 @@ You cannot create a runtime, or move one to a sandbox, for a pair that is not in
 keeps running. An `@e2b` entry needs
 `FACTORIAL_RUNTIME__E2B__DEPLOYMENT`. If you do not set it, the container does not start.
 
+The assistant has a list of the same kind, `FACTORIAL_ASSISTANT__OFFERED`. Its entries are
+`<backend>:<auth_mode>`, for example `claude_sdk:api_key`. If you do not set it, the assistant
+offers the Claude API key and the Codex API key. An organization that uses another sign-in
+keeps it, and its settings page marks it "No longer offered". When `FACTORIAL_MULTI_ORG__ENABLED`
+is `true`, the assistant never offers `codex_cli:bedrock`.
+
 The conditions:
 
 - **Every runtime.** Make it on the Runtimes page and store its key there. A process names the

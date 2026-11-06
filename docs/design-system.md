@@ -102,6 +102,9 @@ The reasons are in decision 50.
 - **Hover, pressed and selected come from the finesse set together.**
 - **Dark mode changes colour and nothing else.** The one exception is the nav mark's blend in
   `theme/dark.css`.
+- **The Google sign-in button is not a Button.** It follows Google's branding: 40px high, Google
+  Sans, and Google's own colours, kept as `--google-button-*` tokens. The OIDC button takes the
+  same shape.
 
 #### Status colour
 

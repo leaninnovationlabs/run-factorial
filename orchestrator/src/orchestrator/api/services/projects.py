@@ -34,7 +34,7 @@ from orchestrator.api.services.refs import ticket_source
 from orchestrator.db.models import ProcessVersion, Project, Ticket, TicketStatus
 from orchestrator.events.read_models import blocked_clause
 from orchestrator.factorial import RepoConfigSource
-from orchestrator.factorial.registry import adopters, latest_process_versions
+from orchestrator.factorial.registry import adopters, latest_process_versions, offered_version
 from orchestrator.github.connection import CONNECTION_SECRETS
 from orchestrator.secrets import store
 
@@ -80,7 +80,8 @@ async def list_projects(session: AsyncSession, organization_id: int) -> list[Pro
     lanes: dict[int, list[str]] = {}
     lane_rows = await session.execute(
         select(ProcessVersion.project_id, ProcessVersion.process_key)
-        .where(ProcessVersion.retired_at.is_(None))
+        .join(Project, Project.id == ProcessVersion.project_id)
+        .where(offered_version())
         .distinct()
         .order_by(ProcessVersion.project_id, ProcessVersion.process_key)
     )

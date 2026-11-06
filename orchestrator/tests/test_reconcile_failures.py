@@ -214,7 +214,11 @@ async def test_retry_exhaustion_escalates(maker: async_sessionmaker[AsyncSession
 
 def _raising_resolve_agent(exc: Exception) -> Any:
     async def resolve(
-        _session: AsyncSession, _project: Project, _agent: str, _pins: Any = None
+        _session: AsyncSession,
+        _project: Project,
+        _agent: str,
+        _pins: Any = None,
+        _repo: str | None = None,
     ) -> ResolvedAgent:
         raise exc
 

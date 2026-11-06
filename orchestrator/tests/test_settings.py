@@ -316,6 +316,45 @@ def test_multi_org_offers_only_the_sandbox_unless_the_operator_says_otherwise() 
     assert chosen.offers == {"claude_api@local_cli"}
 
 
+API_KEYS = {"claude_sdk:api_key", "codex_cli:api_key"}
+
+
+@pytest.mark.parametrize("empty", ["", "[]", ",", " , "])
+def test_the_assistant_offer_reads_a_comma_list_and_refuses_an_unknown_entry(
+    monkeypatch: pytest.MonkeyPatch, empty: str
+) -> None:
+    monkeypatch.setenv("FACTORIAL_ASSISTANT__OFFERED", "claude_sdk:api_key, codex_cli:subscription")
+    assert build().assistant_offers == {"claude_sdk:api_key", "codex_cli:subscription"}
+    monkeypatch.setenv("FACTORIAL_ASSISTANT__OFFERED", empty)
+    assert build().assistant.offered is None
+    monkeypatch.setenv("FACTORIAL_ASSISTANT__OFFERED", "claude_sdk:bedrock")
+    with pytest.raises(ValueError, match="claude_sdk:bedrock"):
+        build()
+
+
+def test_the_assistant_offers_the_api_keys_unless_the_operator_says_otherwise() -> None:
+    """The commercial release sells Claude API and Codex API, on one organization or many."""
+    assert build().assistant_offers == API_KEYS
+    assert build(multi_org={"enabled": True}).assistant_offers == API_KEYS
+    listed = build(assistant={"offered": "claude_sdk:subscription,codex_cli:bedrock"})
+    assert listed.assistant_offers == {"claude_sdk:subscription", "codex_cli:bedrock"}
+
+
+def test_an_assistant_list_that_offers_nothing_stops_the_start() -> None:
+    """Multi-org drops Bedrock after the list is read, so a Bedrock-only list would leave no
+    organization any sign-in to choose."""
+    with pytest.raises(ValueError, match="FACTORIAL_ASSISTANT__OFFERED"):
+        build(multi_org={"enabled": True}, assistant={"offered": "codex_cli:bedrock"})
+
+
+def test_multi_org_never_offers_the_assistant_the_host_s_bedrock_role() -> None:
+    """A stranger's organization would mint from the host's AWS role (design.md §7.14)."""
+    listed = build(
+        multi_org={"enabled": True}, assistant={"offered": "codex_cli:api_key,codex_cli:bedrock"}
+    )
+    assert listed.assistant_offers == {"codex_cli:api_key"}
+
+
 @pytest.mark.parametrize(
     ("external_url", "public_url", "expected"),
     [

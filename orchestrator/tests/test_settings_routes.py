@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import AsyncIterator
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -16,7 +17,7 @@ from orchestrator.assistant.config import AssistantSettings
 from orchestrator.db.models import ChatConversation, ChatItem, ChatTurn
 from orchestrator.factorial.bedrock_token import BedrockMintError
 from orchestrator.secrets import store
-from orchestrator.settings import AuthSettings, MultiOrgSettings
+from orchestrator.settings import AssistantProcessSettings, AuthSettings, MultiOrgSettings
 from tests.api_harness import DASHBOARD, MCP_BASE, build_app, client_for, make_settings
 from tests.assistant_fakes import wipe_chat
 
@@ -93,7 +94,6 @@ async def test_put_refuses_an_alias_with_422(client: AsyncClient, auth: dict[str
     assert (await client.get(URL, headers=auth)).json()["settings"]["model"] == "claude-opus-5-5"
 
 
-
 @pytest.mark.parametrize(
     "backend, mode, model",
     [("claude_sdk", "api_key", "gpt-5.3-codex"), ("codex_cli", "subscription", "claude-opus-5-5")],
@@ -129,6 +129,7 @@ async def test_a_stored_cross_vendor_model_still_loads(
 
     assert response.status_code == 200
     assert response.json()["settings"]["model"] == "gpt-5.3-codex"
+
 
 async def test_put_needs_the_dashboard_origin(client: AsyncClient, auth: dict[str, str]) -> None:
     assert (await client.put(URL, json={}, headers=auth)).status_code == 403
@@ -265,7 +266,6 @@ async def test_switching_auth_mode_does_not_reuse_the_other_slot(
     assert original is not None and original.get_secret_value() == "sk-key"
 
 
-
 def places(body: dict[str, object]) -> list[tuple[str, str]]:
     credentials = body["credentials"]
     assert isinstance(credentials, list)
@@ -321,9 +321,7 @@ async def test_delete_removes_only_the_place_its_path_names(
     response = await client.delete(slot(), headers=auth | DASHBOARD)
 
     assert response.status_code == 204
-    assert places((await client.get(URL, headers=auth)).json()) == [
-        ("claude_sdk", "subscription")
-    ]
+    assert places((await client.get(URL, headers=auth)).json()) == [("claude_sdk", "subscription")]
 
 
 @pytest.mark.parametrize(
@@ -349,6 +347,7 @@ async def test_a_leftover_place_the_vocabulary_lacks_is_listed_and_removable(
 
     assert response.status_code == 204
     assert (await client.get(URL, headers=auth)).json()["credentials"] == []
+
 
 async def test_get_reports_the_status_the_assistant_wrote(
     client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
@@ -549,3 +548,142 @@ async def test_settings_test_needs_the_dashboard_origin(
     client: AsyncClient, auth: dict[str, str]
 ) -> None:
     assert (await client.post(TEST, headers=auth)).status_code == 403
+
+
+@pytest.fixture
+async def api_keys_only(async_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """A deployment that offers the assistant the two API keys, as the commercial release does."""
+    settings = make_settings(auth=AuthSettings(external_url=MCP_BASE)).model_copy(
+        update={
+            "assistant": AssistantProcessSettings(
+                offered=["claude_sdk:api_key", "codex_cli:api_key"]
+            )
+        }
+    )
+    async with client_for(build_app(settings, async_session)) as client:
+        yield client
+
+
+async def save_saved(maker: async_sessionmaker[AsyncSession], saved: AssistantSettings) -> None:
+    async with maker() as session:
+        organization = await default_organization_id(session)
+        await svc.save_assistant_settings(session, organization, saved, by="earlier")
+        await session.commit()
+
+
+SUBSCRIPTION = AssistantSettings(enabled=True, backend="claude_sdk", auth_mode="subscription")
+
+
+async def test_get_offers_only_the_listed_sign_ins(
+    api_keys_only: AsyncClient, auth: dict[str, str]
+) -> None:
+    body = (await api_keys_only.get(URL, headers=auth)).json()
+    assert {each["kind"]: each["auth_modes"] for each in body["backends"]} == {
+        "claude_sdk": ["api_key"],
+        "codex_cli": ["api_key"],
+    }
+    assert body["offered"] == ["claude_sdk:api_key", "codex_cli:api_key"]
+
+
+async def test_get_keeps_a_saved_sign_in_that_is_no_longer_offered(
+    api_keys_only: AsyncClient, auth: dict[str, str], maker: async_sessionmaker[AsyncSession]
+) -> None:
+    await save_saved(maker, SUBSCRIPTION)
+    body = (await api_keys_only.get(URL, headers=auth)).json()
+    claude = next(each for each in body["backends"] if each["kind"] == "claude_sdk")
+    assert claude["auth_modes"] == ["api_key", "subscription"]
+    assert "claude_sdk:subscription" not in body["offered"]
+
+
+async def test_put_refuses_a_switch_to_a_sign_in_that_is_not_offered(
+    api_keys_only: AsyncClient, auth: dict[str, str]
+) -> None:
+    body = AssistantSettings(
+        backend="codex_cli", auth_mode="subscription", model="gpt-5.6-terra"
+    ).model_dump(mode="json")
+    response = await api_keys_only.put(URL, json=body, headers=auth | DASHBOARD)
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "auth_mode"]
+    saved = (await api_keys_only.get(URL, headers=auth)).json()["settings"]
+    assert saved["auth_mode"] == "api_key"
+
+
+async def test_a_saved_sign_in_that_is_no_longer_offered_keeps_working(
+    api_keys_only: AsyncClient, auth: dict[str, str], maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """Existing servers keep the methods they already set up: the budget still changes, the
+    token is still replaced, and the assistant still answers."""
+    await save_saved(maker, SUBSCRIPTION)
+    body = SUBSCRIPTION.model_copy(update={"daily_budget_usd": Decimal("30.00")}).model_dump(
+        mode="json"
+    )
+    assert (await api_keys_only.put(URL, json=body, headers=auth | DASHBOARD)).status_code == 200
+    stored = await api_keys_only.put(
+        slot("claude_sdk", "subscription"),
+        json={"value": "sk-ant-oat01-x"},
+        headers=auth | DASHBOARD,
+    )
+    assert stored.status_code == 204
+    after = (await api_keys_only.get(URL, headers=auth)).json()
+    assert after["settings"]["daily_budget_usd"] == "30.00"
+    assert after["ready_to_send"] is True
+    removed = await api_keys_only.delete(
+        slot("claude_sdk", "subscription"), headers=auth | DASHBOARD
+    )
+    assert removed.status_code == 204
+
+
+async def test_a_new_organization_starts_on_an_offered_sign_in(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    """The document's default is the Claude key; a list without it must not show a new
+    organization a sign-in it never chose as no longer offered."""
+    settings = make_settings(auth=AuthSettings(external_url=MCP_BASE)).model_copy(
+        update={"assistant": AssistantProcessSettings(offered=["codex_cli:api_key"])}
+    )
+    async with client_for(build_app(settings, async_session)) as client:
+        body = (await client.get(URL, headers=auth)).json()
+    assert (body["settings"]["backend"], body["settings"]["auth_mode"]) == ("codex_cli", "api_key")
+    assert body["settings"]["model"] == "gpt-5.3-codex"
+    assert [each["kind"] for each in body["backends"]] == ["codex_cli"]
+
+
+async def test_multi_org_shows_no_bedrock_sign_in(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    settings = make_settings(auth=AuthSettings(external_url=MCP_BASE)).model_copy(
+        update={"multi_org": MultiOrgSettings(enabled=True)}
+    )
+    async with client_for(build_app(settings, async_session)) as client:
+        body = (await client.get(URL, headers=auth)).json()
+    codex = next(each for each in body["backends"] if each["kind"] == "codex_cli")
+    assert "bedrock" not in codex["auth_modes"]
+
+
+async def test_a_new_organization_stores_its_first_key_for_the_offered_sign_in(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    """The page shows an organization that saved nothing the first offered sign-in, so the
+    credential, ready and test routes must read the same one, or its first key is refused."""
+    settings = make_settings(auth=AuthSettings(external_url=MCP_BASE)).model_copy(
+        update={"assistant": AssistantProcessSettings(offered=["codex_cli:api_key"])}
+    )
+    async with client_for(build_app(settings, async_session)) as client:
+        key = {"value": "sk-proj-x"}
+        stored = await client.put(slot("codex_cli", "api_key"), json=key, headers=auth | DASHBOARD)
+        assert stored.status_code == 204
+        ready = (await client.get(f"{URL}/ready", headers=auth)).json()
+    assert ready["credential_set"] is True
+
+
+async def test_a_new_organization_starts_on_an_api_key_before_a_subscription(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    """A subscription bills one person's plan, so it is never the default when a key is offered."""
+    offered = ["claude_sdk:subscription", "codex_cli:api_key"]
+    settings = make_settings(auth=AuthSettings(external_url=MCP_BASE)).model_copy(
+        update={"assistant": AssistantProcessSettings(offered=offered)}
+    )
+    async with client_for(build_app(settings, async_session)) as client:
+        body = (await client.get(URL, headers=auth)).json()
+    assert (body["settings"]["backend"], body["settings"]["auth_mode"]) == ("codex_cli", "api_key")

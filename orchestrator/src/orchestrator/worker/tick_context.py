@@ -240,8 +240,10 @@ class _Tick:
     #: version was registered. NULL for a snapshot from before revision 0013; `resolve_agent`
     #: falls back to the project-wide `agent` row exactly as it did then.
     agent_pins: AgentPins | None
-    #: The pinned version's `source_commit_sha`: the commit every run reads its config at.
+    #: The pinned version's `source_commit_sha` and `source_repo`: the commit every run reads its
+    #: config at, and the repository it reads it from, which the project's may have left since.
     config_sha: str
+    config_repo: str
     source: StateSource
     issue: IssueState
     now: datetime
@@ -289,9 +291,9 @@ async def _load_project(session: AsyncSession, project_id: int) -> Project:
 
 async def _load_pinned_config(
     session: AsyncSession, process_version_id: int
-) -> tuple[ProcessConfig, AgentPins | None, str]:
+) -> tuple[ProcessConfig, AgentPins | None, str, str]:
     """Re-parse the snapshot the ticket pinned at admission, the agent pins beside it (§2.8), and
-    the commit it was read at.
+    the commit and repository it was read at.
 
     Never `load_process()` of the repo's current file: a config edit creates a new version row and
     must not change the process under a ticket already flowing through it. The pins extend that to
@@ -301,7 +303,12 @@ async def _load_pinned_config(
     row = (
         await session.execute(select(ProcessVersion).where(ProcessVersion.id == process_version_id))
     ).scalar_one()
-    return ProcessConfig.model_validate(row.content), row.agent_pins, row.source_commit_sha
+    return (
+        ProcessConfig.model_validate(row.content),
+        row.agent_pins,
+        row.source_commit_sha,
+        row.source_repo,
+    )
 
 
 async def _runs_for(session: AsyncSession, ticket: Ticket, step_name: str) -> Sequence[StepRun]:

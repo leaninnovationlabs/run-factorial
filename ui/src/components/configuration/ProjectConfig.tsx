@@ -408,7 +408,7 @@ function RepositoryForm({
               onChange={(event) => onRepo(event.target.value)}
               placeholder={gitlab ? "group/project" : "https://github.com/acme/widgets"}
               isMonospaced
-              helperMessage="Where the artifacts and the .factorial/ config live. A change applies from here on: synced process versions keep the repository they came from."
+              helperMessage="Where the artifacts and the .factorial/ config live. After a change, Factorial offers no process until you sync the new repository's config. Earlier process versions still read from the repository they came from."
               errorMessage={
                 (attempted || repo.trim() !== "") && repoProblem ? repoProblem : undefined
               }

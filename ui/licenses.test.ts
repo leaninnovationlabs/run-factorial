@@ -19,7 +19,7 @@ describe("the third-party notices", () => {
     expect(text).toMatch(/^react@\d+\.\d+\.\d+ \(MIT\)$/m);
     expect(text).toMatch(/^tailwindcss@\S+ \(MIT\)$/m);
     expect(text).toContain("Copyright (c) Meta Platforms, Inc. and affiliates.");
-    for (const font of ["Inter", "JetBrainsMono", "Roboto"]) {
+    for (const font of ["Inter", "JetBrainsMono", "GoogleSans"]) {
       expect(text).toContain(`${font} font (OFL-1.1)`);
     }
     expect(text).toContain("SIL OPEN FONT LICENSE Version 1.1");

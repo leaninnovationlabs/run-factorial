@@ -163,11 +163,15 @@ export interface ProcessVersion {
   project_id: number;
   /** Which lane this snapshot belongs to — the config's own `name:`. */
   process_key: string;
+  /** The repository this snapshot was read from. One that is not the project's own is a version
+   *  the project no longer offers, and its files are still read from here. */
+  source_repo: string;
   /** The commit this snapshot was read from, and its identity. Routes still address a row by
    *  `id`; this is what a reader is shown, because it is the thing that can be looked up. */
   source_commit_sha: string;
-  /** When the last sync stopped finding this lane's file. Null means it is still offered; a
-   *  timestamp means retired, and the rows stay so history is readable. */
+  /** When the last sync stopped finding this lane's file, or a sync of another repository ran. A
+   *  timestamp means retired, and the rows stay so history is readable. Null is offered only while
+   *  `source_repo` is the project's repository. */
   retired_at: string | null;
   /** The ref the sync asked for. A sync with no ref reads the `factorial` branch and records it
    *  here; null means the default branch, which only rows synced before #248 say. */
@@ -1775,6 +1779,9 @@ export interface AssistantSettingsOut {
   settings: AssistantSettings;
   /** Every stored credential, the saved backend and auth mode's among them. */
   credentials: AssistantStoredCredential[];
+  /** The sign-ins a person may switch to, as `<backend>:<auth_mode>`; `backends` adds the saved
+   *  one when the list dropped it. Absent from an API older than the list. */
+  offered?: string[];
   backends: AssistantBackend[];
   /** Same gate as POST …/messages: enabled plus credential or Bedrock mint. */
   ready_to_send: boolean;

@@ -25,6 +25,7 @@ import {
   Checkbox,
   ConfirmPopup,
   ErrorDetails,
+  Lozenge,
   Panel,
   QueryBoundary,
   RadioGroup,
@@ -143,6 +144,12 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
     credential.backend === data.settings.backend &&
     credential.auth_mode === data.settings.auth_mode;
   const savedCredential = data.credentials.find(isSaved);
+  /** The server keeps a saved sign-in its list dropped; an older API sends no list. */
+  const noLongerOffered =
+    data.offered !== undefined &&
+    draft.backend === data.settings.backend &&
+    draft.auth_mode === data.settings.auth_mode &&
+    !data.offered.includes(`${draft.backend}:${draft.auth_mode}`);
   const status = data.status;
 
   function submit(event: FormEvent) {
@@ -194,6 +201,12 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
                 onChange={(mode) => switchTo(draft.backend, mode)}
               />
               {errors.auth_mode && <ActionError error={new Error(errors.auth_mode)} />}
+              {noLongerOffered && (
+                <p className="flex flex-wrap items-center gap-2 text-body-sm text-subtle">
+                  <Lozenge>No longer offered</Lozenge>
+                  If you switch to another sign-in, you can&apos;t switch back to this one.
+                </p>
+              )}
               {draft.auth_mode === "bedrock" && draft.backend === "codex_cli" ? (
                 <SectionMessage appearance="information">
                   Each reply uses a short-lived Bedrock token made from this host&apos;s AWS role.

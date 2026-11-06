@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db.models import ProcessVersion, Project, Runtime
+from orchestrator.factorial.registry import offered_version
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,8 @@ async def process_bindings(
             ProcessVersion.process_key,
             ProcessVersion.content["runtime"].astext.label("slug"),
         )
-        .where(ProcessVersion.retired_at.is_(None))
+        .join(Project, Project.id == ProcessVersion.project_id)
+        .where(offered_version())
         .distinct(ProcessVersion.project_id, ProcessVersion.process_key)
         # `factorial.registry.latest_process_versions`'s rule, as DISTINCT ON across projects:
         # most recently synced wins.

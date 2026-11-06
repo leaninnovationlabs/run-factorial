@@ -46,7 +46,8 @@ describe("SignInCard", () => {
     // Nobody signs in to the dashboard with the API token (design.md §7.19).
     const html = card(true);
     expect(html).toContain('aria-label="Sign in with a password"');
-    expect(html).toContain("Continue with Google");
+    expect(html).toContain("Sign in with Google");
+    expect(html).toMatch(/<a[^>]*sign-in-door[^>]*><img/);
     expect(html).not.toContain("API token");
     expect(html).not.toContain("FACTORIAL_API_TOKEN");
   });
@@ -54,12 +55,13 @@ describe("SignInCard", () => {
   it("is the password form alone where no SSO is configured", () => {
     const html = card(false);
     expect(html).toContain('aria-label="Sign in with a password"');
-    expect(html).not.toContain("Continue with");
+    expect(html).not.toContain("sign-in-door");
+    expect(html).not.toMatch(/>or</);
   });
 
   it("offers the configured OIDC issuer", () => {
     const html = card(false, { oidc: true, oidcLabel: "Okta" });
-    expect(html).toContain("Okta");
+    expect(html).toContain("Sign in with Okta");
     expect(html).toContain("/auth/oidc/login");
   });
 
@@ -96,8 +98,8 @@ describe("SignInCard", () => {
   });
 
   it("sets every SSO door in the same face", () => {
-    // Google's branding asks for Roboto on its button; every door wears the same class so they
-    // stay one shape in every skin.
+    // Google's branding sets its button's size, colours and face; every door wears the same class
+    // so they stay one shape in every skin.
     expect(card(true, { oidc: true }).match(/sign-in-door/g)).toHaveLength(2);
   });
 });
@@ -132,7 +134,7 @@ describe("coming back from a Google sign-in that did not finish", () => {
   it("says the account cannot sign in, and keeps the Google door to choose another", () => {
     const html = card(true, { notice: "refused" });
     expect(html).toContain("That account can&#x27;t sign in here");
-    expect(html).toContain("Continue with Google");
+    expect(html).toContain("Sign in with Google");
   });
 
   it("reads only the two words the callback sends", () => {

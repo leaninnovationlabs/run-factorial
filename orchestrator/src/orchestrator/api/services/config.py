@@ -779,7 +779,7 @@ async def commit_config(
 async def _lane_config(
     source: RepoConfigSource, project: Project, row: ProcessVersion
 ) -> LaneConfig:
-    repo, sha = project.github_repo, row.source_commit_sha
+    repo, sha = row.source_repo, row.source_commit_sha
     try:
         path = await source.process_path_at(repo, row.process_key, sha)
         text = await source.read_process_text(repo, path, sha)

@@ -35,13 +35,13 @@ describe("SignInPage", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(view.container.textContent).not.toContain("Continue with Google");
+    expect(view.container.textContent).not.toContain("Sign in with Google");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(PROVIDERS_RETRY_MS);
     });
     expect(providers).toHaveBeenCalledTimes(2);
-    expect(view.container.textContent).toContain("Continue with Google");
+    expect(view.container.textContent).toContain("Sign in with Google");
   });
 
   it("stops asking when the API refuses the route", async () => {

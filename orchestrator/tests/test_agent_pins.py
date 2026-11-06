@@ -18,7 +18,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.services.organizations import default_organization_id
-from orchestrator.db.models import Agent, Project
+from orchestrator.config import ConfigError
+from orchestrator.db.models import Agent, ProcessVersion, Project, Ticket
 from orchestrator.factorial import (
     ALLOWLIST_KEY,
     AgentInactive,
@@ -196,6 +197,32 @@ async def test_the_pinned_path_is_read_not_the_rows_path(async_session: AsyncSes
     assert resolved.commit_sha == PINNED_SHA
 
 
+async def test_a_pin_is_read_from_the_repository_it_names(async_session: AsyncSession) -> None:
+    """The commit exists only in the repository the version was synced from, and the project
+    may point at another one since (issue #441)."""
+    source, contents = make_source()
+    contents.files = {("acme/old", p, sha): text for (_, p, sha), text in contents.files.items()}
+    project = await _project(async_session)
+    await _agent_row(async_session, project, "build-agent", path=BUILD_MANIFEST, sha=HEAD_SHA)
+    pins = {"build-agent": AgentPin(sha=PINNED_SHA, path=BUILD_MANIFEST)}
+
+    resolved = await resolve_agent(
+        async_session,
+        source,
+        project,
+        "build-agent",
+        pins=pins,
+        own_mcp_endpoints=frozenset(),
+        repo="acme/old",
+    )
+    assert resolved.commit_sha == PINNED_SHA
+
+    with pytest.raises(ConfigError, match="points at missing file"):
+        await resolve_agent(
+            async_session, source, project, "build-agent", pins=pins, own_mcp_endpoints=frozenset()
+        )
+
+
 async def test_absent_pin_map_falls_back_to_the_project_row(async_session: AsyncSession) -> None:
     """Every row that exists when the column lands has no map; those tickets must not break."""
     source, _ = make_source()
@@ -293,6 +320,26 @@ async def test_a_tick_resolves_agents_at_its_own_snapshots_pins(
     await run_tick(world)
 
     assert world.resolved_pins == [pins]
+
+
+async def test_a_spawn_reads_its_agents_from_the_versions_repository(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The version's repository, not the project's: a spawn on an old version must read the
+    agents its steps were frozen with, where that commit exists."""
+    pins = {"plan-agent": AgentPin(sha=PINNED_SHA, path=PLAN_MANIFEST)}
+    world = await _build_world(maker, agent_pins=pins)
+    async with world.sessions() as session:
+        ticket = await session.get(Ticket, world.ticket_id)
+        assert ticket is not None
+        version = await session.get(ProcessVersion, ticket.process_version_id)
+        assert version is not None
+        version.source_repo = "acme/old"
+        await session.commit()
+
+    await run_tick(world)
+
+    assert world.resolved_repos == ["acme/old"]
 
 
 async def test_a_tick_on_a_snapshot_without_pins_passes_none(

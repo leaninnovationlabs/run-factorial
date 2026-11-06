@@ -233,6 +233,7 @@ async def _intake_project(session: AsyncSession) -> Project:
     session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key="standard",
             content=_process("standard").model_dump(mode="json", by_alias=True),
             source_commit_sha="b" * 40,

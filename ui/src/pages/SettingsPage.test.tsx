@@ -368,6 +368,22 @@ describe("the fields", () => {
     expect((control(root, "Model") as HTMLInputElement).value).toBe("claude-opus-5-5");
   });
 
+  it("marks a saved sign-in the server no longer offers, until someone switches away", async () => {
+    const root = await page({
+      ...saved({ auth_mode: "subscription" }),
+      offered: ["claude_sdk:api_key", "codex_cli:api_key"],
+    });
+    expect(root.textContent).toContain("No longer offered");
+    radio(root, "API key").click();
+    await settle();
+    expect(root.textContent).not.toContain("No longer offered");
+  });
+
+  it("marks nothing when the server sends no offer list", async () => {
+    const root = await page(saved({ auth_mode: "subscription" }));
+    expect(root.textContent).not.toContain("No longer offered");
+  });
+
   it("names the chosen backend and sign-in's default under Model", async () => {
     const root = await page(saved({ backend: "codex_cli", model: "gpt-5.3-codex" }));
     const model = control(root, "Model");

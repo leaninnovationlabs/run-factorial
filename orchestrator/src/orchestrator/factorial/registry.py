@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final, Literal, TypedDict
 
-from sqlalchemy import func, select, update
+from sqlalchemy import ColumnElement, and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +75,18 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def offered_version() -> ColumnElement[bool]:
+    """A snapshot a new ticket may pin: not retired, and read from the project's own repository.
+
+    The caller joins `Project` on `ProcessVersion.project_id`. The repository match is what lets a
+    repository change write nothing: the old repository's rows stop being offered at once, and so
+    does any row a sync of the old repository writes after the change (issue #441).
+    """
+    return and_(
+        ProcessVersion.retired_at.is_(None), ProcessVersion.source_repo == Project.github_repo
+    )
+
+
 async def latest_process_versions(
     session: AsyncSession, project_id: int
 ) -> dict[str, ProcessVersion]:
@@ -82,19 +94,17 @@ async def latest_process_versions(
 
     "Current" is the snapshot a sync most recently landed on (`activated_at`), so re-syncing an
     older commit makes it current again (decision 38). Ordered on `id` beside it, because one
-    sync writes every lane in the same transaction and their timestamps can tie. Available means
-    `retired_at IS NULL`: a lane whose file the last sync stopped finding is not offerable even
-    though its rows remain (design.md §4). The page and the worker both read this, so they
-    agree by construction.
+    sync writes every lane in the same transaction and their timestamps can tie. Available is
+    `offered_version`: a lane whose file the last sync stopped finding is not offerable even
+    though its rows remain, and neither is one read from a repository the project has left
+    (design.md §4). The page and the worker both read this, so they agree by construction.
     """
     rows = (
         (
             await session.execute(
                 select(ProcessVersion)
-                .where(
-                    ProcessVersion.project_id == project_id,
-                    ProcessVersion.retired_at.is_(None),
-                )
+                .join(Project, Project.id == ProcessVersion.project_id)
+                .where(ProcessVersion.project_id == project_id, offered_version())
                 .distinct(ProcessVersion.process_key)
                 # DISTINCT ON keeps the first row per lane in this order: most recently synced wins.
                 .order_by(
@@ -114,7 +124,8 @@ async def lane_head(
     session: AsyncSession, project_id: int, process_key: str
 ) -> ProcessVersion | None:
     """The snapshot a ticket entering `process_key` right now would pin, or None when the lane is
-    retired. `latest_process_versions`'s answer for one lane, so a restart and admission agree."""
+    not offered. `latest_process_versions`'s answer for one lane, so a restart and admission
+    agree."""
     return (await latest_process_versions(session, project_id)).get(process_key)
 
 
@@ -173,7 +184,8 @@ class RuntimeBindingInvalid(Exception):
 
 
 class ProcessVersionExists(Exception):
-    """`(project_id, process_key, source_commit_sha)` was snapshotted by a concurrent writer.
+    """`(project_id, source_repo, process_key, source_commit_sha)` was snapshotted by a concurrent
+    writer.
 
     The lost insert race alone. Re-syncing a commit this project already holds is the `unchanged`
     outcome and never an error — a sha is immutable, so the row that exists IS this config.
@@ -234,8 +246,13 @@ async def resolve_agent(
     pins: AgentPins | None = None,
     *,
     own_mcp_endpoints: frozenset[tuple[str, int]],
+    repo: str | None = None,
 ) -> ResolvedAgent:
     """Registry row -> a fully read agent definition at a concrete sha.
+
+    `repo` is where a pin is read from: the pinned version's `source_repo`, because its commit
+    exists only there (None = the project's `github_repo`). Without a pin the row's commit is read
+    from the project's repository, as it always was: the row records no repository.
 
     `pins` is the ticket's own `process_version.agent_pins`, and wins: the snapshot recorded where
     this agent was read from when it was registered, and a ticket's agents freeze with its steps.
@@ -273,8 +290,10 @@ async def resolve_agent(
     pin = (pins or {}).get(agent_name)
     if pin is not None:
         sha, path = pin["sha"], pin["path"]
+        read_from = repo or project.github_repo
     else:
         sha, path = row.pinned_commit_sha, row.repo_path
+        read_from = project.github_repo
         if sha is None:
             sha = await source.resolve_ref(project.github_repo, None)
             try:
@@ -292,7 +311,7 @@ async def resolve_agent(
                 sha,
             )
 
-    resolved = await source.load_agent(project.github_repo, path, sha)
+    resolved = await source.load_agent(read_from, path, sha)
     _enforce_mcp_allowlist(project, resolved, own_mcp_endpoints)
     _enforce_permission_ceiling(project, resolved)
     return resolved
@@ -361,8 +380,11 @@ async def upsert_agent_rows(
     project: Project,
     process: ProcessConfig,
     sha: str,
+    *,
+    repo: str | None = None,
 ) -> dict[str, AgentPin]:
-    """Create or re-pin an `agent` row for every agent the process references.
+    """Create or re-pin an `agent` row for every agent the process references, read from `repo`
+    (None = the project's `github_repo`).
 
     The only path by which an `agent` row comes into existence, so registering a process version
     is what makes its agents runnable. Rows for agents the process no longer mentions are left
@@ -390,7 +412,7 @@ async def upsert_agent_rows(
 
     # The folder this sha actually has, not this source's default: `repo_path` is read back at
     # `pinned_commit_sha`, so a path naming a folder the commit lacks resolves nowhere.
-    root = await source.resolve_dir(project.github_repo, sha)
+    root = await source.resolve_dir(repo or project.github_repo, sha)
 
     pins: dict[str, AgentPin] = {}
     for name in names:
@@ -539,11 +561,14 @@ async def register_process_versions(
     with several lanes: a commit touching one lane leaves every other lane at a commit this
     project already holds, which is `unchanged` and not a refusal.
 
-    Availability is decided here and nowhere else: a key the commit offers is registered or
-    confirmed and un-retired, and a key the project has that the commit does NOT offer is
-    retired. The commit history is not a menu — without this, deleting a lane's file would leave
-    it offerable for ever. Tickets in flight are untouched either way: they hold
-    `process_version_id` and read the row by id.
+    Retirement is decided here: a key the commit offers is registered or confirmed and
+    un-retired, and a key the project has that the commit does NOT offer is retired. The commit
+    history is not a menu — without this, deleting a lane's file would leave it offerable for
+    ever. Every row read from another repository than this sync's is retired too, whatever its
+    key: the project left that repository, and its lanes are not files that came back. Those rows
+    are already unoffered before this runs (`offered_version`), so a sync of the old repository
+    that lands after a move cannot offer them again either. Tickets in flight are untouched
+    either way: they hold `process_version_id` and read the row by id.
 
     Nothing is written until every lane has parsed and every `runtime:` binding has been checked.
     A folder that does not parse is not a partial state worth committing, and neither is one
@@ -556,10 +581,12 @@ async def register_process_versions(
     `ConfigCommitRefused` comes first of all, for every ref and on a re-sync too
     (`_refuse_unknown_commit`).
     """
+    # Read once: every row this sync writes is stamped with the repository it read.
+    repo = project.github_repo
     if sha is None:
-        sha = await source.resolve_ref(project.github_repo, ref)
+        sha = await source.resolve_ref(repo, ref)
     await _refuse_unknown_commit(session, source, project, sha)
-    configs = await source.load_processes(project.github_repo, sha)
+    configs = await source.load_processes(repo, sha)
     await check_runtime_bindings(session, project.organization_id, configs)
 
     existing = list(
@@ -584,12 +611,14 @@ async def register_process_versions(
             "project %s: default process %r is not in %s@%s; default is %r now",
             project.name,
             moved.previous,
-            project.github_repo,
+            repo,
             sha,
             moved.now,
         )
 
-    by_key_sha = {(row.process_key, row.source_commit_sha): row for row in existing}
+    by_key_sha = {
+        (row.process_key, row.source_commit_sha): row for row in existing if row.source_repo == repo
+    }
     results: list[ProcessRegistration] = []
     for key in sorted(configs):
         row = by_key_sha.get((key, sha))
@@ -604,7 +633,7 @@ async def register_process_versions(
                 .values(activated_at=func.clock_timestamp())
                 .execution_options(synchronize_session=False)
             )
-            await upsert_agent_rows(session, source, project, configs[key], sha)
+            await upsert_agent_rows(session, source, project, configs[key], sha, repo=repo)
             await session.refresh(row)
             results.append(ProcessRegistration(process_key=key, outcome="unchanged", row=row))
             continue
@@ -612,7 +641,9 @@ async def register_process_versions(
             ProcessRegistration(
                 process_key=key,
                 outcome="created",
-                row=await _insert_version(session, source, project, key, configs[key], sha, ref),
+                row=await _insert_version(
+                    session, source, project, key, configs[key], sha, ref, repo=repo
+                ),
             )
         )
 
@@ -620,11 +651,12 @@ async def register_process_versions(
     now = datetime.now(UTC)
     newly_retired: list[str] = []
     for row in existing:
-        if row.process_key in configs:
+        if row.source_repo == repo and row.process_key in configs:
             row.retired_at = None  # a lane whose file came back keeps every commit it had
         elif row.retired_at is None:
             row.retired_at = now
-            newly_retired.append(row.process_key)
+            if row.process_key not in configs:
+                newly_retired.append(row.process_key)
     results.extend(
         ProcessRegistration(process_key=key, outcome="retired")
         for key in sorted(set(newly_retired))
@@ -635,7 +667,7 @@ async def register_process_versions(
         "synced %s process(es) for project %s from %s@%s: %s",
         len(results),
         project.name,
-        project.github_repo,
+        repo,
         sha,
         ", ".join(f"{r.process_key}={r.outcome}" for r in results),
     )
@@ -764,6 +796,8 @@ async def _insert_version(
     config: ProcessConfig,
     sha: str,
     ref: str | None,
+    *,
+    repo: str,
 ) -> ProcessVersion:
     """One new snapshot row plus the agent pins that freeze what its steps will execute.
 
@@ -776,6 +810,7 @@ async def _insert_version(
         # by_alias keeps the YAML spelling, so the snapshot round-trips back into the same models
         # the loader produces (orchestrator.config docstring).
         content=config.model_dump(mode="json", by_alias=True),
+        source_repo=repo,
         source_commit_sha=sha,
         # The request, not the resolution: a sha cannot be read back as the branch that carried
         # it, and the next sync wants to offer the same ref again (revision 0006).
@@ -791,7 +826,7 @@ async def _insert_version(
     # After the insert, because the pins are the return value of establishing the rows. An empty
     # map is still a map: it says "registered from a commit, references no agents", which a NULL
     # (a legacy row, or a JSON upload with nothing to pin to) does not.
-    row.agent_pins = dict(await upsert_agent_rows(session, source, project, config, sha))
+    row.agent_pins = dict(await upsert_agent_rows(session, source, project, config, sha, repo=repo))
     await session.flush()
     await session.refresh(row)  # created_at is a server default
     return row

@@ -1504,11 +1504,14 @@ class ProcessVersionOut(_Out):
     project_id: int
     #: Which lane this snapshot belongs to — the config's own `name:`.
     process_key: str
-    #: The commit this snapshot was read from, and its identity: `(project, lane, sha)` is unique.
-    #: Routes still address a row by `id`, which is shorter and already indexed.
+    #: The repository and commit this snapshot was read from, and its identity: `(project, repo,
+    #: lane, sha)` is unique. Routes still address a row by `id`, which is shorter and already
+    #: indexed. A repository other than the project's is a version that is no longer offered.
+    source_repo: str
     source_commit_sha: str
-    #: When the last sync stopped finding this lane's file. NULL = still offered. A retired lane
-    #: keeps every snapshot it had; it is simply not selectable (design.md §4).
+    #: When the last sync stopped finding this lane's file, or a sync of another repository ran. A
+    #: retired lane keeps every snapshot it had; it is simply not selectable (design.md §4). NULL
+    #: is offered only while `source_repo` is the project's repository.
     retired_at: datetime | None = None
     #: The ref the sync asked for, `factorial` when none was named; NULL = the repo's default
     #: branch (rows before issue #248). The version table shows it,
@@ -2582,6 +2585,7 @@ class AssistantCredentialOut(_Out):
 class AssistantBackendOut(_Out):
     kind: str
     label: str
+    #: The sign-ins the page offers: the deployment's offered ones, plus the saved one.
     auth_modes: list[str]
     #: auth mode -> the model the settings page switches to with it.
     default_models: dict[str, str]
@@ -2602,6 +2606,9 @@ class AssistantSettingsOut(_Out):
     #: by a switch can be seen and removed.
     credentials: list[AssistantStoredCredentialOut]
     backends: list[AssistantBackendOut]
+    #: `<backend>:<auth_mode>` entries the deployment offers (`FACTORIAL_ASSISTANT__OFFERED`); the
+    #: saved one may be missing, and the page then marks it no longer offered.
+    offered: list[str]
     #: Same gate as sending a message: enabled, and a stored credential or a Bedrock mint.
     ready_to_send: bool
     #: The `assistant_status` row, written by the assistant process at start; null before then.

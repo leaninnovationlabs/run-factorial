@@ -557,6 +557,7 @@ async def test_approver_anchor_reads_the_pinned_process_version_not_a_newer_one(
         session.add(
             ProcessVersion(
                 project_id=world.project_id,
+                source_repo=world.repo,
                 process_key=newer["name"],
                 content=newer,
                 source_commit_sha="b" * 40,

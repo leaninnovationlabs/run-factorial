@@ -263,7 +263,9 @@ async def reconcile_ticket(
 
     # Loaded ahead of the exit check, which needs the terminal step's name to decide whether a
     # closed issue is a departure or a completion.
-    config, agent_pins, config_sha = await _load_pinned_config(session, ticket.process_version_id)
+    config, agent_pins, config_sha, config_repo = await _load_pinned_config(
+        session, ticket.process_version_id
+    )
 
     tick_for = partial(
         _tick_for,
@@ -274,6 +276,7 @@ async def reconcile_ticket(
         config=config,
         agent_pins=agent_pins,
         config_sha=config_sha,
+        config_repo=config_repo,
         lease_owner=lease_owner,
         lease_ttl=lease_ttl,
         bot_login=bot_login,
@@ -499,6 +502,7 @@ async def _tick_for(
     config: ProcessConfig,
     agent_pins: AgentPins | None,
     config_sha: str,
+    config_repo: str,
     source: StateSource,
     issue: IssueState,
     lease_owner: str,
@@ -526,6 +530,7 @@ async def _tick_for(
         config=config,
         agent_pins=agent_pins,
         config_sha=config_sha,
+        config_repo=config_repo,
         source=source,
         issue=issue,
         now=deps.now(),

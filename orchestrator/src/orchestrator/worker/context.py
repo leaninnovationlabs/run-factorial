@@ -115,11 +115,14 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-#: `(session, project, agent name) -> ResolvedAgent`: the registry row's pin, plus the manifest,
-#: both prompts and every `SKILL.md` read at that one sha (`orchestrator.factorial`). It takes the
-#: caller's session because establishing a first-use pin is a write that must land in the tick's
-#: own unit of work — `factorial.registry.resolve_agent` flushes and never commits.
-AgentSource = Callable[[AsyncSession, Project, str, AgentPins | None], Awaitable[ResolvedAgent]]
+#: `(session, project, agent name, pins, repo) -> ResolvedAgent`: the pin, plus the manifest,
+#: both prompts and every `SKILL.md` read at that one sha in `repo`, the pinned version's own
+#: repository (`orchestrator.factorial`). It takes the caller's session because establishing a
+#: first-use pin is a write that must land in the tick's own unit of work —
+#: `factorial.registry.resolve_agent` flushes and never commits.
+AgentSource = Callable[
+    [AsyncSession, Project, str, AgentPins | None, str], Awaitable[ResolvedAgent]
+]
 
 
 _TERMINAL_DEFAULTS = TerminalSettings()
@@ -403,7 +406,7 @@ def production_deps(settings: Settings | None = None) -> ReconcileDeps:
     own_mcp_endpoints = resolved.mcp_endpoints
 
     async def resolve(
-        session: AsyncSession, project: Project, agent: str, pins: AgentPins | None
+        session: AsyncSession, project: Project, agent: str, pins: AgentPins | None, repo: str
     ) -> ResolvedAgent:
         from orchestrator.gitlab.project_client import config_source_for
 
@@ -419,7 +422,7 @@ def production_deps(settings: Settings | None = None) -> ReconcileDeps:
                 ".factorial/"
             )
         return await resolve_agent(
-            session, chosen, project, agent, pins, own_mcp_endpoints=own_mcp_endpoints
+            session, chosen, project, agent, pins, own_mcp_endpoints=own_mcp_endpoints, repo=repo
         )
 
     return ReconcileDeps(

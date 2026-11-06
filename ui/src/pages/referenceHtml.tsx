@@ -38,10 +38,10 @@ async function stylesheet(candidates: string[]): Promise<string> {
       return { path, base: dirname(path), content: readFileSync(path, "utf8") };
     },
   });
-  // Roboto is the Google sign-in button's face alone; no reference page has a sign-in.
+  // Google Sans is the Google sign-in button's face alone; no reference page has a sign-in.
   const css = compiler
     .build(candidates)
-    .replace(/@font-face\s*{[^}]*"Roboto"[^}]*}\s*/g, "")
+    .replace(/@font-face\s*{[^}]*"Google Sans"[^}]*}\s*/g, "")
     .replace(/url\("\.\/fonts\/([^"]+\.woff2)"\)/g, (_, file: string) => {
       const data = readFileSync(join(FONTS, file)).toString("base64");
       return `url("data:font/woff2;base64,${data}")`;

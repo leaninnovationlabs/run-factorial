@@ -242,7 +242,7 @@ ARG REVISION=
 RUN printf '%s\n' "$REVISION" > /etc/factorial/revision
 LABEL org.opencontainers.image.title="factorial" \
       org.opencontainers.image.description="GitHub issues through an agent development life cycle: AI agents do each step, people approve at gates" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="FSL-1.1-ALv2" \
       org.opencontainers.image.url="https://www.runfactorial.com" \
       org.opencontainers.image.documentation="https://www.runfactorial.com/docs/run-the-public-image/" \
       org.opencontainers.image.vendor="Lean Innovation Labs LLC" \

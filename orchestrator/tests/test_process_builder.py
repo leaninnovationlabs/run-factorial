@@ -7,6 +7,8 @@ exactly one way and asserts the one warning (and, for the clean config, none).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +16,11 @@ from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.config import parse_process
 from orchestrator.config.lint import lint_process
 from orchestrator.db.models import ProcessVersion, Project
+from orchestrator.factorial import RepoConfigSource
+from orchestrator.github import ContentsNotFound
+from orchestrator.gitlab.client import GitLabError
 from tests.api_harness import authed_client_for, build_app, make_settings, seed_project
+from tests.repo_source_fakes import SAMPLE_PROCESS_PATH, SHA, FakeContents, sample_files
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
@@ -318,6 +324,7 @@ async def test_snapshot_content_get(async_session: AsyncSession) -> None:
     config = parse_process(config_yaml(), origin="test")
     row = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=config.name,
         content=config.model_dump(mode="json", by_alias=True),
         source_commit_sha="c" * 40,
@@ -348,6 +355,7 @@ async def test_version_raw_falls_back_to_the_snapshot(async_session: AsyncSessio
     config = parse_process(config_yaml(), origin="test")
     row = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=config.name,
         content=config.model_dump(mode="json", by_alias=True),
         source_commit_sha="c" * 40,
@@ -386,6 +394,7 @@ async def test_version_raw_reads_the_repo_at_the_pin(async_session: AsyncSession
     config = parse_process(config_yaml(), origin="test")
     row = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=config.name,
         source_commit_sha="a" * 40,
         content=config.model_dump(mode="json", by_alias=True),
@@ -413,6 +422,7 @@ async def test_label_listing_names_every_expected_label(async_session: AsyncSess
     async_session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key=config.name,
             content=config.model_dump(mode="json", by_alias=True),
             source_commit_sha="c" * 40,
@@ -457,6 +467,7 @@ async def test_label_listing_carries_the_label_that_selects_each_process(
         async_session.add(
             ProcessVersion(
                 project_id=project.id,
+                source_repo=project.github_repo,
                 process_key=config.name,
                 content=config.model_dump(mode="json", by_alias=True),
                 source_commit_sha="c" * 40,
@@ -489,6 +500,7 @@ async def test_label_listing_degrades_when_github_fails(async_session: AsyncSess
     async_session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key=config.name,
             content=config.model_dump(mode="json", by_alias=True),
             source_commit_sha="c" * 40,
@@ -529,6 +541,7 @@ async def test_version_raw_fails_loud_when_the_pinned_read_breaks(
     config = parse_process(config_yaml(), origin="test")
     row = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=config.name,
         source_commit_sha="b" * 40,
         content=config.model_dump(mode="json", by_alias=True),
@@ -573,3 +586,170 @@ async def test_an_edited_repo_is_normalized_as_a_new_one_is(async_session: Async
         )
     assert response.status_code == 200, response.text
     assert response.json()["github_repo"] == "acme/moved"
+
+
+async def test_a_repository_change_offers_none_of_the_old_repositorys_processes(
+    async_session: AsyncSession,
+) -> None:
+    """The old repository's commits are not in the new one, so offering its process would send
+    the editor, the agent cards and every new ticket to a commit that cannot be read there (issue
+    #441). The version stays listed: history is readable, it is just not offered."""
+    project = await seed_project(async_session, "acme/widgets")
+    config = parse_process(config_yaml(), origin="test")
+    async_session.add(
+        ProcessVersion(
+            project_id=project.id,
+            source_repo=project.github_repo,
+            process_key=config.name,
+            source_commit_sha="a" * 40,
+            content=config.model_dump(mode="json", by_alias=True),
+        )
+    )
+    await async_session.flush()
+    base = f"/api/projects/{project.id}"
+    async with authed_client_for(build_app(make_settings(), async_session)) as client:
+        before = (await client.get(base)).json()
+        moved = await client.patch(base, json={"github_repo": "acme/moved"})
+        after = (await client.get(base)).json()
+        versions = (await client.get(f"{base}/process-versions")).json()
+    assert [lane["process_key"] for lane in before["processes"]] == [config.name]
+    assert moved.status_code == 200, moved.text
+    assert after["processes"] == []
+    assert [version["source_repo"] for version in versions] == ["acme/widgets"]
+
+
+async def test_version_raw_reads_the_repository_the_version_came_from(
+    async_session: AsyncSession,
+) -> None:
+    """The commit exists only where the sync read it; the project's repository may have moved
+    since (issue #441)."""
+    from orchestrator.api.deps import config_source_optional_dependency
+
+    class StubSource:
+        async def process_path_at(self, repo: str, key: str, sha: str) -> str:
+            assert repo == "o/old"
+            return ".factorial/processes/process-t.yaml"
+
+        async def read_process_text(self, repo: str, path: str, sha: str) -> str:
+            assert repo == "o/old"
+            return config_yaml()
+
+    project = await seed_project(async_session, "o/new")
+    row = await _old_version(async_session, project)
+    app = build_app(make_settings(), async_session)
+    app.dependency_overrides[config_source_optional_dependency] = lambda: StubSource()
+    async with authed_client_for(app) as client:
+        response = await client.get(f"/api/projects/{project.id}/process-versions/{row.id}/raw")
+    assert response.status_code == 200, response.text
+    assert response.json()["source"] == "repo"
+
+
+async def test_version_files_and_agents_read_the_repository_the_version_came_from(
+    async_session: AsyncSession,
+) -> None:
+    from orchestrator.api.deps import config_source_dependency
+
+    contents = FakeContents(sample_files(repo="o/old", sha=SHA))
+    project = await seed_project(async_session, "o/new")
+    row = await _old_version(async_session, project, contents=contents)
+    app = build_app(make_settings(), async_session)
+    app.dependency_overrides[config_source_dependency] = lambda: RepoConfigSource(contents)
+    base = f"/api/projects/{project.id}/process-versions/{row.id}"
+    async with authed_client_for(app) as client:
+        files = await client.get(f"{base}/files")
+        agents = await client.get(f"{base}/agents")
+        one = await client.get(f"{base}/files/{SAMPLE_PROCESS_PATH}")
+    assert files.status_code == 200, files.text
+    assert SAMPLE_PROCESS_PATH in [entry["path"] for entry in files.json()["files"]]
+    assert agents.status_code == 200, agents.text
+    assert agents.json() and all(agent["warning"] is None for agent in agents.json())
+    assert one.status_code == 200, one.text
+
+
+async def test_an_old_repository_the_app_cannot_see_answers_502_naming_it(
+    async_session: AsyncSession,
+) -> None:
+    """The App may have left the old repository's owner. That is the GitHub side's answer about
+    one repository, not this server failing, and the reader needs to know which repository. The
+    agents route degrades per agent instead, as it does for any agent it cannot read."""
+    from orchestrator.api.deps import config_source_dependency
+    from orchestrator.github.client import AppNotInstalled
+
+    class Uninstalled(FakeContents):
+        async def read_text(self, repo: str, path: str, sha: str) -> str:
+            raise AppNotInstalled("1", "o")
+
+        async def list_dir(self, repo: str, path: str, sha: str) -> Any:
+            raise AppNotInstalled("1", "o")
+
+        async def list_tree(self, repo: str, root: str, sha: str) -> Any:
+            raise AppNotInstalled("1", "o")
+
+    project = await seed_project(async_session, "o/new")
+    row = await _old_version(async_session, project)
+    app = build_app(make_settings(), async_session)
+    app.dependency_overrides[config_source_dependency] = lambda: RepoConfigSource(
+        Uninstalled({})
+    )
+    base = f"/api/projects/{project.id}/process-versions/{row.id}"
+    async with authed_client_for(app) as client:
+        files = await client.get(f"{base}/files")
+        one = await client.get(f"{base}/files/{SAMPLE_PROCESS_PATH}")
+        agents = await client.get(f"{base}/agents")
+    for response in (files, one):
+        assert response.status_code == 502, response.text
+        assert "o/old" in response.json()["detail"]
+    assert agents.status_code == 200, agents.text
+    assert all("not installed" in agent["warning"] for agent in agents.json())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ContentsNotFound("o/old@aaaaaaa has no tree"), GitLabError("404 Project Not Found")],
+    ids=["github", "gitlab"],
+)
+async def test_an_old_repository_that_is_gone_answers_502_naming_it(
+    async_session: AsyncSession, failure: Exception
+) -> None:
+    """Deleted, or no longer among the repositories the App was given: GitHub answers the tree
+    read with a 404 and GitLab with an error of its own. Either is an answer about that one
+    repository, and an old repository is in this state more often than its owner has uninstalled
+    the App."""
+    from orchestrator.api.deps import config_source_dependency
+
+    class Gone(FakeContents):
+        async def list_tree(self, repo: str, root: str, sha: str) -> Any:
+            raise failure
+
+    project = await seed_project(async_session, "o/new")
+    row = await _old_version(async_session, project)
+    app = build_app(make_settings(), async_session)
+    app.dependency_overrides[config_source_dependency] = lambda: RepoConfigSource(Gone({}))
+    base = f"/api/projects/{project.id}/process-versions/{row.id}"
+    async with authed_client_for(app) as client:
+        files = await client.get(f"{base}/files")
+        one = await client.get(f"{base}/files/{SAMPLE_PROCESS_PATH}")
+    for response in (files, one):
+        assert response.status_code == 502, response.text
+        assert "o/old" in response.json()["detail"]
+
+
+async def _old_version(
+    session: AsyncSession, project: Project, *, contents: FakeContents | None = None
+) -> ProcessVersion:
+    """A version synced from `o/old`, a repository the project has since left: the sample's lane
+    when `contents` serves it, else the builder's minimal config."""
+    text = config_yaml()
+    if contents is not None:
+        text = contents.files[("o/old", SAMPLE_PROCESS_PATH, SHA)]
+    config = parse_process(text, origin="test")
+    row = ProcessVersion(
+        project_id=project.id,
+        source_repo="o/old",
+        process_key=config.name,
+        source_commit_sha=SHA,
+        content=config.model_dump(mode="json", by_alias=True),
+    )
+    session.add(row)
+    await session.flush()
+    return row

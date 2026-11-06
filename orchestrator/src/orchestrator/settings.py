@@ -373,6 +373,25 @@ class AssistantProcessSettings(BaseModel):
     #: Set by the image's `assistant` service, where the process runs as its own OS user: a
     #: master key in reach there is a leak, so the process refuses to start (design.md §7.18).
     own_user: bool = False
+    #: `<backend>:<auth_mode>` entries a person may switch the assistant to. Unset: see
+    #: `Settings.assistant_offers`.
+    offered: Annotated[list[str] | None, NoDecode] = None
+
+    @field_validator("offered", mode="before")
+    @classmethod
+    def _split_offered(cls, value: object) -> object:
+        """An empty list, however spelled, is unset: no deployment means to offer nothing."""
+        entries = _split_list(value)
+        return None if entries == [] else entries
+
+    @field_validator("offered")
+    @classmethod
+    def _known_offers(cls, value: list[str] | None) -> list[str] | None:
+        from orchestrator.assistant.vocabulary import parse_assistant_offers
+
+        if value is not None:
+            parse_assistant_offers(value)
+        return value
 
 
 class MailSettings(BaseModel):
@@ -415,7 +434,7 @@ class MailSettings(BaseModel):
 
 class MultiOrgSettings(BaseModel):
     """Accounts, organizations, roles and invites (design.md §7.19, tech-stack decision 80). Off
-    in the open-source build: every route they add answers 404 and every check they add passes,
+    in the self-hosted build: every route they add answers 404 and every check they add passes,
     so the deployment behaves as it did before."""
 
     enabled: bool = False
@@ -697,6 +716,19 @@ class Settings(BaseSettings):
         return origin is not None and normalized_origin(origin) in self.dashboard_origins
 
     @property
+    def assistant_offers(self) -> frozenset[str]:
+        """What a person may switch the assistant to: `assistant.offered` when set, else the two
+        API keys, which is what the commercial release sells. Multi-org never offers the host's
+        Bedrock role, which a stranger's organization would mint from (design.md §7.14). The list
+        gates a switch only: an organization keeps a saved sign-in the list no longer names."""
+        offered = (
+            frozenset(self.assistant.offered)
+            if self.assistant.offered is not None
+            else frozenset({"claude_sdk:api_key", "codex_cli:api_key"})
+        )
+        return offered - {"codex_cli:bedrock"} if self.multi_org.enabled else offered
+
+    @property
     def offers(self) -> frozenset[str]:
         """What a runtime may be created on (decision 72): `runtime.offered` when set. Unset,
         multi-org offers the cloud sandbox alone, because a stranger may sign up and a host
@@ -749,6 +781,16 @@ class Settings(BaseSettings):
     @classmethod
     def _split_origins(cls, value: object) -> object:
         return _split_list(value)
+
+    @model_validator(mode="after")
+    def _assistant_offers_something(self) -> Settings:
+        """Multi-org drops Bedrock after the list is read, so the list alone cannot say this."""
+        if not self.assistant_offers:
+            raise ValueError(
+                "FACTORIAL_ASSISTANT__OFFERED leaves the assistant no sign-in here: multi-org "
+                "never offers codex_cli:bedrock, so list another entry"
+            )
+        return self
 
 
 def mail_problems(settings: Settings) -> list[str]:

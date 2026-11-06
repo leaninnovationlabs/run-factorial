@@ -9,6 +9,10 @@ route returns one, and a read lists only which backend and auth mode have one an
 That holds for a refused one too: these routes' 422 says where and why, never the `input`
 FastAPI's own repeats. A credential is stored only for the saved backend and auth mode, so the
 page saves a switch before it takes the switch's key; it can remove any.
+
+A save may switch only to a sign-in the deployment offers (`Settings.assistant_offers`). The
+saved one stays usable when the list drops it: its settings still save, its credential is still
+replaced, and the read lists it beside the offered ones.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from orchestrator.api.schemas import (
 from orchestrator.api.services import assistant_settings as svc
 from orchestrator.api.services.assistant_send import SendRefused, queue_user_message
 from orchestrator.assistant.config import AssistantSettings
-from orchestrator.assistant.vocabulary import BACKENDS, stores_credential
+from orchestrator.assistant.vocabulary import BACKENDS, assistant_offer, stores_credential
 from orchestrator.db.models import ChatConversation
 
 __all__ = ["router"]
@@ -64,7 +68,9 @@ async def get_assistant_ready(
     session: SessionDep, response: Response, organization: OrganizationDep, settings: SettingsDep
 ) -> AssistantReadyOut:
     response.headers.update(_NO_STORE)
-    current = await svc.load_assistant_settings(session, organization.id)
+    current = await svc.load_assistant_settings(
+        session, organization.id, offers=settings.assistant_offers
+    )
     credential = AssistantCredentialOut.model_validate(
         await svc.credential_state(session, organization.id, current)
     )
@@ -84,21 +90,32 @@ async def get_assistant(
     session: SessionDep, response: Response, organization: OrganizationDep, settings: SettingsDep
 ) -> AssistantSettingsOut:
     response.headers.update(_NO_STORE)
-    current = await svc.load_assistant_settings(session, organization.id)
+    offers = settings.assistant_offers
+    current = await svc.load_assistant_settings(session, organization.id, offers=offers)
     stored = await svc.stored_credentials(session, organization.id)
     health = await svc.load_assistant_status(session)
+    saved = assistant_offer(current.backend, current.auth_mode)
+    backends = [
+        AssistantBackendOut(
+            kind=vocab.kind,
+            label=vocab.label,
+            auth_modes=modes,
+            default_models=dict(vocab.default_models),
+        )
+        for vocab in BACKENDS.values()
+        if (
+            modes := [
+                mode
+                for mode in vocab.credentials
+                if assistant_offer(vocab.kind, mode) in offers | {saved}
+            ]
+        )
+    ]
     return AssistantSettingsOut(
         settings=current,
         credentials=[AssistantStoredCredentialOut.model_validate(each) for each in stored],
-        backends=[
-            AssistantBackendOut(
-                kind=vocab.kind,
-                label=vocab.label,
-                auth_modes=list(vocab.credentials),
-                default_models=dict(vocab.default_models),
-            )
-            for vocab in BACKENDS.values()
-        ],
+        backends=backends,
+        offered=sorted(offers),
         ready_to_send=await svc.assistant_ready_to_send(
             session, organization.id, current, multi_org=settings.multi_org.enabled
         ),
@@ -119,6 +136,18 @@ async def put_assistant(
     response.headers.update(_NO_STORE)
     if svc.host_bedrock_refused(body, multi_org=settings.multi_org.enabled):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, svc.HOST_BEDROCK_REFUSED)
+    offers = settings.assistant_offers
+    saved = await svc.load_assistant_settings(session, organization.id, offers=offers)
+    if (reason := svc.offer_refused(saved, body, offers)) is not None:
+        field = (
+            "auth_mode"
+            if any(offer.startswith(f"{body.backend}:") for offer in offers)
+            else "backend"
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            [{"loc": ["body", field], "msg": reason, "type": "value_error"}],
+        )
     if (reason := svc.model_refused(body)) is not None:
         # FastAPI's own shape, so the page draws the reason under the Model field.
         raise HTTPException(
@@ -144,12 +173,15 @@ async def put_credential(
     session: SessionDep,
     principal: PrincipalDep,
     organization: OrganizationDep,
+    settings: SettingsDep,
 ) -> Response:
     if not stores_credential(backend, auth_mode):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "This backend and sign-in store no credential."
         )
-    current = await svc.load_assistant_settings(session, organization.id)
+    current = await svc.load_assistant_settings(
+        session, organization.id, offers=settings.assistant_offers
+    )
     if (current.backend, current.auth_mode) != (backend, auth_mode):
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
@@ -191,7 +223,9 @@ async def test_assistant(
 ) -> JSONResponse:
     """One real turn through the same gate a send meets, in a conversation the Drawer's list
     never shows. A refusal rolls the conversation back with it."""
-    assistant = await svc.load_assistant_settings(session, organization.id)
+    assistant = await svc.load_assistant_settings(
+        session, organization.id, offers=settings.assistant_offers
+    )
     conversation = ChatConversation(
         organization_id=organization.id,
         owner=principal,

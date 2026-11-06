@@ -1,7 +1,8 @@
 /**
- * The sign-in page's ground and doors. The doors are set in Roboto because Google's sign-in
- * branding asks for it, and both doors wear the face so they stay one shape; `fonts.css` serves
- * the font. The ground's two colours are role tokens, so the dark theme needs no rule here.
+ * The sign-in page's ground and SSO doors. The doors follow Google's sign-in branding (size,
+ * shape, Google Sans, its own colours), not the dashboard's Button, and the OIDC door wears the
+ * same shape so neither looks preferred. Every colour is a token, so the dark theme needs no
+ * rule here.
  */
 
 .sign-in-ground {
@@ -24,6 +25,30 @@
 }
 
 .sign-in-door {
-  font-family: Roboto, system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--google-button-border);
+  border-radius: var(--ds-radius-small);
+  background-color: var(--google-button-fill);
+  color: var(--google-button-text);
+  font:
+    500 14px / 20px "Google Sans",
+    system-ui,
+    sans-serif;
   letter-spacing: 0.25px;
+  white-space: nowrap;
+}
+.sign-in-door:hover {
+  background-color: color-mix(in srgb, var(--google-button-text) 8%, var(--google-button-fill));
+}
+.sign-in-door:active {
+  background-color: color-mix(in srgb, var(--google-button-text) 12%, var(--google-button-fill));
+}
+.sign-in-door img {
+  flex: none;
 }

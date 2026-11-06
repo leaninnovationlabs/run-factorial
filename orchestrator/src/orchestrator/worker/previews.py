@@ -420,7 +420,7 @@ async def _publish(session: AsyncSession, run: StepRun, links: list[PreviewLink]
 
 async def _served(session: AsyncSession, ticket: Ticket, run: StepRun) -> Preview | None:
     """The pinned step's `preview:`, when the runtime serves it."""
-    config, _, _ = await _load_pinned_config(session, ticket.process_version_id)
+    config, *_ = await _load_pinned_config(session, ticket.process_version_id)
     step = config.find_step(run.step_name)
     preview = step.preview if isinstance(step, AgentStep) else None
     return preview if preview is not None and preview.services else None

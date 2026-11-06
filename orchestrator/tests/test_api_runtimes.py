@@ -1418,6 +1418,7 @@ async def test_the_runtime_provided_row_counts_open_tickets_whose_snapshot_still
     ).scalar_one()
     bound = ProcessVersion(
         project_id=project.id,
+        source_repo=project.github_repo,
         process_key=unbound.process_key,  # the same lane, one commit later
         content=ProcessConfig.model_validate(yaml.safe_load(_process_yaml(slug))).model_dump(
             mode="json", by_alias=True
@@ -1460,6 +1461,7 @@ async def test_a_broken_lane_is_reported_against_itself_and_leaves_the_others_al
     async_session.add(
         ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key="docs",
             content=ProcessConfig.model_validate(
                 yaml.safe_load(_process_yaml("ignored").replace("runtime: ignored\n", ""))
@@ -1597,13 +1599,14 @@ async def test_deleting_a_runtime_waits_for_a_tick_that_is_spawning_on_it(
 # runtimes list's count, and a runtime's own page — all from `api.bindings`, so they agree.
 
 
-async def _add_version(session: AsyncSession, project_id: int, seq: int, slug: str) -> None:
+async def _add_version(session: AsyncSession, project: Project, seq: int, slug: str) -> None:
     """One more snapshot of the `mini` lane. `seq` only makes the commit distinct — which
     snapshot is current is registration order now, not a number in the file."""
     config = ProcessConfig.model_validate(yaml.safe_load(_process_yaml(slug)))
     session.add(
         ProcessVersion(
-            project_id=project_id,
+            project_id=project.id,
+            source_repo=project.github_repo,
             process_key=config.name,
             content=config.model_dump(mode="json", by_alias=True),
             source_commit_sha=f"{seq:040x}",
@@ -1633,7 +1636,7 @@ async def test_the_runtimes_list_counts_projects_by_their_latest_version_only(
     first, second = _slug(), _slug()
     await _seed_with_runtime(async_session, first)
     moved = await _seed_with_runtime(async_session, first)
-    await _add_version(async_session, moved.id, 2, second)
+    await _add_version(async_session, moved, 2, second)
     await seed_probe_project(async_session)
     async with client_for(build_app(make_settings(), async_session)) as client:
         a = await _create(client, auth, type="codex_api", slug=first)
@@ -1648,7 +1651,7 @@ async def test_the_runtimes_list_counts_projects_by_their_latest_version_only(
         assert one["connected_projects"] == 1
         # A project that moved to `second` at v2 no longer counts for `first`, and one more
         # naming `first` counts the moment its version is the latest.
-        await _add_version(async_session, moved.id, 3, first)
+        await _add_version(async_session, moved, 3, first)
         runtimes = (await client.get("/api/orgs/default/runtimes", headers=auth)).json()
         listed = {r["slug"]: r for r in runtimes}
         assert listed[first]["connected_projects"] == 2
@@ -1722,6 +1725,21 @@ async def test_the_binding_rule_is_one_query_shared_by_every_reader(
     assert bindings[vanished.id].runtime_name is None
     only = await process_bindings(async_session, runtime_ids=[runtime.id])
     assert [b.project_id for b in only] == [bound.id]
+
+
+async def test_a_lane_from_another_repository_binds_no_runtime(
+    async_session: AsyncSession,
+) -> None:
+    """A project whose repository changed offers none of the old repository's lanes, so they
+    connect it to no runtime either: the three readers agree with admission."""
+    from orchestrator.api.bindings import process_bindings
+
+    project = await _seed_with_runtime(async_session, _slug())
+    assert project.id in {b.project_id for b in await process_bindings(async_session)}
+
+    project.github_repo = "acme/elsewhere"
+    await async_session.flush()
+    assert project.id not in {b.project_id for b in await process_bindings(async_session)}
 
 
 async def test_a_runtime_is_created_on_e2b_and_a_bogus_sandbox_is_refused(

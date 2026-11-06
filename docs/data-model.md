@@ -1,6 +1,6 @@
 # Factorial — Data Model
 
-**Status:** v0.14 · 2026-11-03 · Postgres. DDL: Alembic revision 0001; the SQLAlchemy models are
+**Status:** v0.15 · 2026-11-05 · Postgres. DDL: Alembic revision 0001; the SQLAlchemy models are
 the source of truth (tech-stack decision 2).
 
 ## Decisions (agreed 2026-08-19)
@@ -11,7 +11,8 @@ the source of truth (tech-stack decision 2).
 - Agent definitions: **content in git, registry row in Postgres** (name → repo path + commit).
 - **Several processes per project** (revision 0016), each a file under `.factorial/processes/`
   with its own `process_version` history keyed `(project_id, process_key, source_commit_sha)`
-  (revision 0017). A ticket picks one at admission and keeps it. Revised from "one process per
+  (revision 0017), and by the repository it was read from as well since revision 0042. A ticket
+  picks one at admission and keeps it. Revised from "one process per
   project", which the history had encoded as `(project_id, version)`.
 - People in GitHub and Jira are logins stored as text. Dashboard accounts and roles came in v0.13.
 - Artifact *content* lives in GitHub only; Postgres stores locator metadata.
@@ -87,6 +88,17 @@ the source of truth (tech-stack decision 2).
 - `organization.settings` is now validated by `OrganizationSettings` on read and on write.
 - **A session can be revoked** (revision 0040, design.md §7.19): `app_user.session_epoch`,
   default 0. The session cookie was only signed, so a stolen one outlived its owner's sign-out.
+
+## Decisions (added v0.15)
+
+- **A process snapshot records the repository it was read from** (revision 0042, issue #441):
+  `process_version.source_repo`, beside `source_commit_sha`, and part of the row's identity:
+  `(project_id, source_repo, process_key, source_commit_sha)`. A sha names nothing without its
+  repository, and every reader had joined it with the project's current `github_repo`, so
+  changing the repository broke every synced version. Every pinned read now goes to the row's
+  own pair. A version is offered only while its `source_repo` is the project's `github_repo`.
+  The backfill copied each project's `github_repo`, which is wrong for a project whose
+  repository had already changed: nothing recorded the earlier one.
 
 ## ER diagram
 
@@ -230,7 +242,8 @@ erDiagram
         bigint id PK
         bigint project_id FK
         text process_key "the lane; the config's own name"
-        text source_commit_sha "unique per project + process_key"
+        text source_repo "repository read; pinned reads go here, not to the project's current one"
+        text source_commit_sha "unique per project + source_repo + process_key"
         jsonb content "parsed ADLC config snapshot"
         text source_ref "ref read; factorial when none was given; NULL = default branch (pre-#248)"
         jsonb agent_pins "agent -> sha + path; NULL pre-0013"
@@ -487,12 +500,16 @@ can differ from where artifacts live; one per project for now.
 **process_version** — append-only snapshots of the parsed ADLC config. Admission stamps the
 selected lane's most recently synced snapshot onto the ticket; a config edit produces a new
 commit, and a new commit is a new row. `process_key` (revision 0016) is the config's own `name:`
-and names the lane; `source_commit_sha` (revision 0017) is where that lane was read from and is
-its identity, so uniqueness is `(project_id, process_key, source_commit_sha)`. One sync writes
-every lane at the same commit, so neither column alone addresses a row — which is why every route
-that wants one keys on the row's `id`. `retired_at` (revision 0016) records when the last sync
-stopped finding that lane's file: NULL is selectable, a timestamp is not, and reintroducing the
-file clears it and keeps every commit the lane had. Availability is never consulted for a ticket
+and names the lane; `source_repo` (revision 0042) and `source_commit_sha` (revision 0017) are
+where that lane was read from and are its identity, so uniqueness is `(project_id, source_repo,
+process_key, source_commit_sha)`: a fork synced at its parent's commit is a row of its own. Every
+pinned read goes to that repository, never to the project's current `github_repo`. One sync
+writes every lane at the same commit, so no column alone addresses a row — which is why every
+route that wants one keys on the row's `id`. `retired_at` (revision 0016) records when the last
+sync stopped finding that lane's file: NULL is selectable, a timestamp is not, and reintroducing
+the file clears it and keeps every commit the lane had. A row from another repository than the
+project's is not selectable either, retired or not, and the first sync of the new repository
+stamps its `retired_at`. Availability is never consulted for a ticket
 in flight — it holds `process_version_id` and reads the row by id — so retiring a lane cannot
 disturb work already in it.
 `source_ref` (revision 0006) records the ref the sync was *asked* for beside the sha it resolved

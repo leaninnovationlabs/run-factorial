@@ -2,7 +2,7 @@
 name = "factorial-orchestrator"
 version = "0.1.0"
 description = "ADLC orchestrator — reconciliation loop, state DB, event log, API"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",

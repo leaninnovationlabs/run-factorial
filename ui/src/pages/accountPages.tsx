@@ -10,7 +10,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { ApiError, api, googleLoginUrl, oidcLoginUrl } from "../api/client";
+import { ApiError, api } from "../api/client";
 import {
   useAuthProviders,
   useMultiOrg,
@@ -21,8 +21,6 @@ import { useAuth } from "../auth";
 import { LogoPlate } from "../components/LogoPlate";
 import {
   Button,
-  buttonLook,
-  cx,
   ErrorMessage,
   Form,
   Panel,
@@ -32,6 +30,7 @@ import {
   usePageTitle,
 } from "../components/ui";
 import { inOrganization, orgless } from "../org";
+import { SsoDoors } from "./SsoDoors";
 
 /** `access.accounts.PASSWORD_MIN`. */
 export const PASSWORD_MIN = 12;
@@ -218,16 +217,6 @@ export function SignUpPage() {
 
   return (
     <AccountCard title="Create your account">
-      {providers?.google && (
-        <a href={googleLoginUrl(next)} className={cx(buttonLook({ shouldFitContainer: true }))}>
-          Continue with Google
-        </a>
-      )}
-      {providers?.oidc && (
-        <a href={oidcLoginUrl(next)} className={cx(buttonLook({ shouldFitContainer: true }))}>
-          Continue with {providers.oidc_label}
-        </a>
-      )}
       <Form
         aria-label="Create an account"
         validate={() =>
@@ -293,6 +282,13 @@ export function SignUpPage() {
           Sign in
         </a>
       </p>
+      <SsoDoors
+        intent="sign-up"
+        next={next}
+        google={providers?.google === true}
+        oidc={providers?.oidc === true}
+        oidcLabel={providers?.oidc_label || "SSO"}
+      />
     </AccountCard>
   );
 }
@@ -320,7 +316,19 @@ export function OnboardingPage() {
         <div>
           <h1 className="text-heading-lg text-default">Get started</h1>
           {sessionEmail && (
-            <p className="mt-1 text-body text-subtle">Signed in as {sessionEmail}.</p>
+            <p className="mt-1 text-body text-subtle">
+              Signed in as {sessionEmail}. Not you?{" "}
+              <a
+                href={orgless("/")}
+                className="font-medium underline"
+                onClick={(event) => {
+                  event.preventDefault();
+                  signOut();
+                }}
+              >
+                Sign out
+              </a>
+            </p>
           )}
         </div>
         {multiOrg && organizations.length > 0 && (
@@ -347,7 +355,6 @@ export function OnboardingPage() {
           <SectionMessage
             appearance="information"
             title="You aren't a member of this organization yet"
-            actions={[{ text: "Sign out", onClick: signOut }]}
           >
             Ask one of its owners for an invite, then open the link they send you.
           </SectionMessage>

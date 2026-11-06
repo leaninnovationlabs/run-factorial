@@ -57,6 +57,7 @@ function snapshot(id: number, sha: string, source_ref: string | null): ProcessVe
     id,
     project_id: PROJECT_ID,
     process_key: PROCESS_KEY,
+    source_repo: "acme/widgets",
     source_commit_sha: sha,
     retired_at: null,
     source_ref,

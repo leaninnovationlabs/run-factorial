@@ -1,15 +1,17 @@
 factorial
 Copyright 2026 Lean Innovation Labs LLC
 
-This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+This product is licensed under the Functional Source License, Version 1.1,
+ALv2 Future License (FSL-1.1-ALv2; see LICENSE). Each version becomes
+available under the Apache License, Version 2.0, two years after its release.
 
 -------------------------------------------------------------------------------
 Third-party software in the container image
 -------------------------------------------------------------------------------
 
 The image built from ./Dockerfile includes the software below. Each part stays
-under its own license, and none of it is licensed under the Apache License by
-this project.
+under its own license, and none of it is licensed under this project's
+license.
 
 - Claude Code CLI (@anthropic-ai/claude-code), Copyright Anthropic PBC.
   Proprietary software, used under Anthropic's Commercial Terms of Service:
@@ -28,8 +30,8 @@ this project.
   https://github.com/just-containers/s6-overlay
 
 - The dashboard, which bundles npm packages (React and others, most of them
-  under the MIT License) and the Inter, JetBrains Mono and Roboto fonts (SIL
-  Open Font License 1.1). The build of the dashboard writes the name, version
+  under the MIT License) and the Inter, JetBrains Mono and Google Sans fonts
+  (SIL Open Font License 1.1). The build of the dashboard writes the name, version
   and full licence text of each one to /app/ui/dist/third-party-licenses.txt,
   which the API also serves at /factorial/third-party-licenses.txt.
 

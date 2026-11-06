@@ -27,6 +27,7 @@ from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.vocabulary import (
     BACKENDS,
     SLOT_PREFIX,
+    assistant_offer,
     credential_slot,
     parse_credential_slot,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "load_assistant_settings",
     "load_assistant_status",
     "model_refused",
+    "offer_refused",
     "save_assistant_settings",
     "save_assistant_status",
     "set_assistant_credential",
@@ -104,6 +106,26 @@ def host_bedrock_refused(assistant: AssistantSettings, *, multi_org: bool) -> bo
     return multi_org and assistant.backend == "codex_cli" and assistant.auth_mode == "bedrock"
 
 
+def offer_refused(
+    saved: AssistantSettings, body: AssistantSettings, offers: frozenset[str]
+) -> str | None:
+    """Why a save may not switch to the body's sign-in, or None. Only a switch is gated: an
+    organization re-saving the sign-in it already has keeps it, offered or not, so existing
+    servers keep the methods they set up (`Settings.assistant_offers`)."""
+    pair = (body.backend, body.auth_mode)
+    if pair == (saved.backend, saved.auth_mode) or assistant_offer(*pair) in offers:
+        return None
+    return "This Factorial install doesn't offer that sign-in for the assistant. Choose another."
+
+
+def _first_offered(offers: frozenset[str]) -> AssistantSettings:
+    # A subscription bills one person's plan, so an offered key comes first.
+    first = min(offers, key=lambda offer: (not offer.endswith(":api_key"), offer))
+    backend, _, auth_mode = first.partition(":")
+    model = BACKENDS[backend].default_models[auth_mode]
+    return AssistantSettings(backend=backend, auth_mode=auth_mode, model=model)
+
+
 @dataclass(frozen=True)
 class CredentialState:
     set: bool
@@ -111,7 +133,13 @@ class CredentialState:
     updated_at: datetime | None
 
 
-async def load_assistant_settings(session: AsyncSession, organization_id: int) -> AssistantSettings:
+async def load_assistant_settings(
+    session: AsyncSession, organization_id: int, *, offers: frozenset[str] | None = None
+) -> AssistantSettings:
+    """The organization's saved document. With `offers`, an organization that saved nothing
+    starts on an offered sign-in, so the page never marks one it did not choose as gone. Every
+    settings route passes it so they agree on that sign-in; a turn's path need not, because an
+    organization that saved nothing is not enabled."""
     value = (
         await session.execute(
             select(OrganizationSetting.value).where(
@@ -120,7 +148,12 @@ async def load_assistant_settings(session: AsyncSession, organization_id: int) -
             )
         )
     ).scalar_one_or_none()
-    return AssistantSettings() if value is None else AssistantSettings.model_validate(value)
+    if value is not None:
+        return AssistantSettings.model_validate(value)
+    default = AssistantSettings()
+    if offers and assistant_offer(default.backend, default.auth_mode) not in offers:
+        return _first_offered(offers)
+    return default
 
 
 async def save_assistant_settings(

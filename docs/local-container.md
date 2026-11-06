@@ -365,6 +365,7 @@ there. Do not write the credential in `.env`.
 |---|---|---|
 | `FACTORIAL_ASSISTANT__CONCURRENCY` | 4 | The number of chat turns that run at the same time, from 1 to 32 |
 | `FACTORIAL_ASSISTANT__RETAIN_DAYS` | 30 | The number of days that a conversation stays after its last message |
+| `FACTORIAL_ASSISTANT__OFFERED` | `claude_sdk:api_key,codex_cli:api_key` | The sign-ins that a person can choose for the assistant, as `<backend>:<auth_mode>` entries. The other entries are `claude_sdk:subscription`, `codex_cli:subscription` and `codex_cli:bedrock` |
 
 To make sure that the service runs:
 

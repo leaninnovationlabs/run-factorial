@@ -68,6 +68,16 @@ describe("OnboardingPage", () => {
     expect(page.textContent).not.toContain("Join an organization");
   });
 
+  it.each([true, false])(
+    "offers Sign out beside the signed-in address (multi-org %s)",
+    async (multi) => {
+      const page = await onboarding(multi);
+      expect(page.textContent).toContain("Signed in as operator@example.com. Not you? Sign out");
+      const links = [...page.querySelectorAll("a")].filter((a) => a.textContent === "Sign out");
+      expect(links).toHaveLength(1);
+    },
+  );
+
   it("shows nothing about membership while the organization list is still loading", async () => {
     const page = await onboarding(false, true, true);
     expect(page.textContent).not.toContain("a member of this organization yet");

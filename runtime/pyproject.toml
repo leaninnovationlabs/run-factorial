@@ -2,7 +2,7 @@
 name = "factorial-runtime"
 version = "0.1.0"
 description = "Agent-runtime wrapper — vendor-neutral contract plus adapters"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
 requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk==0.2.174",

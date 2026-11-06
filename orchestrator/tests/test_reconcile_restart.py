@@ -66,6 +66,7 @@ async def new_head(world: World, *, rename: bool = False, sha: str = "b" * 40) -
         )
         row = ProcessVersion(
             project_id=world.project_id,
+            source_repo=world.repo,
             process_key=pinned.process_key,
             content=content,
             source_commit_sha=sha,
@@ -303,6 +304,24 @@ async def test_a_retired_target_refuses_the_restart(world: World) -> None:
         row = await session.get(ProcessVersion, target)
         assert row is not None
         row.retired_at = datetime.now(UTC)
+        await session.commit()
+    await ask_restart(world, target)
+
+    await run_tick(world)
+
+    [(kind, details)] = await answers(world)
+    assert (kind, details["reason"]) == (EventType.RESTART_REFUSED, "lane_retired")
+
+
+async def test_a_target_from_another_repository_refuses_the_restart(world: World) -> None:
+    """Asked for before the project's repository changed, landed after: the target's config was
+    read from a repository the project has left, so restarting onto it is a retired lane."""
+    await running_run(world)
+    target = await new_head(world)
+    async with world.sessions() as session:
+        row = await session.get(ProcessVersion, target)
+        assert row is not None
+        row.source_repo = "acme/elsewhere"
         await session.commit()
     await ask_restart(world, target)
 

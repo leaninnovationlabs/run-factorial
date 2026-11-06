@@ -420,7 +420,16 @@ class ProcessVersion(Base):
     """
 
     __tablename__ = "process_version"
-    __table_args__ = (UniqueConstraint("project_id", "process_key", "source_commit_sha"),)
+    __table_args__ = (
+        # Named: the convention's name for four columns is past Postgres's 63 characters.
+        UniqueConstraint(
+            "project_id",
+            "source_repo",
+            "process_key",
+            "source_commit_sha",
+            name="uq_process_version_project_repo_key_sha",
+        ),
+    )
 
     id: Mapped[IdPk]
     project_id: Mapped[int] = mapped_column(
@@ -429,9 +438,12 @@ class ProcessVersion(Base):
     #: Which lane this snapshot belongs to — the config's own `name:`.
     process_key: Mapped[str]
     content: Mapped[JsonDict]
-    #: The commit this snapshot was read from, and its identity: `(project, lane, sha)` is unique,
-    #: so re-syncing a sha finds the row it already wrote and a new sha writes a new one. A sha is
-    #: immutable, which is what lets the sync compare nothing and still be sure.
+    #: The repository and commit this snapshot was read from, and its identity: `(project, repo,
+    #: lane, sha)` is unique, so re-syncing a sha finds the row it already wrote and a new sha, or
+    #: the same sha in a fork, writes a new one. A sha is immutable, which is what lets the sync
+    #: compare nothing and still be sure. Every pinned read goes to this pair, never to the
+    #: project's current `github_repo`, which may have moved since (revision 0042).
+    source_repo: Mapped[str]
     source_commit_sha: Mapped[str]
     #: The ref the sync ASKED for, beside the sha it resolved to; `factorial` when it named none.
     #: NULL = the repo's default branch: rows written before issue #248, when that was the default.
@@ -441,9 +453,11 @@ class ProcessVersion(Base):
     #: NULL means the row predates revision 0013; it falls back to `agent.pinned_commit_sha`,
     #: which is what it did before.
     agent_pins: Mapped[JsonDict | None]
-    #: When the last sync stopped finding this lane's file in `.factorial/`. NULL = available for
-    #: selection; a timestamp = retired, and reintroducing the file clears it. Availability is
-    #: never consulted for a ticket already in flight — that ticket holds `process_version_id`.
+    #: When the last sync stopped finding this lane's file in `.factorial/`, or when a sync of
+    #: another repository than `source_repo` ran. A timestamp = retired, and reintroducing the file
+    #: clears it. NULL is not enough to be offered: `source_repo` must also be the project's
+    #: (`factorial.registry.offered_version`). Availability is never consulted for a ticket
+    #: already in flight — that ticket holds `process_version_id`.
     retired_at: Mapped[datetime | None]
     #: When a sync last landed on this snapshot. The newest per lane is current, so re-syncing an
     #: older commit makes it current again (revision 0018).

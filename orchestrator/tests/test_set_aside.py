@@ -53,7 +53,7 @@ async def set_aside(world: World, *steps: str, enter: str | None = None) -> None
             .values(superseded_at=datetime.now(UTC))
         )
         if enter is not None:
-            config, _, _ = await _load_pinned_config(session, ticket.process_version_id)
+            config, *_ = await _load_pinned_config(session, ticket.process_version_id)
             await _enter_step(
                 session, ticket, config, step=enter, from_step=ticket.current_step, reason="redo"
             )

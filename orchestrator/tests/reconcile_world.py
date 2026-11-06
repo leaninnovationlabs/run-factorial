@@ -1464,6 +1464,8 @@ class World:
     #: The `pins` argument each `deps.resolve_agent(...)` call received — the ticket's own
     #: `process_version.agent_pins`, or None for a snapshot that predates them.
     resolved_pins: list[Any]
+    #: The repository each call was told to read the pins from: the version's own.
+    resolved_repos: list[str | None]
     media: FakeMedia
     #: What `deps.github_for` hands every project: the fakes above, with this world's bot login.
     project_github: ProjectGitHub
@@ -1580,6 +1582,7 @@ async def _build_world(
         )
         version = ProcessVersion(
             project_id=project.id,
+            source_repo=project.github_repo,
             process_key=config.name,
             content=config.model_dump(mode="json", by_alias=True),
             source_commit_sha=f"{tag}{'0' * (40 - len(tag))}",
@@ -1640,13 +1643,20 @@ async def _build_world(
         return "ghs_faketoken"
 
     resolved_pins: list[Any] = []
+    resolved_repos: list[str | None] = []
 
     async def resolve(
-        _session: AsyncSession, _project: Project, _agent: str, pins: Any = None
+        _session: AsyncSession,
+        _project: Project,
+        _agent: str,
+        pins: Any = None,
+        repo: str | None = None,
     ) -> ResolvedAgent:
         # Recorded, not used: what the tick handed through is the fact under test — a ticket's
-        # agents must resolve at its own snapshot's pins, not the shared registry row's.
+        # agents must resolve at its own snapshot's pins, from its own snapshot's repository, not
+        # the shared registry row's or the project's.
         resolved_pins.append(pins)
+        resolved_repos.append(repo)
         return resolved_agent
 
     projector_repos: list[str] = []
@@ -1697,6 +1707,7 @@ async def _build_world(
         projector_repos=projector_repos,
         minted=minted,
         resolved_pins=resolved_pins,
+        resolved_repos=resolved_repos,
         media=media,
         project_github=project_github,
     )

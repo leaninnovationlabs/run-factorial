@@ -298,12 +298,14 @@ async def test_the_runtime_type_check_is_the_enum(engine: AsyncEngine) -> None:
 async def test_a_lane_may_be_snapshotted_at_many_commits_but_each_only_once(
     engine: AsyncEngine,
 ) -> None:
-    """Revision 0017 moves uniqueness to `(project_id, process_key, source_commit_sha)`.
+    """Revision 0017 moves uniqueness to `(project_id, process_key, source_commit_sha)`, and 0042
+    adds `source_repo` to it.
 
     Proven by INSERTs rather than by the autogenerate diff: the diff would catch a dropped
     constraint, but not that the new one admits exactly what the feature needs — one lane at many
-    commits, and two lanes at one commit, which is what a single sync writes — while still
-    refusing the same lane twice at the same commit.
+    commits, two lanes at one commit, which is what a single sync writes, and one lane at one
+    commit in two repositories, which is a fork — while still refusing the same lane twice at the
+    same commit of the same repository.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -317,19 +319,23 @@ async def test_a_lane_may_be_snapshotted_at_many_commits_but_each_only_once(
             )
         ).scalar_one()
         insert = (
-            "INSERT INTO process_version (project_id, process_key, source_commit_sha, content) "
-            "VALUES (:project, :key, :sha, '{}'::jsonb)"
+            "INSERT INTO process_version "
+            "(project_id, source_repo, process_key, source_commit_sha, content) "
+            "VALUES (:project, :repo, :key, :sha, '{}'::jsonb)"
         )
         a, b = "a" * 40, "b" * 40
+        lanes = {"project": project_id, "repo": "acme/lanes"}
         # One sync writes every lane at one commit.
-        await connection.execute(text(insert), {"project": project_id, "key": "standard", "sha": a})
-        await connection.execute(text(insert), {"project": project_id, "key": "hotfix", "sha": a})
+        await connection.execute(text(insert), {**lanes, "key": "standard", "sha": a})
+        await connection.execute(text(insert), {**lanes, "key": "hotfix", "sha": a})
         # A later sync writes the same lane at another.
-        await connection.execute(text(insert), {"project": project_id, "key": "standard", "sha": b})
-        with pytest.raises(IntegrityError, match="uq_process_version_project_id_process_key"):
-            await connection.execute(
-                text(insert), {"project": project_id, "key": "standard", "sha": a}
-            )
+        await connection.execute(text(insert), {**lanes, "key": "standard", "sha": b})
+        # A fork holds the same commit, and its sync is a snapshot of its own.
+        await connection.execute(
+            text(insert), {**lanes, "repo": "acme/fork", "key": "standard", "sha": a}
+        )
+        with pytest.raises(IntegrityError, match="uq_process_version_project_repo_key_sha"):
+            await connection.execute(text(insert), {**lanes, "key": "standard", "sha": a})
         await connection.rollback()
 
 
@@ -390,8 +396,8 @@ async def test_the_downgrade_renumbers_from_registration_order(
             await connection.execute(
                 text(
                     "INSERT INTO process_version "
-                    "(project_id, process_key, source_commit_sha, content) "
-                    "VALUES (:project, 'standard', :sha, '{}'::jsonb)"
+                    "(project_id, source_repo, process_key, source_commit_sha, content) "
+                    "VALUES (:project, 'acme/renumber', 'standard', :sha, '{}'::jsonb)"
                 ),
                 {"project": project_id, "sha": sha},
             )
@@ -438,14 +444,24 @@ async def _seed_ticket(
             {"project": project_id, "repo": f"acme/{name}"},
         )
     ).scalar_one()
+    # Seeded at head and below revision 0042 alike, so the column is named only where it exists.
+    has_repo = (
+        await connection.execute(
+            text(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'process_version' AND column_name = 'source_repo'"
+            )
+        )
+    ).scalar_one()
+    columns, values = ("source_repo, ", ":repo, ") if has_repo else ("", "")
     version_id = (
         await connection.execute(
             text(
-                "INSERT INTO process_version "
-                "(project_id, process_key, source_commit_sha, content) "
-                "VALUES (:project, 'standard', :sha, '{}'::jsonb) RETURNING id"
+                f"INSERT INTO process_version ({columns}project_id, process_key, "
+                f"source_commit_sha, content) VALUES ({values}:project, 'standard', :sha, "
+                "'{}'::jsonb) RETURNING id"
             ),
-            {"project": project_id, "sha": "f" * 40},
+            {"project": project_id, "repo": f"acme/{name}", "sha": "f" * 40},
         )
     ).scalar_one()
     ticket_id = (
@@ -496,8 +512,8 @@ async def test_the_0020_downgrade_refuses_while_a_run_is_idle(
             await connection.execute(
                 text(
                     "INSERT INTO process_version "
-                    "(project_id, process_key, source_commit_sha, content) "
-                    "VALUES (:project, 'standard', :sha, '{}'::jsonb) RETURNING id"
+                    "(project_id, source_repo, process_key, source_commit_sha, content) "
+                    "VALUES (:project, 'acme/idle', 'standard', :sha, '{}'::jsonb) RETURNING id"
                 ),
                 {"project": project_id, "sha": "f" * 40},
             )
@@ -1161,3 +1177,96 @@ async def test_the_0036_downgrade_refuses_while_a_removal_exists(
     finally:
         async with engine.begin() as connection:
             await connection.execute(text("DELETE FROM organization_removal"))
+
+
+async def test_the_0042_backfill_stamps_each_row_with_its_projects_repository(
+    migration_database: tuple[Config, AsyncEngine],
+) -> None:
+    """Every row synced before 0042 was read from its project's repository as it stood then, and
+    the current one is the only value anything recorded."""
+    alembic_config, engine = migration_database
+    await asyncio.to_thread(command.downgrade, alembic_config, "0041")
+    async with engine.begin() as connection:
+        for name in ("one", "two"):
+            project_id = (
+                await connection.execute(
+                    text(
+                        "INSERT INTO project (organization_id, name, github_repo) "
+                        f"VALUES ({DEFAULT_ORG}, :name, :repo) RETURNING id"
+                    ),
+                    {"name": f"backfill-{name}", "repo": f"acme/{name}"},
+                )
+            ).scalar_one()
+            await connection.execute(
+                text(
+                    "INSERT INTO process_version (project_id, process_key, source_commit_sha, "
+                    "content) VALUES (:project, 'standard', :sha, '{}'::jsonb)"
+                ),
+                {"project": project_id, "sha": "a" * 40},
+            )
+    try:
+        await asyncio.to_thread(command.upgrade, alembic_config, "head")
+        async with engine.connect() as connection:
+            stamped = (
+                await connection.execute(
+                    text(
+                        "SELECT p.name, v.source_repo FROM process_version v "
+                        "JOIN project p ON p.id = v.project_id "
+                        "WHERE p.name LIKE 'backfill-%' ORDER BY p.name"
+                    )
+                )
+            ).all()
+            nullable = (
+                await connection.execute(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'process_version' AND column_name = 'source_repo'"
+                    )
+                )
+            ).scalar_one()
+        assert [tuple(row) for row in stamped] == [
+            ("backfill-one", "acme/one"),
+            ("backfill-two", "acme/two"),
+        ]
+        assert nullable == "NO"
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text("DELETE FROM project WHERE name LIKE 'backfill-%'"))
+        await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
+
+async def test_the_0042_downgrade_refuses_while_two_repositories_share_a_lane_and_sha(
+    migration_database: tuple[Config, AsyncEngine],
+) -> None:
+    """The older image's identity is `(project, lane, sha)`: a fork synced at its parent's
+    commit would collide with the parent's row, and neither is a lie to delete."""
+    alembic_config, engine = migration_database
+    async with engine.begin() as connection:
+        project_id = (
+            await connection.execute(
+                text(
+                    "INSERT INTO project (organization_id, name, github_repo) "
+                    f"VALUES ({DEFAULT_ORG}, 'forked', 'acme/fork') RETURNING id"
+                )
+            )
+        ).scalar_one()
+        for repo in ("acme/parent", "acme/fork"):
+            await connection.execute(
+                text(
+                    "INSERT INTO process_version (project_id, source_repo, process_key, "
+                    "source_commit_sha, content) VALUES (:project, :repo, 'standard', :sha, "
+                    "'{}'::jsonb)"
+                ),
+                {"project": project_id, "repo": repo, "sha": "a" * 40},
+            )
+    try:
+        with pytest.raises(RuntimeError, match="share a process and a commit"):
+            await asyncio.to_thread(command.downgrade, alembic_config, "0041")
+        async with engine.connect() as connection:
+            columns = await connection.run_sync(
+                lambda sync: {c["name"] for c in inspect(sync).get_columns("process_version")}
+            )
+        assert "source_repo" in columns
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text("DELETE FROM project WHERE name = 'forked'"))
