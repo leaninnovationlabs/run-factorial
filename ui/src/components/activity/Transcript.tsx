@@ -310,7 +310,6 @@ const TurnLines = memo(function TurnLines({ turn }: { turn: ActivityTurn }) {
         <>
           <Line gutter={spoke || acted ? "" : ordinal} mark="~" tone="text-subtlest">
             <Button
-              appearance="subtle"
               spacing="compact"
               iconBefore={showThinking ? "chevron-down" : "chevron-right"}
               aria-expanded={showThinking}

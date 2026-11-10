@@ -227,7 +227,6 @@ function FileRow(props: RowProps) {
           ))}
         {fileIcon(node.name, change)}
         <Button
-          appearance="subtle"
           spacing="compact"
           aria-current={openPath === node.path ? "true" : undefined}
           onClick={() => onOpen(node.path)}

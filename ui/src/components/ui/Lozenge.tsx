@@ -101,7 +101,7 @@ export function Badge({
     <span
       data-appearance={appearance}
       className={cx(
-        "inline-flex h-4 min-w-5 items-center justify-center rounded-xs px-1 text-body-sm tabular-nums",
+        "inline-flex h-4 min-w-5 items-center justify-center rounded-full px-1.5 text-body-sm font-medium tabular-nums",
         appearance === "inverse"
           ? "bg-neutral-bold text-inverse"
           : appearance === "danger"

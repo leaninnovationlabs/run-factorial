@@ -29,3 +29,16 @@
     opacity: 0.28;
   }
 }
+
+/* A busy button's spinner arriving in place of its label, rather than snapping in. Played once,
+   by `animate-settle-in`; under reduced motion the spinner just appears. */
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}

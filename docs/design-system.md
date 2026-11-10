@@ -96,9 +96,24 @@ Hand-written CSS reads the token directly: `var(--ds-surface)`, `var(--ds-space-
 The reasons are in decision 50.
 
 - **The primary button is neutral-bold (near-black), not ADS blue.**
+- **A button's edge and shadow are not ADS's.** In light mode a bold fill takes
+  `shadow-button-bold`, and a segmented control's chosen option takes the quiet `border-button`
+  edge and `shadow-button`. In dark mode the edge is `border-bold` and there is no shadow. The
+  values are the `--button-*` tokens.
 - **A link is not blue.** It takes the colour of the text around it and is marked by weight and an
   underline.
 - **A selection carries an indicator** (a bar, a check, a border), never a background alone.
+  A tab has a bar under it, and an open file in the editor has a bar along its top. Each bar
+  grows out from the centre. A segmented control is a sunken track, and the chosen option comes
+  up out of it with the button's edge and shadow.
+- **A message is not a block of colour.** A `SectionMessage` is on the plain surface, with a
+  grey edge and a bar down its left edge in its role's colour. Its actions are default buttons. A
+  `Banner` keeps the bold fill, because it tells you something that is true on every page.
+- **There is no subtle button.** ADS has a white default button and a subtle button with no
+  fill, and a row of subtle buttons looked like text. Here `default` is the one everyday button,
+  on a light wash of its own (`--button-fill`, lighter than ADS's neutral in light mode). `ghost` has no fill: an icon button is `ghost` unless you set another
+  appearance, and you use `ghost` for an item in a row or a place, such as a pager's page. Do not
+  use it for an action with a label.
 - **Hover, pressed and selected come from the finesse set together.**
 - **Dark mode changes colour and nothing else.** The one exception is the nav mark's blend in
   `theme/dark.css`.
@@ -181,7 +196,7 @@ Variants are props, not classes: `appearance`, `spacing`, `isSelected`, `isLoadi
 
 ```tsx
 <Button appearance="primary">Approve</Button>
-<Button appearance="subtle" spacing="compact" iconBefore="refresh">Retry</Button>
+<Button spacing="compact" iconBefore="refresh">Retry</Button>
 <Button appearance="danger" isLoading={pending}>Delete project</Button>
 <Lozenge appearance="warning">Waiting</Lozenge>
 ```
@@ -264,7 +279,9 @@ decision 50.
   `prefers-contrast: more` swaps in the ADS increased-contrast values.
 - **Motion:** a looping animation beats three times and stops (WCAG 2.2.2), and stops under
   reduced motion (`prefersReducedMotion()` in `components/ui/motion.ts`). Reuse the beats in
-  `motion.css`. Default transitions are `transition-colors` (150ms, eased out).
+  `motion.css`. Default transitions are `transition-colors` (150ms, eased out). A button eases every
+  change, gets smaller a little when you press it (`motion-safe:active:scale-97`), and its spinner
+  comes in with `animate-settle-in`.
 - **Shortcuts:** never a single character (WCAG 2.1.4). Search is ⌘K / Ctrl+K. A focus trap needs a
   way out: the terminal releases on Ctrl+] (WCAG 2.1.2).
 - **Status is never colour alone:** a lozenge carries a word, a chart carries a legend and a table

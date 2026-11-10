@@ -16,7 +16,7 @@ import { Select, TextArea, TextField } from "./TextField";
 
 const ROLES: Role[] = ["neutral", "information", "success", "warning", "danger", "discovery"];
 const CONDITIONS = Object.keys(CONDITION_TONES) as TicketCondition[];
-const APPEARANCES = ["default", "primary", "subtle", "outline", "warning", "danger"] as const;
+const APPEARANCES = ["default", "primary", "ghost", "warning", "danger"] as const;
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -78,18 +78,13 @@ export function Buttons() {
         <Button isSelected={pressed} onClick={() => setPressed(!pressed)}>
           Toggle me
         </Button>
-        <Button appearance="subtle" isSelected>
-          Selected subtle
-        </Button>
       </Row>
       <Row label="with a reason">
         <Button disabledReason="The worker is offline.">Run now</Button>
       </Row>
       <Row label="links and icons">
         <LinkButton to="/overview">Internal link</LinkButton>
-        <LinkButton href="https://atlassian.design/components" appearance="subtle">
-          External link
-        </LinkButton>
+        <LinkButton href="https://atlassian.design/components">External link</LinkButton>
         <IconButton icon="settings" label="Settings" />
         <IconButton icon="more" label="More actions" appearance="default" />
         <IconButton icon="close" label="Close" spacing="compact" />
@@ -289,7 +284,7 @@ export function Fields() {
               <Toggle label="Loading" isChecked isLoading onChange={() => {}} />
             </div>
             <FormFooter align="end">
-              <Button appearance="subtle">Cancel</Button>
+              <Button>Cancel</Button>
               <Button appearance="primary" type="submit">
                 Create
               </Button>

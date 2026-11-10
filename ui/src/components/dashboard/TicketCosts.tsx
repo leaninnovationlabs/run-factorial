@@ -47,11 +47,7 @@ export function TicketCosts({
     <Panel
       title="Costliest tickets"
       subtitle="Spend per ticket, highest first."
-      actions={
-        <LinkButton to={byCost} appearance="subtle">
-          All tickets
-        </LinkButton>
-      }
+      actions={<LinkButton to={byCost}>All tickets</LinkButton>}
       note={`A ticket's cost counts every run on it: agent steps, gates and checks. The ${data.limits.by_ticket} costliest are listed, and the rest fold into one line. The All tickets link sorts by lifetime cost.`}
     >
       <div className="space-y-3 px-4 py-4">

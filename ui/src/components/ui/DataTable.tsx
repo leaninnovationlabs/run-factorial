@@ -164,7 +164,7 @@ export function DataTable<T, K extends string = string>({
                             : undefined
                       }
                       className={cx(
-                        "px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase",
+                        "px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle",
                         column.align === "end" ? "text-right" : "text-left",
                       )}
                     >
@@ -174,8 +174,7 @@ export function DataTable<T, K extends string = string>({
                           onClick={() =>
                             onSort(column.key, active && sortOrder === "asc" ? "desc" : "asc")
                           }
-                          // A button takes no text-transform from its cell: the browser resets it.
-                          className="inline-flex items-center gap-1 rounded-sm tracking-wide uppercase hover:text-default"
+                          className="inline-flex items-center gap-1 rounded-sm hover:text-default"
                         >
                           {column.content}
                           <Icon
@@ -412,7 +411,7 @@ export function Pagination({
         ) : (
           <Button
             key={entry}
-            appearance="subtle"
+            appearance="ghost"
             spacing="compact"
             isSelected={entry === selectedIndex}
             aria-current={entry === selectedIndex ? "page" : undefined}

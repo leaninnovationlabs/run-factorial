@@ -225,6 +225,9 @@
   .h-6 {
     height: calc(var(--spacing) * 6);
   }
+  .h-7 {
+    height: calc(var(--spacing) * 7);
+  }
   .h-12 {
     height: calc(var(--spacing) * 12);
   }
@@ -275,6 +278,9 @@
   }
   .justify-center {
     justify-content: center;
+  }
+  .gap-0\.5 {
+    gap: calc(var(--spacing) * 0.5);
   }
   .gap-1 {
     gap: var(--spacing);
@@ -377,14 +383,17 @@
     border-left-style: var(--tw-border-style);
     border-left-width: 1px;
   }
+  .border-button {
+    border-color: var(--button-border);
+  }
   .border-default {
     border-color: var(--ds-border);
   }
-  .border-selected {
-    border-color: var(--ds-border-selected);
-  }
   .border-transparent {
     border-color: transparent;
+  }
+  .bg-button {
+    background-color: var(--button-fill);
   }
   .bg-danger {
     background-color: var(--ds-background-danger);
@@ -409,12 +418,6 @@
   }
   .bg-neutral-bold {
     background-color: var(--ds-background-neutral-bold);
-  }
-  .bg-neutral-subtle {
-    background-color: var(--ds-background-neutral-subtle);
-  }
-  .bg-selected {
-    background-color: var(--ds-background-selected);
   }
   .bg-success {
     background-color: var(--ds-background-success);
@@ -442,6 +445,9 @@
   }
   .bg-warning-bold {
     background-color: var(--ds-background-warning-bold);
+  }
+  .p-0\.5 {
+    padding: calc(var(--spacing) * 0.5);
   }
   .p-3 {
     padding: calc(var(--spacing) * 3);
@@ -577,9 +583,6 @@
   .text-inverse {
     color: var(--ds-text-inverse);
   }
-  .text-selected {
-    color: var(--ds-text-selected);
-  }
   .text-subtle {
     color: var(--ds-text-subtle);
   }
@@ -595,8 +598,12 @@
   .text-warning-inverse {
     color: var(--ds-text-warning-inverse);
   }
-  .transition-colors {
-    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
+  .shadow-button {
+    --tw-shadow: var(--button-shadow);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .transition {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
     transition-timing-function: var(--tw-ease, var(--ds-easing-out-practical));
     transition-duration: var(--tw-duration, var(--ds-duration-short));
   }
@@ -605,21 +612,37 @@
     user-select: none;
   }
   @media (hover: hover) {
+    .hover\:bg-button-hovered:hover {
+      background-color: var(--button-fill-hovered);
+    }
+    .hover\:bg-neutral-hovered:hover {
+      background-color: var(--ds-background-neutral-hovered);
+    }
     .hover\:bg-neutral-subtle-hovered:hover {
       background-color: var(--ds-background-neutral-subtle-hovered);
-    }
-    .hover\:bg-selected-hovered:hover {
-      background-color: var(--ds-background-selected-hovered);
     }
     .hover\:text-default:hover {
       color: var(--ds-text);
     }
   }
-  .active\:bg-neutral-subtle-pressed:active {
-    background-color: var(--ds-background-neutral-subtle-pressed);
+  .active\:bg-button-pressed:active {
+    background-color: var(--button-fill-pressed);
   }
-  .active\:bg-selected-pressed:active {
-    background-color: var(--ds-background-selected-pressed);
+  .active\:bg-neutral-pressed:active {
+    background-color: var(--ds-background-neutral-pressed);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-safe\:active\:scale-97:active {
+      --tw-scale-x: 97%;
+      --tw-scale-y: 97%;
+      --tw-scale-z: 97%;
+      scale: var(--tw-scale-x) var(--tw-scale-y);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .motion-reduce\:transition-none {
+      transition-property: none;
+    }
   }
   @media (width >= 64rem) {
     .lg\:sticky {
@@ -717,7 +740,7 @@
   --ds-icon-discovery: #af59e1;
   --ds-border: #0b120e24;
   --ds-border-bold: #7d818a;
-  --ds-border-input: #8c8f97;
+  --ds-border-input: #91949c;
   --ds-border-focused: #4688ec;
   --ds-border-selected: #292a2e;
   --ds-border-disabled: #0515240f;
@@ -827,6 +850,14 @@
   --google-button-fill: #ffffff;
   --google-button-border: #747775;
   --google-button-text: #1f1f1f;
+  --button-border: #0b120e2e;
+  --button-fill: #0515240a;
+  --button-fill-hovered: #05152417;
+  --button-fill-pressed: #080f2129;
+  --button-fill-disabled: #0515240a;
+  --button-shadow: 0px 1px 2px #1e1f2114, 0px 0px 1px #1e1f210f;
+  --button-shadow-bold: inset 0px 1px 0px #ffffff26, 0px 1px 2px #1e1f2133;
+  --metric-fill: var(--button-fill-hovered);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -968,6 +999,14 @@
   --google-button-fill: #131314;
   --google-button-border: #8e918f;
   --google-button-text: #e3e3e3;
+  --button-border: var(--ds-border-bold);
+  --button-fill: var(--ds-background-neutral);
+  --button-fill-hovered: var(--ds-background-neutral-hovered);
+  --button-fill-pressed: var(--ds-background-neutral-pressed);
+  --button-fill-disabled: var(--ds-background-disabled);
+  --button-shadow: 0px 0px 0px #00000000;
+  --button-shadow-bold: 0px 0px 0px #00000000;
+  --metric-fill: var(--ds-background-neutral-pressed);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -1110,10 +1149,23 @@
     --google-button-fill: #131314;
     --google-button-border: #8e918f;
     --google-button-text: #e3e3e3;
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
+    --button-shadow: 0px 0px 0px #00000000;
+    --button-shadow-bold: 0px 0px 0px #00000000;
+    --metric-fill: var(--ds-background-neutral-pressed);
   }
 }
 @media (prefers-contrast: more) {
   :root:not([data-theme="dark"]) {
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
     --ds-text: #1e1f21;
     --ds-text-subtle: #292a2e;
     --ds-text-subtlest: #3b3d42;
@@ -1371,6 +1423,16 @@
     opacity: 0.28;
   }
 }
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
 :root {
   --dash-outcome-done: var(--ds-chart-success);
   @supports (color: color-mix(in lab, red, red)) {
@@ -1422,6 +1484,9 @@
     background-color: var(--ds-surface-sunken);
     color: var(--ds-text);
     -webkit-font-smoothing: antialiased;
+  }
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: var(--ds-border-selected);
   }
   *, ::before, ::after, ::backdrop, ::file-selector-button {
     border-color: var(--ds-border);
@@ -1476,6 +1541,86 @@
   syntax: "*";
   inherits: false;
 }
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-scale-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-z {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
 @layer properties {
   @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
     *, ::before, ::after, ::backdrop {
@@ -1483,6 +1628,23 @@
       --tw-border-style: solid;
       --tw-leading: initial;
       --tw-font-weight: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-scale-x: 1;
+      --tw-scale-y: 1;
+      --tw-scale-z: 1;
     }
   }
 }
@@ -1490,7 +1652,7 @@
 </style>
 </head>
 <body>
-<div class="flex flex-wrap items-center gap-3 border-b border-default bg-surface-raised px-4 py-2 text-body-sm text-subtle"><span>Design system <!-- -->guide<!-- -->, generated from<!-- --> <code class="font-mono">ui/src/pages/<!-- -->Guide<!-- -->Page.tsx</code>. See docs/design-system.md.</span></div><div class="min-h-dvh bg-surface-sunken px-4 py-6 lg:px-8"><div class="space-y-6"><header class="space-y-2"><div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3"><div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><h1 data-page-title="true" tabindex="-1" class="min-w-0 text-heading-lg text-default break-words">Design system</h1></div><div class="flex flex-wrap items-center gap-2"><span class="flex flex-wrap items-center gap-1"><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed" data-appearance="subtle" data-spacing="compact" href="catalogue.html" data-discover="true">Catalogue</a><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed" data-appearance="subtle" data-spacing="compact" href="sample.html" data-discover="true">Sample</a><span aria-hidden="true" class="mx-1 h-4 shrink-0 border-l border-default"></span><span data-theme-switch=""><div role="group" aria-label="Theme" class="inline-flex flex-wrap items-center gap-1"><button type="button" aria-pressed="false" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Light</span></button><button type="button" aria-pressed="false" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Dark</span></button><button type="button" aria-pressed="true" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-selected bg-selected text-selected hover:bg-selected-hovered active:bg-selected-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Match system theme</span></button></div></span></span></div></div><div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-body text-subtle"><span>How the dashboard&#x27;s UI is built, and the rules every change follows. The catalogue shows every design primitive; the sample shows them composed into a page.</span></div></header><div class="grid gap-8 lg:grid-cols-[14rem_1fr]"><aside class="lg:sticky lg:top-6 lg:self-start"><nav aria-label="Contents" class="space-y-1"><h2 class="px-2 text-heading-xxs text-subtle">Contents</h2><ul class="space-y-0.5"><li><a href="#color-at-a-glance" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Color at a glance</a></li><li><a href="#vocabulary" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Vocabulary</a></li><li><a href="#where-things-live" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Where things live</a></li><li><a href="#foundations" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Foundations</a></li><li><a href="#design-primitives" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Design primitives</a></li><li><a href="#patterns" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Patterns</a></li><li><a href="#phone-width" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Phone width</a></li><li><a href="#accessibility" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Accessibility</a></li><li><a href="#charts" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Charts</a></li><li><a href="#enforcement" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Enforcement</a></li><li><a href="#reference-pages" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Reference pages</a></li><li><a href="#checklist-for-a-ui-change" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Checklist for a UI change</a></li></ul></nav></aside><div class="min-w-0 space-y-6"><div id="color-at-a-glance" class="scroll-mt-6"><section aria-labelledby="_R_3a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_3a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Color at a glance</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">Drawn live from the tokens: switch the theme and every value changes</span></div></div></header><div class="grid gap-6 p-4 lg:grid-cols-2"><section aria-label="Surfaces" class="space-y-2"><h3 class="text-heading-xs">Surfaces</h3><ul class="grid grid-cols-2 gap-2"><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-sunken"></div><code class="font-mono text-body-sm text-subtle">bg-surface-sunken</code><p class="text-body-sm text-subtle">The page ground</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface"></div><code class="font-mono text-body-sm text-subtle">bg-surface</code><p class="text-body-sm text-subtle">Panels and cards</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-raised"></div><code class="font-mono text-body-sm text-subtle">bg-surface-raised</code><p class="text-body-sm text-subtle">Raised above the page</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-overlay"></div><code class="font-mono text-body-sm text-subtle">bg-surface-overlay</code><p class="text-body-sm text-subtle">Popups and drawers</p></li></ul></section><section aria-label="Text and roles" class="space-y-2"><h3 class="text-heading-xs">Text</h3><ul class="space-y-1"><li class="flex items-baseline justify-between gap-4"><span class="text-body text-default">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-default</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-subtle">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-subtle</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-subtlest">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-subtlest</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-disabled">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-disabled</code></li></ul><h3 class="pt-2 text-heading-xs">Roles</h3><ul class="space-y-1"><li class="flex items-center gap-2"><span data-appearance="neutral" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-neutral text-subtle"><span class="truncate">neutral</span></span><span data-appearance="neutral" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-neutral-bold text-inverse"><span class="truncate">neutral</span></span></li><li class="flex items-center gap-2"><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">information</span></span><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information-bold text-inverse"><span class="truncate">information</span></span></li><li class="flex items-center gap-2"><span data-appearance="success" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-success text-success"><span class="truncate">success</span></span><span data-appearance="success" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-success-bold text-inverse"><span class="truncate">success</span></span></li><li class="flex items-center gap-2"><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">warning</span></span><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning-bold text-warning-inverse"><span class="truncate">warning</span></span></li><li class="flex items-center gap-2"><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger text-danger"><span class="truncate">danger</span></span><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger-bold text-inverse"><span class="truncate">danger</span></span></li><li class="flex items-center gap-2"><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">discovery</span></span><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery-bold text-inverse"><span class="truncate">discovery</span></span></li></ul></section></div></section></div><article class="space-y-4 rounded-lg border border-default bg-surface p-6 text-body leading-relaxed">
+<div class="flex flex-wrap items-center gap-3 border-b border-default bg-surface-raised px-4 py-2 text-body-sm text-subtle"><span>Design system <!-- -->guide<!-- -->, generated from<!-- --> <code class="font-mono">ui/src/pages/<!-- -->Guide<!-- -->Page.tsx</code>. See docs/design-system.md.</span></div><div class="min-h-dvh bg-surface-sunken px-4 py-6 lg:px-8"><div class="space-y-6"><header class="space-y-2"><div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3"><div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><h1 data-page-title="true" tabindex="-1" class="min-w-0 text-heading-lg text-default break-words">Design system</h1></div><div class="flex flex-wrap items-center gap-2"><span class="flex flex-wrap items-center gap-1"><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97" data-appearance="default" data-spacing="compact" href="catalogue.html" data-discover="true">Catalogue</a><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97" data-appearance="default" data-spacing="compact" href="sample.html" data-discover="true">Sample</a><span aria-hidden="true" class="mx-1 h-4 shrink-0 border-l border-default"></span><span data-theme-switch=""><div role="group" aria-label="Theme" class="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-md bg-neutral p-0.5"><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed">Light</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed">Dark</button><button type="button" aria-pressed="true" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-button bg-surface-raised text-default shadow-button">Match system theme</button></div></span></span></div></div><div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-body text-subtle"><span>How the dashboard&#x27;s UI is built, and the rules every change follows. The catalogue shows every design primitive; the sample shows them composed into a page.</span></div></header><div class="grid gap-8 lg:grid-cols-[14rem_1fr]"><aside class="lg:sticky lg:top-6 lg:self-start"><nav aria-label="Contents" class="space-y-1"><h2 class="px-2 text-heading-xxs text-subtle">Contents</h2><ul class="space-y-0.5"><li><a href="#color-at-a-glance" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Color at a glance</a></li><li><a href="#vocabulary" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Vocabulary</a></li><li><a href="#where-things-live" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Where things live</a></li><li><a href="#foundations" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Foundations</a></li><li><a href="#design-primitives" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Design primitives</a></li><li><a href="#patterns" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Patterns</a></li><li><a href="#phone-width" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Phone width</a></li><li><a href="#accessibility" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Accessibility</a></li><li><a href="#charts" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Charts</a></li><li><a href="#enforcement" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Enforcement</a></li><li><a href="#reference-pages" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Reference pages</a></li><li><a href="#checklist-for-a-ui-change" class="block rounded-md px-2 py-1 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default">Checklist for a UI change</a></li></ul></nav></aside><div class="min-w-0 space-y-6"><div id="color-at-a-glance" class="scroll-mt-6"><section aria-labelledby="_R_3a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_3a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Color at a glance</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">Drawn live from the tokens: switch the theme and every value changes</span></div></div></header><div class="grid gap-6 p-4 lg:grid-cols-2"><section aria-label="Surfaces" class="space-y-2"><h3 class="text-heading-xs">Surfaces</h3><ul class="grid grid-cols-2 gap-2"><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-sunken"></div><code class="font-mono text-body-sm text-subtle">bg-surface-sunken</code><p class="text-body-sm text-subtle">The page ground</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface"></div><code class="font-mono text-body-sm text-subtle">bg-surface</code><p class="text-body-sm text-subtle">Panels and cards</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-raised"></div><code class="font-mono text-body-sm text-subtle">bg-surface-raised</code><p class="text-body-sm text-subtle">Raised above the page</p></li><li class="space-y-1"><div class="h-12 rounded-md border border-default bg-surface-overlay"></div><code class="font-mono text-body-sm text-subtle">bg-surface-overlay</code><p class="text-body-sm text-subtle">Popups and drawers</p></li></ul></section><section aria-label="Text and roles" class="space-y-2"><h3 class="text-heading-xs">Text</h3><ul class="space-y-1"><li class="flex items-baseline justify-between gap-4"><span class="text-body text-default">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-default</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-subtle">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-subtle</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-subtlest">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-subtlest</code></li><li class="flex items-baseline justify-between gap-4"><span class="text-body text-disabled">Ship the spec for review</span><code class="font-mono text-body-sm text-subtle">text-disabled</code></li></ul><h3 class="pt-2 text-heading-xs">Roles</h3><ul class="space-y-1"><li class="flex items-center gap-2"><span data-appearance="neutral" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-neutral text-subtle"><span class="truncate">neutral</span></span><span data-appearance="neutral" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-neutral-bold text-inverse"><span class="truncate">neutral</span></span></li><li class="flex items-center gap-2"><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">information</span></span><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information-bold text-inverse"><span class="truncate">information</span></span></li><li class="flex items-center gap-2"><span data-appearance="success" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-success text-success"><span class="truncate">success</span></span><span data-appearance="success" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-success-bold text-inverse"><span class="truncate">success</span></span></li><li class="flex items-center gap-2"><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">warning</span></span><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning-bold text-warning-inverse"><span class="truncate">warning</span></span></li><li class="flex items-center gap-2"><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger text-danger"><span class="truncate">danger</span></span><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger-bold text-inverse"><span class="truncate">danger</span></span></li><li class="flex items-center gap-2"><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">discovery</span></span><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery-bold text-inverse"><span class="truncate">discovery</span></span></li></ul></section></div></section></div><article class="space-y-4 rounded-lg border border-default bg-surface p-6 text-body leading-relaxed">
 <p><strong>Status:</strong> current. The working reference for building dashboard UI (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ui/</code>), and the model for
 UI in future projects. The decision of record is <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">tech-stack.md</code> decision 50, with decisions 42
 (the shell), 51 (interaction tests) and 62 (the dashboard&#x27;s charts). Where this page and a
@@ -1546,9 +1708,24 @@ Hand-written CSS reads the token directly: <code class="rounded-xs bg-neutral px
 <p>The reasons are in decision 50.</p>
 <ul class="list-disc space-y-1.5 pl-5">
 <li><strong>The primary button is neutral-bold (near-black), not ADS blue.</strong></li>
+<li><strong>A button&#x27;s edge and shadow are not ADS&#x27;s.</strong> In light mode a bold fill takes
+<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">shadow-button-bold</code>, and a segmented control&#x27;s chosen option takes the quiet <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">border-button</code>
+edge and <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">shadow-button</code>. In dark mode the edge is <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">border-bold</code> and there is no shadow. The
+values are the <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">--button-*</code> tokens.</li>
 <li><strong>A link is not blue.</strong> It takes the colour of the text around it and is marked by weight and an
 underline.</li>
-<li><strong>A selection carries an indicator</strong> (a bar, a check, a border), never a background alone.</li>
+<li><strong>A selection carries an indicator</strong> (a bar, a check, a border), never a background alone.
+A tab has a bar under it, and an open file in the editor has a bar along its top. Each bar
+grows out from the centre. A segmented control is a sunken track, and the chosen option comes
+up out of it with the button&#x27;s edge and shadow.</li>
+<li><strong>A message is not a block of colour.</strong> A <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">SectionMessage</code> is on the plain surface, with a
+grey edge and a bar down its left edge in its role&#x27;s colour. Its actions are default buttons. A
+<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">Banner</code> keeps the bold fill, because it tells you something that is true on every page.</li>
+<li><strong>There is no subtle button.</strong> ADS has a white default button and a subtle button with no
+fill, and a row of subtle buttons looked like text. Here <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">default</code> is the one everyday button,
+on a light wash of its own (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">--button-fill</code>, lighter than ADS&#x27;s neutral in light mode). <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ghost</code> has no fill: an icon button is <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ghost</code> unless you set another
+appearance, and you use <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ghost</code> for an item in a row or a place, such as a pager&#x27;s page. Do not
+use it for an action with a label.</li>
 <li><strong>Hover, pressed and selected come from the finesse set together.</strong></li>
 <li><strong>Dark mode changes colour and nothing else.</strong> The one exception is the nav mark&#x27;s blend in
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">theme/dark.css</code>.</li>
@@ -1598,7 +1775,7 @@ source shows each one in use. The complete list is <code class="rounded-xs bg-ne
 <p>Variants are props, not classes: <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">appearance</code>, <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">spacing</code>, <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">isSelected</code>, <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">isLoading</code>,
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">isDisabled</code>, <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">shouldFitContainer</code>.</p>
 <pre class="overflow-x-auto rounded-md bg-neutral p-3 text-body-sm [&amp;&gt;code]:bg-transparent [&amp;&gt;code]:p-0"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">&lt;Button appearance=&quot;primary&quot;&gt;Approve&lt;/Button&gt;
-&lt;Button appearance=&quot;subtle&quot; spacing=&quot;compact&quot; iconBefore=&quot;refresh&quot;&gt;Retry&lt;/Button&gt;
+&lt;Button spacing=&quot;compact&quot; iconBefore=&quot;refresh&quot;&gt;Retry&lt;/Button&gt;
 &lt;Button appearance=&quot;danger&quot; isLoading={pending}&gt;Delete project&lt;/Button&gt;
 &lt;Lozenge appearance=&quot;warning&quot;&gt;Waiting&lt;/Lozenge&gt;
 </code></pre>
@@ -1674,7 +1851,9 @@ Forced colours keep the ring. A control clipped by its container adds
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">prefers-contrast: more</code> swaps in the ADS increased-contrast values.</li>
 <li><strong>Motion:</strong> a looping animation beats three times and stops (WCAG 2.2.2), and stops under
 reduced motion (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">prefersReducedMotion()</code> in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">components/ui/motion.ts</code>). Reuse the beats in
-<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion.css</code>. Default transitions are <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">transition-colors</code> (150ms, eased out).</li>
+<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion.css</code>. Default transitions are <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">transition-colors</code> (150ms, eased out). A button eases every
+change, gets smaller a little when you press it (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion-safe:active:scale-97</code>), and its spinner
+comes in with <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">animate-settle-in</code>.</li>
 <li><strong>Shortcuts:</strong> never a single character (WCAG 2.1.4). Search is ⌘K / Ctrl+K. A focus trap needs a
 way out: the terminal releases on Ctrl+] (WCAG 2.1.2).</li>
 <li><strong>Status is never colour alone:</strong> a lozenge carries a word, a chart carries a legend and a table
@@ -1762,7 +1941,7 @@ tickets or the assistant (Phone width).</li>
 </ol></article></div></div></div></div>
 <script>
 const themes = ["light","dark","system"];
-const look = {"on":"relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-selected bg-selected text-selected hover:bg-selected-hovered active:bg-selected-pressed","off":"relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"};
+const look = {"on":"inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-button bg-surface-raised text-default shadow-button","off":"inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed"};
 const buttons = Array.from(document.querySelectorAll("[data-theme-switch] button"));
 buttons.forEach((button, index) => {
   button.addEventListener("click", () => {

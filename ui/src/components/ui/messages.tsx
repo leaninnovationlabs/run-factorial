@@ -7,10 +7,10 @@
  * voice — never a bare server string with no way forward.
  */
 
-import { createContext, type ReactNode, useContext, useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { errorDetails, errorHint, errorText } from "../../format";
-import { ROLE_ICON, ROLE_WASH, type Role } from "../../status";
+import { ROLE_ICON, type Role } from "../../status";
 import { Button, LinkButton } from "./Button";
 import { ServerText } from "./Code";
 import { cx } from "./cx";
@@ -19,31 +19,23 @@ import { Popup } from "./Popup";
 
 export type MessageAppearance = "information" | "warning" | "error" | "success" | "discovery";
 
-/** A quiet message's ground: the role's wash at a fraction of its strength, and no edge. */
-const ROLE_QUIET_WASH: Record<Role, string> = {
-  neutral: "bg-neutral",
-  information: "bg-information/40",
-  warning: "bg-warning/40",
-  discovery: "bg-discovery/40",
-  danger: "bg-danger/40",
-  success: "bg-success/40",
+/** A message's mark: a bar down its left edge in the role's colour, on the plain surface. The bar
+ *  and the icon say which kind of message it is; a wash of colour made every message on a page
+ *  louder than what it said, and drowned the buttons that act on it. */
+const ROLE_EDGE: Record<Role, string> = {
+  neutral: "border-l-bold",
+  information: "border-l-information",
+  warning: "border-l-warning",
+  discovery: "border-l-discovery",
+  danger: "border-l-danger",
+  success: "border-l-success",
 };
 
-const QuietContext = createContext(false);
-
-/** Every `SectionMessage` inside draws on a fainter wash: for a page of settings, where a full
- *  block of colour per message made the page louder than what it said. */
-export function QuietMessages({ children }: { children: ReactNode }) {
-  return <QuietContext.Provider value>{children}</QuietContext.Provider>;
-}
-
-/** Whether messages here are quiet, for a composite that draws its own message box. */
-export function useQuietMessages(): boolean {
-  return useContext(QuietContext);
-}
-
-export function messageBox(role: Role, quiet: boolean): string {
-  return quiet ? ROLE_QUIET_WASH[role] : ROLE_WASH[role];
+export function messageBox(role: Role): string {
+  return cx(
+    "rounded-l-sm rounded-r-md border border-l-3 border-default bg-surface",
+    ROLE_EDGE[role],
+  );
 }
 
 const MESSAGE_ROLE: Record<MessageAppearance, Role> = {
@@ -65,7 +57,7 @@ export type MessageAction = {
 
 const ACTION = "font-medium underline-offset-2 hover:underline";
 
-/** An action as a button, for a message whose action is the fix rather than a way to read more. */
+/** An action as a button, so it reads as one on the message's plain ground. */
 export function ActionButton({ action }: { action: MessageAction }) {
   if (action.to !== undefined || action.href !== undefined) {
     return (
@@ -107,7 +99,7 @@ export function SectionMessage({
   appearance = "information",
   title,
   actions,
-  actionsAs = "links",
+  actionsAs = "buttons",
   isAlert = false,
   className,
   children,
@@ -115,8 +107,8 @@ export function SectionMessage({
   appearance?: MessageAppearance;
   title?: ReactNode;
   actions?: MessageAction[];
-  /** ADS draws a message's actions as links; `buttons` is for a message that leads a page and
-   *  whose action is the fix itself. */
+  /** Buttons, so an action reads as one on the plain ground; `links` is for a message whose
+   *  actions only lead somewhere to read more. */
   actionsAs?: "links" | "buttons";
   /** Announce it as it appears: only for a failure the reader's own action caused. A message that
    *  loads with the page is read in its place, not shouted. */
@@ -127,12 +119,11 @@ export function SectionMessage({
 }) {
   const role = MESSAGE_ROLE[appearance];
   const icon = ROLE_ICON[role];
-  const quiet = useContext(QuietContext);
   return (
     <section
       role={isAlert ? "alert" : undefined}
       data-appearance={appearance}
-      className={cx("flex gap-3 rounded-md p-4 text-body", messageBox(role, quiet), className)}
+      className={cx("flex gap-3 p-4 text-body", messageBox(role), className)}
     >
       <Icon glyph={icon.glyph} className={cx("mt-0.5", icon.ink)} />
       <div className="min-w-0 flex-1 space-y-1 text-default">

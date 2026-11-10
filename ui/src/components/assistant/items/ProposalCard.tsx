@@ -215,7 +215,6 @@ export function ProposalCard({ payload }: { payload: ProposalPayload }) {
             Approve
           </Button>
           <Button
-            appearance="subtle"
             isLoading={decline.isPending}
             aria-disabled={busy || undefined}
             onClick={() => decide("decline")}

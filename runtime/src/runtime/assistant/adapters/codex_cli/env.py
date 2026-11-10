@@ -15,7 +15,6 @@ from runtime.adapters.codex_cli.auth import (
     ENV_BEDROCK_BEARER,
 )
 from runtime.adapters.codex_cli.cli import ENV_CODEX_HOME
-from runtime.assistant.adapters.codex_cli.config import ENV_TOOL_SOCKET
 from runtime.hostgit import hardened_env
 
 __all__ = ["build_child_env"]
@@ -38,7 +37,6 @@ def build_child_env(
     auth_mode: str,
     credential: str,
     config_dir: Path,
-    tool_socket: Path,
     bedrock_region: str | None,
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
@@ -50,7 +48,6 @@ def build_child_env(
             env[key] = value
     env.update(hardened_env())
     env[ENV_CODEX_HOME] = str(config_dir)
-    env[ENV_TOOL_SOCKET] = str(tool_socket)
     if auth_mode == AUTH_MODE_API_KEY:
         env[ENV_API_KEY] = credential
     elif auth_mode == AUTH_MODE_BEDROCK:
@@ -63,7 +60,7 @@ def build_child_env(
         raise ValueError(f"unsupported auth_mode {auth_mode!r}")
     if extra:
         for key, value in extra.items():
-            if key.startswith("FACTORIAL_") and key != ENV_TOOL_SOCKET:
+            if key.startswith("FACTORIAL_"):
                 continue
             env[key] = value
     return env

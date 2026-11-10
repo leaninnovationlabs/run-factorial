@@ -243,7 +243,6 @@ export function ActivityPanel({
               ) : folded ? (
                 <div className="px-4 py-2">
                   <Button
-                    appearance="subtle"
                     spacing="compact"
                     onClick={() => setUnfolded((keys) => new Set(keys).add(segment.key))}
                   >

@@ -121,7 +121,7 @@ export function ConfirmPopup({
         <p className="text-body text-subtle">{consequence}</p>
         {children}
         <div className="flex justify-end gap-2">
-          <Button ref={cancel} appearance="subtle" spacing="compact" onClick={dismiss}>
+          <Button ref={cancel} spacing="compact" onClick={dismiss}>
             Cancel
           </Button>
           <Button

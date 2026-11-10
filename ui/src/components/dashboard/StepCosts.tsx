@@ -168,9 +168,7 @@ export function StepCosts({ data, stepOrder }: { data: ProjectDashboard; stepOrd
               { value: "time", label: "Duration" },
             ]}
           />
-          <Button appearance="subtle" onClick={() => setAttemptsOpen(true)}>
-            All attempts
-          </Button>
+          <Button onClick={() => setAttemptsOpen(true)}>All attempts</Button>
         </div>
       }
       note="Agent attempts only. A rework attempt is one a gate rejection or a redo sent back. A retry is a run started again automatically after a failure. Each step keeps the same color in every chart. In Duration, paused time is drawn after the attempt it interrupted."

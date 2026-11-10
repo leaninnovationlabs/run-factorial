@@ -158,7 +158,7 @@ function Row({ name, option, isChecked, isRequired, onChange }: OptionProps) {
 }
 
 /** A native radio inside its label, so the group keeps the browser's keyboard and reading. A
- *  chosen tile's border is 2px, and its padding gives the extra pixel back so nothing moves. */
+ *  chosen tile is drawn as a selected button is: the selected edge on the selected ground. */
 function Tile({ name, option, isChecked, isRequired, onChange }: OptionProps) {
   const id = `${name}-${option.value}`;
   const descriptionId = option.description ? `${id}-description` : undefined;
@@ -168,7 +168,8 @@ function Tile({ name, option, isChecked, isRequired, onChange }: OptionProps) {
     <label
       className={cx(
         "flex items-start gap-2 rounded-md text-body",
-        isChecked ? "border-2 border-brand bg-selected p-[11px]" : "border border-default p-3",
+        "border p-3",
+        isChecked ? "border-selected bg-selected" : "border-default",
         disabled ? "cursor-not-allowed text-disabled" : "cursor-pointer text-default",
         !isChecked && (disabled ? "bg-disabled" : "bg-surface hover:bg-surface-hovered"),
       )}

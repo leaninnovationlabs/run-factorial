@@ -12,6 +12,8 @@ import os
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.tools import Tool
+from fastmcp.tools.base import ToolResult
 
 from runtime.assistant.adapters.codex_cli.config import ENV_TOOL_SOCKET
 
@@ -37,14 +39,21 @@ async def _rpc(request: dict[str, Any]) -> dict[str, Any]:
         await writer.wait_closed()
 
 
-def _register_tool(name: str, description: str, _input_schema: dict[str, Any]) -> None:
-    async def handler(**arguments: Any) -> str:
-        response = await _rpc({"id": name, "op": "call", "name": name, "arguments": arguments})
-        if "error" in response:
-            return f"Error: {response['error']}"
-        return str(response.get("text", ""))
+class _ForwardedTool(Tool):
+    """A tool the assistant process describes and runs. Not a function tool: FastMCP builds that
+    one's schema from its signature, and refuses a forwarding `**kwargs` signature at start."""
 
-    mcp.tool(name=name, description=description or name)(handler)
+    async def run(self, arguments: dict[str, Any]) -> ToolResult:
+        response = await _rpc(
+            {"id": self.name, "op": "call", "name": self.name, "arguments": arguments}
+        )
+        if "error" in response:
+            return ToolResult(f"Error: {response['error']}", is_error=True)
+        return ToolResult(str(response.get("text", "")), is_error=not response.get("ok"))
+
+
+def _register_tool(name: str, description: str, input_schema: dict[str, Any]) -> None:
+    mcp.add_tool(_ForwardedTool(name=name, description=description, parameters=input_schema))
 
 
 async def _register_all() -> None:

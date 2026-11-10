@@ -62,9 +62,7 @@ export function CreateSummary({
           </p>
         )}
         <FormFooter align="end">
-          <LinkButton to="/runtimes" appearance="subtle">
-            Cancel
-          </LinkButton>
+          <LinkButton to="/runtimes">Cancel</LinkButton>
           <Button
             type="submit"
             appearance="primary"

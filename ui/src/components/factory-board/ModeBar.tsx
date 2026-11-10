@@ -200,7 +200,6 @@ export function AppliedRow({
         )}
       </div>
       <Button
-        appearance="subtle"
         spacing="compact"
         iconBefore="undo"
         aria-disabled={applied ? undefined : true}

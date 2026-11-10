@@ -114,7 +114,7 @@ export function EditorActions({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-default px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
         {heading && (
-          <Button appearance="subtle" iconBefore="arrow-left" onClick={heading.onBack}>
+          <Button iconBefore="arrow-left" onClick={heading.onBack}>
             Back
           </Button>
         )}

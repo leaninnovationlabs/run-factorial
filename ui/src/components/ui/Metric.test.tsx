@@ -69,10 +69,10 @@ describe("Metric", () => {
 
   it("draws the fill in a quiet neutral grey, with default type to sit on it", () => {
     // The unit is the one part of a metric that does not inherit the ambient colour, because it
-    // is the one part with a ground of its own: the neutral-pressed token, which each theme
-    // defines. The near-black it used to be out-shouted the status beside it.
+    // is the one part with a ground of its own: the metric token, the default button's grey in
+    // light mode. The near-black it used to be out-shouted the status beside it.
     const [unit] = unitTags(renderToString(<Metric>41.9K in</Metric>));
-    expect(unit).toContain("bg-neutral-pressed");
+    expect(unit).toContain("bg-metric");
     expect(unit).toContain("text-default");
     // Bold, because a unit is one or three characters at the smallest size on the page.
     expect(unit).toContain("font-bold");

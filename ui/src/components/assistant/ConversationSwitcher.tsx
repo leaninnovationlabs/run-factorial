@@ -224,7 +224,7 @@ function Row({
           <span id={questionId} className="min-w-0 flex-1 truncate text-body text-danger">
             Delete "{label}"?
           </span>
-          <Button ref={cancel} appearance="subtle" spacing="compact" onClick={withdraw}>
+          <Button ref={cancel} spacing="compact" onClick={withdraw}>
             Cancel
           </Button>
           <Button appearance="danger" spacing="compact" onClick={onDelete}>

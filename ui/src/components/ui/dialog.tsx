@@ -336,7 +336,7 @@ export function ConfirmDialog({
       onClose={onCancel}
       footer={
         <>
-          <Button ref={cancel} appearance="subtle" onClick={onCancel}>
+          <Button ref={cancel} onClick={onCancel}>
             Cancel
           </Button>
           <Button appearance={appearance} isLoading={isPending} onClick={onConfirm}>

@@ -56,7 +56,7 @@ export function AdoptHeadDialog({
       onClose={onClose}
       footer={
         <>
-          <Button ref={cancel} appearance="subtle" onClick={onClose}>
+          <Button ref={cancel} onClick={onClose}>
             Cancel
           </Button>
           <Button

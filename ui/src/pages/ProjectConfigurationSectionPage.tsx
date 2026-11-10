@@ -50,7 +50,6 @@ import {
   Lozenge,
   PageHeader,
   Panel,
-  QuietMessages,
   ServerText,
   staleSince,
   usePageTitle,
@@ -135,78 +134,76 @@ export function ProjectConfigurationSectionPage() {
   const neverBlocks = rows.length > 0 && rows.every((own) => NEVER_BLOCKS.has(own.key));
 
   return (
-    <QuietMessages>
-      <div className="space-y-6">
-        {/* Hidden rather than unmounted around the body: a body that moved in the tree would
+    <div className="space-y-6">
+      {/* Hidden rather than unmounted around the body: a body that moved in the tree would
           remount, and lose the editor it just opened. */}
-        <div hidden={fullPage} className="space-y-6">
-          <PageHeader
-            title={section.title}
-            actions={
-              section.slug === "process" && (
-                <span ref={setActionsSlot} className="flex flex-wrap items-center gap-2" />
-              )
-            }
-            titleAfter={
-              status && (
-                <span className="flex items-center gap-2">
-                  <Lozenge appearance={status.appearance} iconBefore={status.glyph} isQuiet>
-                    {status.label}
-                  </Lozenge>
-                  {neverBlocks && row?.state !== "blocked" && (
-                    <span className="text-body-sm text-subtlest">Never blocks activation</span>
-                  )}
-                </span>
-              )
-            }
-            bottomBar={
-              status && (
-                <span className="flex flex-wrap items-center gap-x-2">
-                  {/* A row that needs action says so once, in the box below or under its field,
+      <div hidden={fullPage} className="space-y-6">
+        <PageHeader
+          title={section.title}
+          actions={
+            section.slug === "process" && (
+              <span ref={setActionsSlot} className="flex flex-wrap items-center gap-2" />
+            )
+          }
+          titleAfter={
+            status && (
+              <span className="flex items-center gap-2">
+                <Lozenge appearance={status.appearance} iconBefore={status.glyph} isQuiet>
+                  {status.label}
+                </Lozenge>
+                {neverBlocks && row?.state !== "blocked" && (
+                  <span className="text-body-sm text-subtlest">Never blocks activation</span>
+                )}
+              </span>
+            )
+          }
+          bottomBar={
+            status && (
+              <span className="flex flex-wrap items-center gap-x-2">
+                {/* A row that needs action says so once, in the box below or under its field,
                   so the header does not repeat it ("never synced" twice over). */}
-                  {!(row && (row.state === "blocked" || row.state === "warn")) && (
-                    <ServerText text={status.summary} />
-                  )}
-                  {/* A ready or unchecked row's detail is a footnote; one that needs action leads the
+                {!(row && (row.state === "blocked" || row.state === "warn")) && (
+                  <ServerText text={status.summary} />
+                )}
+                {/* A ready or unchecked row's detail is a footnote; one that needs action leads the
                   page as a message instead, beside its fix. */}
-                  {row?.detail && (row.state === "ok" || row.state === "unknown") && (
-                    <InlineMessage iconLabel={`About ${section.title}`} title={row.summary}>
-                      <ServerText text={row.detail} />
-                    </InlineMessage>
-                  )}
-                </span>
-              )
-            }
-            staleSince={staleSince(query)}
+                {row?.detail && (row.state === "ok" || row.state === "unknown") && (
+                  <InlineMessage iconLabel={`About ${section.title}`} title={row.summary}>
+                    <ServerText text={row.detail} />
+                  </InlineMessage>
+                )}
+              </span>
+            )
+          }
+          staleSince={staleSince(query)}
+        />
+        {section.probe && (
+          <ErrorMessage
+            error={probes.error}
+            title="Couldn't check the repository"
+            onRetry={() => probes.refetch()}
           />
-          {section.probe && (
-            <ErrorMessage
-              error={probes.error}
-              title="Couldn't check the repository"
-              onRetry={() => probes.refetch()}
-            />
+        )}
+        <PageMessages
+          project={project}
+          rows={rows.filter(
+            (own) =>
+              !section.saidInBody?.includes(own.key) &&
+              !(own.key === "process_config" && saysHeadReview(branch)),
           )}
-          <PageMessages
-            project={project}
-            rows={rows.filter(
-              (own) =>
-                !section.saidInBody?.includes(own.key) &&
-                !(own.key === "process_config" && saysHeadReview(branch)),
-            )}
-          />
-        </div>
-        <Panel bare={fullPage}>
-          <Body
-            section={section}
-            project={project}
-            rows={rows}
-            branch={branch}
-            onFullPage={setFullPage}
-            actionsSlot={actionsSlot}
-          />
-        </Panel>
+        />
       </div>
-    </QuietMessages>
+      <Panel bare={fullPage}>
+        <Body
+          section={section}
+          project={project}
+          rows={rows}
+          branch={branch}
+          onFullPage={setFullPage}
+          actionsSlot={actionsSlot}
+        />
+      </Panel>
+    </div>
   );
 }
 

@@ -304,7 +304,7 @@ function RuntimeForm() {
           <Checkbox label="Include closed issues" isChecked={closed} onChange={setClosed} />
         </div>
         <FormFooter align="end">
-          <Button appearance="subtle">Cancel</Button>
+          <Button>Cancel</Button>
           <Button appearance="primary" type="submit">
             Add runtime
           </Button>
@@ -322,9 +322,7 @@ export function SampleContent() {
         titleAfter={<StatusLozenge status="running" />}
         actions={
           <>
-            <Button appearance="subtle" iconBefore="refresh">
-              Refresh
-            </Button>
+            <Button iconBefore="refresh">Refresh</Button>
             <Button appearance="primary" iconBefore="plus">
               New ticket
             </Button>

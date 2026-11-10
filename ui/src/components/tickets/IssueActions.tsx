@@ -127,7 +127,7 @@ function IssuePanel({
       subtitle={data ? `${data.repo} · ${data.state === "open" ? "Open" : "Closed"}` : undefined}
       actions={
         href && (
-          <LinkButton href={href} appearance="subtle" spacing="compact">
+          <LinkButton href={href} spacing="compact">
             View issue
           </LinkButton>
         )

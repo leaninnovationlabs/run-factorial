@@ -76,7 +76,6 @@ export function FilePane({
         {src && link && (
           <>
             <Button
-              appearance="outline"
               spacing="small"
               iconBefore="refresh"
               onClick={() => {
@@ -87,13 +86,13 @@ export function FilePane({
             >
               Reload
             </Button>
-            <LinkButton href={apiUrl(link)} appearance="outline" spacing="small">
+            <LinkButton href={apiUrl(link)} spacing="small">
               New tab
             </LinkButton>
           </>
         )}
         {file.github_url && (
-          <LinkButton href={file.github_url} appearance="outline" spacing="small">
+          <LinkButton href={file.github_url} spacing="small">
             {host}
           </LinkButton>
         )}

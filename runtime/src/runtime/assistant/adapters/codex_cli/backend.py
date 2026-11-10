@@ -134,6 +134,7 @@ class CodexCliBackend:
                 worktree=cwd,
                 writable_root=cwd,
                 mcp_command=self._mcp_command,
+                tool_socket=socket_path,
                 auth_mode=spec.auth_mode,
                 bedrock_region=spec.bedrock_region,
             )
@@ -144,7 +145,6 @@ class CodexCliBackend:
                 auth_mode=spec.auth_mode,
                 credential=spec.credential.get_secret_value(),
                 config_dir=config_dir,
-                tool_socket=socket_path,
                 bedrock_region=spec.bedrock_region,
             )
             child = await launch(self._cli.agent_bin, argv, cwd=cwd, env=env, stdin_text=prompt)

@@ -8,7 +8,7 @@ import type { ReactElement } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { compile } from "tailwindcss";
-import { buttonLook } from "../components/ui";
+import { segmentLook } from "../components/ui";
 import { THEMES } from "../theme/themes";
 import { REFERENCE_PAGES, type ReferenceName } from "./ReferenceNav";
 
@@ -68,10 +68,7 @@ function classesIn(html: string): string[] {
 
 /** The theme switch's own classes, so the script below can redraw a choice the way
  *  `SegmentedControl` would. */
-const LOOK = {
-  on: buttonLook({ appearance: "subtle", spacing: "compact", isSelected: true }),
-  off: buttonLook({ appearance: "subtle", spacing: "compact", isSelected: false }),
-};
+const LOOK = { on: segmentLook("default", true), off: segmentLook("default", false) };
 
 /** What `ThemeProvider` does with a choice, without React: the page is static. Any other app
  *  link points at a route that exists only in the app, so a click on one stays here. */

@@ -63,11 +63,7 @@ export function CredentialField({
               <Button appearance="primary" isLoading={isPending} onClick={store}>
                 Save credential
               </Button>
-              {credential.set && (
-                <Button appearance="subtle" onClick={cancel}>
-                  Cancel
-                </Button>
-              )}
+              {credential.set && <Button onClick={cancel}>Cancel</Button>}
             </div>
           )}
         </Field>

@@ -17,7 +17,6 @@ import {
   SectionMessage,
   ServerText,
   showFlag,
-  useQuietMessages,
 } from "../ui";
 import { ROW_TITLES } from "./readiness";
 
@@ -33,13 +32,12 @@ export type Issue = {
 /** Every problem on a page in one box, a row each, on a faint wash of the worst one's colour.
  *  One box rather than one per problem: a page with three things wrong read as three alarms. */
 export function IssueBox({ issues, className }: { issues: Issue[]; className?: string }) {
-  const quiet = useQuietMessages();
   if (issues.length === 0) return null;
   const role = issues.some((issue) => issue.state === "blocked") ? "danger" : "warning";
   return (
     <section
       data-appearance={role === "danger" ? "error" : "warning"}
-      className={cx("rounded-md text-body", messageBox(role, quiet), className)}
+      className={cx("text-body", messageBox(role), className)}
     >
       <ul className="divide-y divide-default">
         {issues.map((issue) => {
@@ -187,7 +185,6 @@ export function RemedyCommand({
         <span className="text-body-sm font-semibold text-subtle">{label}</span>
         <CopyButton value={remedy} name={name} />
         <Button
-          appearance="subtle"
           spacing="compact"
           iconBefore={open ? "chevron-down" : "chevron-right"}
           aria-expanded={open}

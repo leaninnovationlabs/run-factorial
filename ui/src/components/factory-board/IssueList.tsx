@@ -239,7 +239,7 @@ export function IssueList({
         {/* The way OUT of the board, for a focus that has narrowed to one project. A lane focus
             spans every project and has no single page to offer, so it gets nothing. */}
         {project !== null && (
-          <LinkButton to={`/projects/${project}`} appearance="subtle" spacing="compact">
+          <LinkButton to={`/projects/${project}`} spacing="compact">
             View project
           </LinkButton>
         )}

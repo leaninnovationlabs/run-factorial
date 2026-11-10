@@ -44,10 +44,8 @@ export {
   InlineMessage,
   type MessageAction,
   messageBox,
-  QuietMessages,
   SectionMessage,
   StaleNote,
-  useQuietMessages,
 } from "./messages";
 export { prefersReducedMotion } from "./motion";
 export { NavButtonItem, NavLinkItem } from "./NavItem";
@@ -68,7 +66,16 @@ export {
   Spinner,
   staleSince,
 } from "./states";
-export { panelId, SegmentedControl, Tab, TabList, TabPanel, Tabs, tabId } from "./Tabs";
+export {
+  panelId,
+  SegmentedControl,
+  segmentLook,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
+  tabId,
+} from "./Tabs";
 export { Select, type SelectEntry, type SelectOption, TextArea, TextField } from "./TextField";
 export { AnchoredTooltip, Tooltip } from "./Tooltip";
 export { VisuallyHidden } from "./VisuallyHidden";

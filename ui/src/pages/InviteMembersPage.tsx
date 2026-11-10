@@ -44,7 +44,6 @@ export default function InviteMembersPage() {
             <InviteLink invite={create.data} />
             <FormFooter align="end">
               <Button
-                appearance="subtle"
                 onClick={() => {
                   create.reset();
                   setEmail("");
@@ -87,9 +86,7 @@ export default function InviteMembersPage() {
                 />
                 <ErrorMessage error={create.error} />
                 <FormFooter align="end">
-                  <LinkButton to="/members" appearance="subtle">
-                    Cancel
-                  </LinkButton>
+                  <LinkButton to="/members">Cancel</LinkButton>
                   <Button type="submit" appearance="primary" isLoading={create.isPending}>
                     Create invite link
                   </Button>

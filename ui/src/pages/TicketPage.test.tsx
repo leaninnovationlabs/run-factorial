@@ -418,7 +418,7 @@ describe("TicketPage", () => {
         "Issue #204 is closed on GitHub. Reopen it to re-enter.",
       );
       expect(html).toMatch(
-        /<a[^>]*href="https:\/\/github\.com\/northwind\/harbor-invoices\/issues\/204"[^>]*>Open issue<\/a>/,
+        /<a[^>]*href="https:\/\/github\.com\/northwind\/harbor-invoices\/issues\/204"[^>]*>Open issue(?:<[^>]+>)*<\/a>/,
       );
     });
 
@@ -785,7 +785,7 @@ describe("TicketPage", () => {
       "Pull request #248 needs a person&#x27;s decision before the ticket moves on.",
     );
     expect(html).toMatch(
-      /<a[^>]*href="https:\/\/github\.com\/northwind\/harbor-invoices\/pull\/248"[^>]*>View pull request<\/a>/,
+      /<a[^>]*href="https:\/\/github\.com\/northwind\/harbor-invoices\/pull\/248"[^>]*>View pull request(?:<[^>]+>)*<\/a>/,
     );
     // Without a pull request on the log, it still says what the step is waiting for.
     expect(render()).toContain(

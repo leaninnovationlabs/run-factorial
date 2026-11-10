@@ -58,7 +58,7 @@ const COMPONENTS: Components = {
   th: ({ children, style }) => (
     <th
       style={style}
-      className="border border-default bg-surface-sunken px-2 py-1 text-left text-body-sm font-semibold tracking-wide text-subtle uppercase"
+      className="border border-default bg-surface-sunken px-2 py-1 text-left text-body-sm font-semibold text-subtle"
     >
       {children}
     </th>

@@ -990,7 +990,6 @@ function Connection({
               {secondsLeft > 0 ? `Reconnecting in ${secondsLeft} s.` : "Reconnecting."}
             </span>
             <Button
-              appearance="subtle"
               spacing="compact"
               className="shrink-0"
               onClick={() => socket.current?.retryNow()}

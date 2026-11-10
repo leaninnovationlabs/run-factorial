@@ -177,7 +177,7 @@ export function OutputDrawer({
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <StatusLozenge status={runShown(run)} />
             {latest && latest.id !== run.id && (
-              <Button appearance="subtle" spacing="compact" onClick={() => onSelectRun(latest.id)}>
+              <Button spacing="compact" onClick={() => onSelectRun(latest.id)}>
                 Go to the latest attempt ({latest.attempt})
               </Button>
             )}

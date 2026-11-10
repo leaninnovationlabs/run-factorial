@@ -305,7 +305,6 @@ function DeliveryEditor({
             Save
           </Button>
           <Button
-            appearance="subtle"
             onClick={() => {
               patch.reset();
               setAttempted(false);
@@ -433,7 +432,7 @@ function SecretRowView({ project, row }: { project: ProjectDetail; row: SecretRo
         <Code>{row.name}</Code>
         <span className="text-body-sm text-subtle">{provenance}</span>
         {canManage && row.kind === "project" && row.stored && !replacing && (
-          <Button appearance="subtle" spacing="compact" onClick={() => setReplacing(true)}>
+          <Button spacing="compact" onClick={() => setReplacing(true)}>
             Replace value
           </Button>
         )}
@@ -575,11 +574,7 @@ function StoreForm({
             <Button type="submit" appearance="primary" isLoading={put.isPending}>
               Save
             </Button>
-            {onCancel && (
-              <Button appearance="subtle" onClick={onCancel}>
-                Cancel
-              </Button>
-            )}
+            {onCancel && <Button onClick={onCancel}>Cancel</Button>}
           </div>
           <ErrorMessage error={hostRefusal(put.error) ? null : put.error} className="w-full" />
         </div>

@@ -212,7 +212,7 @@ describe("the file pane", () => {
     expect(document.body.textContent).not.toContain("GitHub");
   });
 
-  it("draws Reload, New tab and GitHub as small outlined buttons", async () => {
+  it("draws Reload, New tab and GitHub as small default buttons", async () => {
     view = await mount(pane(PUBLISHED));
     await settle();
 
@@ -221,7 +221,7 @@ describe("the file pane", () => {
       byText(document.body, "a", "New tab"),
       byText(document.body, "a", "GitHub"),
     ];
-    expect(toolbar.map((control) => control?.dataset.appearance)).toEqual(Array(3).fill("outline"));
+    expect(toolbar.map((control) => control?.dataset.appearance)).toEqual(Array(3).fill("default"));
     expect(toolbar.map((control) => control?.dataset.spacing)).toEqual(Array(3).fill("small"));
   });
 

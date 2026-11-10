@@ -231,11 +231,7 @@ export function ConfigGallery({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {onCancel && (
-            <Button appearance="subtle" onClick={onCancel}>
-              Cancel
-            </Button>
-          )}
+          {onCancel && <Button onClick={onCancel}>Cancel</Button>}
           {askRuntime && offered.length > 0 && (
             <Select
               aria-label="Runtime"

@@ -495,7 +495,7 @@ describe("OverviewPage", () => {
     expect(html).not.toContain("Clear focus");
   });
 
-  it("heads the page like every other, with the settings behind one subtle button", () => {
+  it("heads the page like every other, with the settings behind one button", () => {
     const html = page(BOARD);
     expect(html).toMatch(/<h1[^>]*data-page-title[^>]*>Overview<\/h1>/);
     expect(html).toContain("Board settings");

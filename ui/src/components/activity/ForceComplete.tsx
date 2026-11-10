@@ -116,7 +116,7 @@ function ForceCompleteDialog({
       footer={
         overridable ? (
           <>
-            <Button ref={close} appearance="subtle" onClick={onClose}>
+            <Button ref={close} onClick={onClose}>
               Cancel
             </Button>
             <Button
@@ -131,7 +131,7 @@ function ForceCompleteDialog({
             </Button>
           </>
         ) : (
-          <Button ref={close} appearance="subtle" onClick={onClose}>
+          <Button ref={close} onClick={onClose}>
             Close
           </Button>
         )

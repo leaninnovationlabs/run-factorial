@@ -269,7 +269,7 @@ export function PreviewPane({
 }
 
 /** The tab text's own box, so the measured copy is as wide as the tabs (`Tabs.tsx`'s `Tab`). */
-const TAB_TEXT = "inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-body font-medium";
+const TAB_TEXT = "inline-flex h-11 items-center gap-2 border-b-2 px-3 text-body font-medium";
 
 /**
  * The tabs as one dropdown, for a row too narrow to hold them: the same entries in the same
@@ -427,7 +427,6 @@ function LivePreview({
         {framed && (
           <>
             <Button
-              appearance="subtle"
               spacing="compact"
               iconBefore="refresh"
               onClick={() => setReloads((count) => count + 1)}
@@ -435,13 +434,13 @@ function LivePreview({
               Reload
             </Button>
             {/* `LinkButton` opens with `rel="noreferrer"`, which implies `noopener`. */}
-            <LinkButton href={framed.url} appearance="subtle" spacing="compact">
+            <LinkButton href={framed.url} spacing="compact">
               Open in new tab
             </LinkButton>
           </>
         )}
         {others.map((link) => (
-          <LinkButton key={link.url} href={link.url} appearance="subtle" spacing="compact">
+          <LinkButton key={link.url} href={link.url} spacing="compact">
             Open {link.service ?? "link"}
           </LinkButton>
         ))}
@@ -457,7 +456,6 @@ function LivePreview({
         )}
         {data?.restartable && (
           <Button
-            appearance="subtle"
             spacing="compact"
             isLoading={action.restart.isPending}
             onClick={() => action.restart.mutate()}
@@ -467,7 +465,6 @@ function LivePreview({
         )}
         {data?.served_by_runtime && awake && (
           <Button
-            appearance="subtle"
             spacing="compact"
             isLoading={action.stop.isPending}
             onClick={() => action.stop.mutate()}
@@ -679,9 +676,7 @@ export function ChangeRequestForm({
             </SectionMessage>
           )}
           <div className="flex justify-end gap-2">
-            <Button appearance="subtle" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
             <Button type="submit" appearance="primary" isLoading={request.isPending}>
               Send change request
             </Button>

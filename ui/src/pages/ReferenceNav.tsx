@@ -17,7 +17,7 @@ export function ReferenceNav({ current }: { current: ReferenceName }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       {REFERENCE_PAGES.filter((page) => page.name !== current).map((page) => (
-        <LinkButton key={page.name} to={`/dev/${page.name}`} appearance="subtle" spacing="compact">
+        <LinkButton key={page.name} to={`/dev/${page.name}`} spacing="compact">
           {page.label}
         </LinkButton>
       ))}

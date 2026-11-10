@@ -28,10 +28,10 @@ import { cx } from "./cx";
  *
  * The `data-metric-*` attributes are the only stable handle on the parts, for a layout — or a test
  * — that needs to reach one; `data-metric-value` is the figure a reader actually sees, as against
- * the sizers sharing its cell. The unit is filled with `--ds-background-neutral-pressed`, a grey
- * quiet enough that a row of metrics does not out-shout the status beside it, with default ink
- * because subtle ink falls short of 4.5:1 on it. The outline is drawn in the fill so the two
- * halves read as one.
+ * the sizers sharing its cell. The unit is filled with `--metric-fill`, the default button's hover
+ * grey in light mode, quiet enough that a row of metrics does not out-shout the status beside it,
+ * with default ink because subtle ink falls short of 4.5:1 on dark's pressed neutral. The outline
+ * is drawn in the fill so the two halves read as one.
  */
 function MetricBox({
   value,
@@ -59,7 +59,7 @@ function MetricBox({
   const measure = (
     <span
       data-metric-unit
-      className="flex min-w-[1em] items-center justify-center bg-neutral-pressed px-px font-bold text-default"
+      className="flex min-w-[1em] items-center justify-center bg-metric px-px font-bold text-default"
     >
       {UNIT_LABELS[unit] ?? unit}
     </span>
@@ -67,7 +67,7 @@ function MetricBox({
   return (
     <span
       data-metric-box
-      className="inline-flex items-stretch overflow-hidden rounded-xs border border-[var(--ds-background-neutral-pressed)] leading-none"
+      className="inline-flex items-stretch overflow-hidden rounded-xs border border-metric leading-none"
     >
       {unitFirst ? measure : figure}
       {unitFirst ? figure : measure}

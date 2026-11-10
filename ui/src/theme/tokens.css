@@ -107,10 +107,10 @@
   --ds-icon-information: #357de8;
   --ds-icon-discovery: #af59e1;
 
-  /* Borders and focus. `border-input` is 3.24:1 on white, the WCAG 1.4.11 floor for a field's edge; `border-focused` always pairs with `border-width-focused`. */
+  /* Borders and focus. `border-input` is lightened from ADS's #8c8f97 to 3.04:1 on white, just over the WCAG 1.4.11 floor of 3:1 for a field's edge; `border-focused` always pairs with `border-width-focused`. */
   --ds-border: #0b120e24;
   --ds-border-bold: #7d818a;
-  --ds-border-input: #8c8f97;
+  --ds-border-input: #91949c;
   --ds-border-focused: #4688ec;
   --ds-border-selected: #292a2e;
   --ds-border-disabled: #0515240f;
@@ -234,6 +234,24 @@
   --google-button-fill: #ffffff;
   --google-button-border: #747775;
   --google-button-text: #1f1f1f;
+
+  /* The button's edge and depth, not ADS's. A segmented control's chosen option is lifted out
+     of its track by a quiet edge and a hairline shadow, and the bold fills take a top highlight.
+     Dark keeps the bold edge and no shadow. */
+  --button-border: #0b120e2e;
+  /* The default button's ground: lighter than ADS's neutral wash, which read as a grey block on
+     white. Dark keeps the neutral wash. */
+  --button-fill: #0515240a;
+  --button-fill-hovered: #05152417;
+  --button-fill-pressed: #080f2129;
+  /* ADS's disabled ground is its old, darker neutral: kept, a disabled button looked heavier
+     than an enabled one. Its faded ink says it is disabled. */
+  --button-fill-disabled: #0515240a;
+  --button-shadow: 0px 1px 2px #1e1f2114, 0px 0px 1px #1e1f210f;
+  --button-shadow-bold: inset 0px 1px 0px #ffffff26, 0px 1px 2px #1e1f2133;
+  /* A metric's unit box and outline take the default button's hover grey: ADS's pressed neutral
+     read as a dark block on white. Dark keeps the pressed neutral. */
+  --metric-fill: var(--button-fill-hovered);
 }
 
 /* Dark, chosen. Colour only (decision 50): type and shape do not change with the theme. */
@@ -393,6 +411,14 @@
   --google-button-fill: #131314;
   --google-button-border: #8e918f;
   --google-button-text: #e3e3e3;
+  --button-border: var(--ds-border-bold);
+  --button-fill: var(--ds-background-neutral);
+  --button-fill-hovered: var(--ds-background-neutral-hovered);
+  --button-fill-pressed: var(--ds-background-neutral-pressed);
+  --button-fill-disabled: var(--ds-background-disabled);
+  --button-shadow: 0px 0px 0px #00000000;
+  --button-shadow-bold: 0px 0px 0px #00000000;
+  --metric-fill: var(--ds-background-neutral-pressed);
 }
 
 /* Dark, from the system: the same values as the block above. */
@@ -554,12 +580,25 @@
     --google-button-fill: #131314;
     --google-button-border: #8e918f;
     --google-button-text: #e3e3e3;
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
+    --button-shadow: 0px 0px 0px #00000000;
+    --button-shadow-bold: 0px 0px 0px #00000000;
+    --metric-fill: var(--ds-background-neutral-pressed);
   }
 }
 
 /* Increased contrast, in whichever colour mode applies: only the tokens that change. */
 @media (prefers-contrast: more) {
   :root:not([data-theme="dark"]) {
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
     --ds-text: #1e1f21;
     --ds-text-subtle: #292a2e;
     --ds-text-subtlest: #3b3d42;

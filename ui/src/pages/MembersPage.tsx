@@ -288,7 +288,7 @@ function MemberTable({ rows, isLoading }: { rows: Member[] | undefined; isLoadin
             since: <RelativeTime iso={member.created_at} />,
             actions:
               self || canRemove ? (
-                <Button appearance="subtle" spacing="compact" onClick={() => setRemoving(member)}>
+                <Button spacing="compact" onClick={() => setRemoving(member)}>
                   {self ? "Leave" : "Remove"}
                 </Button>
               ) : null,
@@ -381,11 +381,10 @@ function InviteTable({ rows, isLoading }: { rows: Invite[] | undefined; isLoadin
           expires: <RelativeTime iso={invite.expires_at} />,
           actions: (
             <span className="inline-flex gap-1">
-              <Button appearance="subtle" spacing="compact" onClick={() => setRenewing(invite)}>
+              <Button spacing="compact" onClick={() => setRenewing(invite)}>
                 New link
               </Button>
               <Button
-                appearance="subtle"
                 spacing="compact"
                 onClick={() =>
                   revoke.mutate(invite.id, {

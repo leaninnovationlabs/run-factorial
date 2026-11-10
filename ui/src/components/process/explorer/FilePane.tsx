@@ -57,7 +57,7 @@ export function FilePane({
           <span>{about}</span>
           {onRevert && (
             <span className="ml-auto">
-              <Button spacing="compact" appearance="subtle" iconBefore="undo" onClick={onRevert}>
+              <Button spacing="compact" iconBefore="undo" onClick={onRevert}>
                 {revertLabel}
               </Button>
             </span>

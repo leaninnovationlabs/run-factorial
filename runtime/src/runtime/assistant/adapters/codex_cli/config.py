@@ -29,6 +29,9 @@ __all__ = ["ENV_TOOL_SOCKET", "SERVER_NAME", "TOOLS_OFF", "build_assistant_confi
 
 SERVER_NAME: Final = "factorial"
 ENV_TOOL_SOCKET: Final = "FACTORIAL_ASSISTANT_TOOL_SOCKET"
+CONFIG_TOOLS_APPROVAL: Final = "default_tools_approval_mode"
+VALUE_TOOLS_APPROVE: Final = "approve"
+CONFIG_REQUIRED: Final = "required"
 #: `shell_tool` alone leaves no command tool in 0.164.0; `unified_exec` is off too, so a release
 #: that stops reading it as a sub-switch still offers none.
 TOOLS_OFF: Final = ("shell_tool", "unified_exec", "view_image", "multi_agent")
@@ -39,6 +42,7 @@ def build_assistant_config(
     worktree: Path,
     writable_root: Path,
     mcp_command: tuple[str, ...],
+    tool_socket: Path,
     auth_mode: str,
     bedrock_region: str | None,
 ) -> tuple[str, dict[str, str]]:
@@ -78,17 +82,32 @@ def build_assistant_config(
         f"{CONFIG_TRUST_LEVEL} = {_toml_string(VALUE_TRUST_UNTRUSTED)}",
         "",
     ]
-    mcp_lines = _mcp_server_lines(mcp_command)
+    mcp_lines = _mcp_server_lines(mcp_command, tool_socket)
     return "\n".join(lines + mcp_lines), {}
 
 
-def _mcp_server_lines(command: tuple[str, ...]) -> list[str]:
+def _mcp_server_lines(command: tuple[str, ...], tool_socket: Path) -> list[str]:
     if not command:
         raise ValueError("mcp_command is required for the assistant Codex backend")
     binary, *args = command
-    lines = [f"[{MCP_TABLE}.{_toml_string(SERVER_NAME)}]", f"command = {_toml_string(binary)}"]
+    table = f"{MCP_TABLE}.{_toml_string(SERVER_NAME)}"
+    lines = [f"[{table}]", f"command = {_toml_string(binary)}"]
     if args:
         rendered = ", ".join(_toml_string(arg) for arg in args)
         lines.append(f"args = [{rendered}]")
-    lines.append("")
+    # Codex asks to approve a tool not annotated read-only, and `approval_policy = never` turns
+    # that ask into a refusal. Every factorial tool is a read or a proposal the person decides,
+    # as the Claude path's `allowed_tools` already says.
+    lines.append(f"{CONFIG_TOOLS_APPROVAL} = {_toml_string(VALUE_TOOLS_APPROVE)}")
+    # Not required, a server gets one second to start before Codex lists the model's tools
+    # without it. Required, Codex waits for it, and fails the turn if it never starts.
+    lines.append(f"{CONFIG_REQUIRED} = true")
+    # Codex hands a stdio server a few of its own variables (HOME, PATH and the like) and this
+    # table, never the rest of its env: a socket path set only on the Codex child is lost.
+    lines += [
+        "",
+        f"[{table}.env]",
+        f"{_toml_string(ENV_TOOL_SOCKET)} = {_toml_string(str(tool_socket))}",
+        "",
+    ]
     return lines

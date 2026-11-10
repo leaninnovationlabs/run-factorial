@@ -245,9 +245,7 @@ export function NewProjectPage() {
               <ErrorMessage error={create.error ?? followOnError} />
 
               <FormFooter align="end">
-                <LinkButton to="/projects" appearance="subtle">
-                  Cancel
-                </LinkButton>
+                <LinkButton to="/projects">Cancel</LinkButton>
                 <Button type="submit" appearance="primary" isLoading={create.isPending}>
                   Create project
                 </Button>

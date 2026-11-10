@@ -14,8 +14,14 @@
  * tooltip on one, which is where the reason used to live (#167). When the reason is already on
  * the page, pass `aria-disabled` and point `aria-describedby` at it; the button behaves the same.
  *
- * `outline` and `small` are not ADS's: they are for a toolbar over a framed file, where a subtle
- * button reads as plain text and a body-size label crowds the file's path.
+ * `small` is not ADS's: it is for a toolbar over a framed file, where a body-size label crowds
+ * the file's path.
+ *
+ * There is no `subtle`. ADS's default is a white face with an edge and its subtle has no ground,
+ * and between them every row of buttons had two looks to choose from, the bare one reading as
+ * plain text. Here `default` is the one everyday button, on a light wash of its own
+ * (`--button-fill`). `ghost` stays bare, for a button that is an icon, a row or a place rather
+ * than an action: a pager's page, a close.
  */
 
 import { type ButtonHTMLAttributes, type MouseEvent, type ReactNode, type Ref, useId } from "react";
@@ -25,11 +31,14 @@ import { type Glyph, Icon } from "./icons";
 import { SpinnerGlyph } from "./SpinnerGlyph";
 import { Tooltip } from "./Tooltip";
 
-export type ButtonAppearance = "default" | "primary" | "subtle" | "outline" | "warning" | "danger";
+export type ButtonAppearance = "default" | "primary" | "ghost" | "warning" | "danger";
 export type ButtonSpacing = "default" | "compact" | "small";
 
 const BASE =
-  "relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none";
+  "relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none";
+
+/** A press gives a little under the pointer. Not on a disabled button, which does not act. */
+const PRESS = "motion-safe:active:scale-97";
 
 const SPACING: Record<ButtonSpacing, string> = {
   default: "h-8 px-3 text-body",
@@ -44,22 +53,23 @@ const SQUARE: Record<ButtonSpacing, string> = {
 };
 
 const APPEARANCE: Record<ButtonAppearance, string> = {
-  default: "border-bold bg-surface text-default hover:bg-surface-hovered active:bg-surface-pressed",
+  default:
+    "border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed",
   primary:
-    "border-transparent bg-neutral-bold text-inverse hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed",
-  subtle:
+    "border-transparent bg-neutral-bold text-inverse shadow-button-bold hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed active:shadow-none",
+  ghost:
     "border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed",
-  outline:
-    "border-bold bg-neutral-subtle text-default hover:bg-neutral-subtle-hovered active:bg-neutral-subtle-pressed",
-  warning: "border-transparent bg-warning-bold text-warning-inverse hover:bg-warning-bold-hovered",
-  danger: "border-transparent bg-danger-bold text-inverse hover:bg-danger-bold-hovered",
+  warning:
+    "border-transparent bg-warning-bold text-warning-inverse shadow-button-bold hover:bg-warning-bold-hovered active:bg-warning-bold-pressed active:shadow-none",
+  danger:
+    "border-transparent bg-danger-bold text-inverse shadow-button-bold hover:bg-danger-bold-hovered active:bg-danger-bold-pressed active:shadow-none",
 };
 
 /** A pressed toggle: the finesse grey plus an edge in `border-selected`, never the fill alone. */
 const SELECTED =
   "border-selected bg-selected text-selected hover:bg-selected-hovered active:bg-selected-pressed";
 
-const DISABLED = "cursor-not-allowed border-transparent bg-disabled text-disabled";
+const DISABLED = "cursor-not-allowed border-transparent bg-button-disabled text-disabled";
 
 /** A label's icon, at the label's size. */
 const ICON_SIZE: Record<ButtonSpacing, "small" | "medium"> = {
@@ -90,6 +100,7 @@ export function buttonLook({
     BASE,
     square ? SQUARE[spacing] : SPACING[spacing],
     isDisabled ? DISABLED : isSelected ? SELECTED : APPEARANCE[appearance],
+    !isDisabled && PRESS,
     shouldFitContainer && "w-full",
   );
 }
@@ -171,7 +182,7 @@ export function Button({
         {iconAfter && <Icon glyph={iconAfter} size={ICON_SIZE[spacing]} />}
       </span>
       {isLoading && (
-        <span className="absolute inset-0 flex items-center justify-center">
+        <span className="absolute inset-0 flex animate-settle-in items-center justify-center motion-reduce:animate-none">
           <SpinnerGlyph />
         </span>
       )}
@@ -261,7 +272,7 @@ type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "disabled" 
 export function IconButton({
   icon,
   label,
-  appearance = "subtle",
+  appearance = "ghost",
   spacing = "default",
   shape = "default",
   isSelected,
@@ -310,7 +321,13 @@ export function IconButton({
           className,
         )}
       >
-        {isLoading ? <SpinnerGlyph /> : <Icon glyph={icon} />}
+        {isLoading ? (
+          <span className="inline-flex animate-settle-in motion-reduce:animate-none">
+            <SpinnerGlyph />
+          </span>
+        ) : (
+          <Icon glyph={icon} />
+        )}
       </button>
     </Tooltip>
   );

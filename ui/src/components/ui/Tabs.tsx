@@ -6,12 +6,17 @@
  * named by its tab. A SegmentedControl is a set of pressed/unpressed buttons for a filter or a
  * sort — a choice among peers that narrows what one view shows, not a different view.
  *
+ * The two look apart on purpose. A tab's selection is a bar under it, drawn by its `::after` over
+ * its own transparent bottom edge so the tab's box never changes (`PreviewPane` measures a copy of
+ * it); the bar grows out from the centre, grey on hover and dark once chosen. A segmented
+ * control is a sunken track whose chosen option is raised out of it, with the button's edge
+ * and shadow (`--button-*`), so the choice keeps an edge in dark mode, where there is no shadow.
+ *
  * Both are controlled: the page keeps the value, and binds it to the URL where a view should be
  * shareable by link.
  */
 
 import { createContext, Fragment, type KeyboardEvent, type ReactNode, useContext } from "react";
-import { Button } from "./Button";
 import { cx } from "./cx";
 import { Badge } from "./Lozenge";
 
@@ -112,11 +117,12 @@ export function Tab({
       tabIndex={isSelected ? 0 : -1}
       onClick={() => onChange(value)}
       className={cx(
-        "focus-inset -mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-body font-medium transition-colors",
+        "focus-inset relative -mb-px inline-flex h-11 items-center gap-2 border-b-2 border-transparent px-3 text-body font-medium transition-colors",
+        "after:absolute after:inset-x-0 after:-bottom-0.5 after:border-b-2 after:transition after:duration-200 after:ease-out-bold motion-reduce:after:transition-none",
         end && "ml-auto",
         isSelected
-          ? "border-selected text-selected"
-          : "border-transparent text-subtle hover:border-bold hover:text-default",
+          ? "text-selected after:scale-x-100 after:border-selected"
+          : "text-subtle after:scale-x-0 after:border-bold hover:text-default hover:after:scale-x-100",
       )}
     >
       {children}
@@ -154,6 +160,27 @@ export function TabPanel({
   );
 }
 
+const SEGMENT =
+  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none";
+
+/** The track's 2px around each segment keeps the whole control at a button's height. */
+const SEGMENT_SPACING = {
+  default: "h-7 px-3 text-body",
+  compact: "h-5 px-2 text-body",
+};
+
+/** One segment's classes, exported for the static reference pages, which redraw the theme
+ *  switch without React. */
+export function segmentLook(spacing: "default" | "compact", isSelected: boolean): string {
+  return cx(
+    SEGMENT,
+    SEGMENT_SPACING[spacing],
+    isSelected
+      ? "border-button bg-surface-raised text-default shadow-button"
+      : "border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed",
+  );
+}
+
 export type SegmentOption<T extends string> = {
   value: T;
   label: string;
@@ -168,7 +195,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   options,
-  spacing = "compact",
+  spacing = "default",
 }: {
   label: string;
   value: T;
@@ -178,23 +205,30 @@ export function SegmentedControl<T extends string>({
 }) {
   return (
     // biome-ignore lint/a11y/useSemanticElements: a row of toggles, not a form's fieldset
-    <div role="group" aria-label={label} className="inline-flex flex-wrap items-center gap-1">
-      {options.map((option) => (
-        <Fragment key={option.value}>
-          {option.separatorBefore && (
-            <span aria-hidden="true" className="mx-1 h-4 shrink-0 border-l border-default" />
-          )}
-          <Button
-            appearance="subtle"
-            spacing={spacing}
-            isSelected={value === option.value}
-            onClick={() => onChange(option.value)}
-          >
-            {option.label}
-            {option.count !== undefined && <Badge>{option.count}</Badge>}
-          </Button>
-        </Fragment>
-      ))}
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-md bg-neutral p-0.5"
+    >
+      {options.map((option) => {
+        const isSelected = value === option.value;
+        return (
+          <Fragment key={option.value}>
+            {option.separatorBefore && (
+              <span aria-hidden="true" className="mx-1 h-4 shrink-0 border-l border-bold" />
+            )}
+            <button
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => onChange(option.value)}
+              className={segmentLook(spacing, isSelected)}
+            >
+              {option.label}
+              {option.count !== undefined && <Badge>{option.count}</Badge>}
+            </button>
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

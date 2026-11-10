@@ -43,7 +43,6 @@
   :root, :host {
     --spacing: 0.25rem;
     --container-sm: 24rem;
-    --tracking-wide: 0.025em;
     --default-font-family: "Inter", "Inter fallback", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu,
     "Helvetica Neue", sans-serif;
     --default-mono-font-family: "JetBrains Mono", "JetBrains Mono fallback", ui-monospace, Menlo, "Segoe UI Mono",
@@ -308,8 +307,14 @@
   .h-6 {
     height: calc(var(--spacing) * 6);
   }
+  .h-7 {
+    height: calc(var(--spacing) * 7);
+  }
   .h-8 {
     height: calc(var(--spacing) * 8);
+  }
+  .h-11 {
+    height: calc(var(--spacing) * 11);
   }
   .min-h-6 {
     min-height: calc(var(--spacing) * 6);
@@ -500,6 +505,14 @@
   .rounded-xs {
     border-radius: var(--ds-radius-xsmall);
   }
+  .rounded-l-sm {
+    border-top-left-radius: var(--ds-radius-small);
+    border-bottom-left-radius: var(--ds-radius-small);
+  }
+  .rounded-r-md {
+    border-top-right-radius: var(--ds-radius-medium);
+    border-bottom-right-radius: var(--ds-radius-medium);
+  }
   .rounded-r-sm {
     border-top-right-radius: var(--ds-radius-small);
     border-bottom-right-radius: var(--ds-radius-small);
@@ -507,10 +520,6 @@
   .border {
     border-style: var(--tw-border-style);
     border-width: 1px;
-  }
-  .border-2 {
-    border-style: var(--tw-border-style);
-    border-width: 2px;
   }
   .border-r {
     border-right-style: var(--tw-border-style);
@@ -528,11 +537,12 @@
     border-left-style: var(--tw-border-style);
     border-left-width: 1px;
   }
-  .border-bold {
-    border-color: var(--ds-border-bold);
+  .border-l-3 {
+    border-left-style: var(--tw-border-style);
+    border-left-width: 3px;
   }
-  .border-brand {
-    border-color: var(--ds-border-brand);
+  .border-button {
+    border-color: var(--button-border);
   }
   .border-default {
     border-color: var(--ds-border);
@@ -546,8 +556,14 @@
   .border-transparent {
     border-color: transparent;
   }
+  .border-l-warning {
+    border-left-color: var(--ds-border-warning);
+  }
   .bg-\[var\(--look\)\] {
     background-color: var(--look);
+  }
+  .bg-button {
+    background-color: var(--button-fill);
   }
   .bg-danger {
     background-color: var(--ds-background-danger);
@@ -591,6 +607,9 @@
   .bg-warning {
     background-color: var(--ds-background-warning);
   }
+  .p-0\.5 {
+    padding: calc(var(--spacing) * 0.5);
+  }
   .p-2 {
     padding: calc(var(--spacing) * 2);
   }
@@ -599,9 +618,6 @@
   }
   .p-4 {
     padding: calc(var(--spacing) * 4);
-  }
-  .p-\[11px\] {
-    padding: 11px;
   }
   .px-1 {
     padding-inline: var(--spacing);
@@ -716,10 +732,6 @@
     --tw-font-weight: var(--ds-font-weight-semibold);
     font-weight: var(--ds-font-weight-semibold);
   }
-  .tracking-wide {
-    --tw-tracking: var(--tracking-wide);
-    letter-spacing: var(--tracking-wide);
-  }
   .break-words {
     overflow-wrap: break-word;
   }
@@ -768,15 +780,22 @@
   .text-warning {
     color: var(--ds-text-warning);
   }
-  .uppercase {
-    text-transform: uppercase;
-  }
   .tabular-nums {
     --tw-numeric-spacing: tabular-nums;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
   }
-  .underline-offset-2 {
-    text-underline-offset: 2px;
+  .shadow-button {
+    --tw-shadow: var(--button-shadow);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .shadow-button-bold {
+    --tw-shadow: var(--button-shadow-bold);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .transition {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+    transition-timing-function: var(--tw-ease, var(--ds-easing-out-practical));
+    transition-duration: var(--tw-duration, var(--ds-duration-short));
   }
   .transition-colors {
     transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
@@ -799,13 +818,64 @@
   .placeholder\:text-subtlest::placeholder {
     color: var(--ds-text-subtlest);
   }
+  .after\:absolute::after {
+    content: var(--tw-content);
+    position: absolute;
+  }
+  .after\:inset-x-0::after {
+    content: var(--tw-content);
+    inset-inline: 0px;
+  }
+  .after\:-bottom-0\.5::after {
+    content: var(--tw-content);
+    bottom: calc(var(--spacing) * -0.5);
+  }
+  .after\:scale-x-0::after {
+    content: var(--tw-content);
+    --tw-scale-x: 0%;
+    scale: var(--tw-scale-x) var(--tw-scale-y);
+  }
+  .after\:scale-x-100::after {
+    content: var(--tw-content);
+    --tw-scale-x: 100%;
+    scale: var(--tw-scale-x) var(--tw-scale-y);
+  }
+  .after\:border-b-2::after {
+    content: var(--tw-content);
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 2px;
+  }
+  .after\:border-bold::after {
+    content: var(--tw-content);
+    border-color: var(--ds-border-bold);
+  }
+  .after\:border-selected::after {
+    content: var(--tw-content);
+    border-color: var(--ds-border-selected);
+  }
+  .after\:transition::after {
+    content: var(--tw-content);
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+    transition-timing-function: var(--tw-ease, var(--ds-easing-out-practical));
+    transition-duration: var(--tw-duration, var(--ds-duration-short));
+  }
+  .after\:duration-200::after {
+    content: var(--tw-content);
+    --tw-duration: 200ms;
+    transition-duration: 200ms;
+  }
+  .after\:ease-out-bold::after {
+    content: var(--tw-content);
+    --tw-ease: var(--ds-easing-out-bold);
+    transition-timing-function: var(--ds-easing-out-bold);
+  }
   .last\:border-b-0:last-child {
     border-bottom-style: var(--tw-border-style);
     border-bottom-width: 0px;
   }
   @media (hover: hover) {
-    .hover\:border-bold:hover {
-      border-color: var(--ds-border-bold);
+    .hover\:bg-button-hovered:hover {
+      background-color: var(--button-fill-hovered);
     }
     .hover\:bg-input-hovered:hover {
       background-color: var(--ds-background-input-hovered);
@@ -813,11 +883,11 @@
     .hover\:bg-neutral-bold-hovered:hover {
       background-color: var(--ds-background-neutral-bold-hovered);
     }
+    .hover\:bg-neutral-hovered:hover {
+      background-color: var(--ds-background-neutral-hovered);
+    }
     .hover\:bg-neutral-subtle-hovered:hover {
       background-color: var(--ds-background-neutral-subtle-hovered);
-    }
-    .hover\:bg-selected-hovered:hover {
-      background-color: var(--ds-background-selected-hovered);
     }
     .hover\:bg-surface-hovered:hover {
       background-color: var(--ds-surface-hovered);
@@ -825,21 +895,27 @@
     .hover\:text-default:hover {
       color: var(--ds-text);
     }
-    .hover\:underline:hover {
-      text-decoration-line: underline;
+    .hover\:after\:scale-x-100:hover::after {
+      content: var(--tw-content);
+      --tw-scale-x: 100%;
+      scale: var(--tw-scale-x) var(--tw-scale-y);
     }
+  }
+  .active\:bg-button-pressed:active {
+    background-color: var(--button-fill-pressed);
   }
   .active\:bg-neutral-bold-pressed:active {
     background-color: var(--ds-background-neutral-bold-pressed);
   }
+  .active\:bg-neutral-pressed:active {
+    background-color: var(--ds-background-neutral-pressed);
+  }
   .active\:bg-neutral-subtle-pressed:active {
     background-color: var(--ds-background-neutral-subtle-pressed);
   }
-  .active\:bg-selected-pressed:active {
-    background-color: var(--ds-background-selected-pressed);
-  }
-  .active\:bg-surface-pressed:active {
-    background-color: var(--ds-surface-pressed);
+  .active\:shadow-none:active {
+    --tw-shadow: 0 0 #0000;
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .disabled\:cursor-not-allowed:disabled {
     cursor: not-allowed;
@@ -858,6 +934,23 @@
   }
   .aria-invalid\:border-danger[aria-invalid="true"] {
     border-color: var(--ds-border-danger);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-safe\:active\:scale-97:active {
+      --tw-scale-x: 97%;
+      --tw-scale-y: 97%;
+      --tw-scale-z: 97%;
+      scale: var(--tw-scale-x) var(--tw-scale-y);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .motion-reduce\:transition-none {
+      transition-property: none;
+    }
+    .motion-reduce\:after\:transition-none::after {
+      content: var(--tw-content);
+      transition-property: none;
+    }
   }
   @media (width < 48rem) {
     .max-md\:text-body-lg {
@@ -984,7 +1077,7 @@
   --ds-icon-discovery: #af59e1;
   --ds-border: #0b120e24;
   --ds-border-bold: #7d818a;
-  --ds-border-input: #8c8f97;
+  --ds-border-input: #91949c;
   --ds-border-focused: #4688ec;
   --ds-border-selected: #292a2e;
   --ds-border-disabled: #0515240f;
@@ -1094,6 +1187,14 @@
   --google-button-fill: #ffffff;
   --google-button-border: #747775;
   --google-button-text: #1f1f1f;
+  --button-border: #0b120e2e;
+  --button-fill: #0515240a;
+  --button-fill-hovered: #05152417;
+  --button-fill-pressed: #080f2129;
+  --button-fill-disabled: #0515240a;
+  --button-shadow: 0px 1px 2px #1e1f2114, 0px 0px 1px #1e1f210f;
+  --button-shadow-bold: inset 0px 1px 0px #ffffff26, 0px 1px 2px #1e1f2133;
+  --metric-fill: var(--button-fill-hovered);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -1235,6 +1336,14 @@
   --google-button-fill: #131314;
   --google-button-border: #8e918f;
   --google-button-text: #e3e3e3;
+  --button-border: var(--ds-border-bold);
+  --button-fill: var(--ds-background-neutral);
+  --button-fill-hovered: var(--ds-background-neutral-hovered);
+  --button-fill-pressed: var(--ds-background-neutral-pressed);
+  --button-fill-disabled: var(--ds-background-disabled);
+  --button-shadow: 0px 0px 0px #00000000;
+  --button-shadow-bold: 0px 0px 0px #00000000;
+  --metric-fill: var(--ds-background-neutral-pressed);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -1377,10 +1486,23 @@
     --google-button-fill: #131314;
     --google-button-border: #8e918f;
     --google-button-text: #e3e3e3;
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
+    --button-shadow: 0px 0px 0px #00000000;
+    --button-shadow-bold: 0px 0px 0px #00000000;
+    --metric-fill: var(--ds-background-neutral-pressed);
   }
 }
 @media (prefers-contrast: more) {
   :root:not([data-theme="dark"]) {
+    --button-border: var(--ds-border-bold);
+    --button-fill: var(--ds-background-neutral);
+    --button-fill-hovered: var(--ds-background-neutral-hovered);
+    --button-fill-pressed: var(--ds-background-neutral-pressed);
+    --button-fill-disabled: var(--ds-background-disabled);
     --ds-text: #1e1f21;
     --ds-text-subtle: #292a2e;
     --ds-text-subtlest: #3b3d42;
@@ -1638,6 +1760,16 @@
     opacity: 0.28;
   }
 }
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
 :root {
   --dash-outcome-done: var(--ds-chart-success);
   @supports (color: color-mix(in lab, red, red)) {
@@ -1689,6 +1821,9 @@
     background-color: var(--ds-surface-sunken);
     color: var(--ds-text);
     -webkit-font-smoothing: antialiased;
+  }
+  input[type="checkbox"], input[type="radio"] {
+    accent-color: var(--ds-border-selected);
   }
   *, ::before, ::after, ::backdrop, ::file-selector-button {
     border-color: var(--ds-border);
@@ -1754,10 +1889,6 @@
   syntax: "*";
   inherits: false;
 }
-@property --tw-tracking {
-  syntax: "*";
-  inherits: false;
-}
 @property --tw-ordinal {
   syntax: "*";
   inherits: false;
@@ -1778,7 +1909,96 @@
   syntax: "*";
   inherits: false;
 }
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
 @property --tw-duration {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-content {
+  syntax: "*";
+  initial-value: "";
+  inherits: false;
+}
+@property --tw-scale-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-scale-z {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+@property --tw-ease {
   syntax: "*";
   inherits: false;
 }
@@ -1791,13 +2011,31 @@
       --tw-space-y-reverse: 0;
       --tw-border-style: solid;
       --tw-font-weight: initial;
-      --tw-tracking: initial;
       --tw-ordinal: initial;
       --tw-slashed-zero: initial;
       --tw-numeric-figure: initial;
       --tw-numeric-spacing: initial;
       --tw-numeric-fraction: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
       --tw-duration: initial;
+      --tw-content: "";
+      --tw-scale-x: 1;
+      --tw-scale-y: 1;
+      --tw-scale-z: 1;
+      --tw-ease: initial;
     }
   }
 }
@@ -1805,10 +2043,10 @@
 </style>
 </head>
 <body>
-<div class="flex flex-wrap items-center gap-3 border-b border-default bg-surface-raised px-4 py-2 text-body-sm text-subtle"><span>Design system <!-- -->sample<!-- -->, generated from<!-- --> <code class="font-mono">ui/src/pages/<!-- -->Sample<!-- -->Page.tsx</code>. See docs/design-system.md.</span></div><div class="flex min-h-dvh flex-col bg-surface-sunken"><header class="flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-surface px-4 py-2"><span class="text-heading-sm">Factorial</span><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">Sample</span></span><span class="ml-auto flex flex-wrap items-center gap-1"><span class="flex flex-wrap items-center gap-1"><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed" data-appearance="subtle" data-spacing="compact" href="guide.html" data-discover="true">Guide</a><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed" data-appearance="subtle" data-spacing="compact" href="catalogue.html" data-discover="true">Catalogue</a><span aria-hidden="true" class="mx-1 h-4 shrink-0 border-l border-default"></span><span data-theme-switch=""><div role="group" aria-label="Theme" class="inline-flex flex-wrap items-center gap-1"><button type="button" aria-pressed="false" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Light</span></button><button type="button" aria-pressed="false" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Dark</span></button><button type="button" aria-pressed="true" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-selected bg-selected text-selected hover:bg-selected-hovered active:bg-selected-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Match system theme</span></button></div></span></span><button type="button" aria-label="Search" data-appearance="subtle" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="search" class="shrink-0 size-4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="m10.5 10.5 3 3"></path></svg></button><button type="button" aria-label="Help" data-appearance="subtle" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="help" class="shrink-0 size-4" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M6.25 6.25a1.75 1.75 0 1 1 2.6 1.55c-.55.3-.85.7-.85 1.2v.25"></path><path d="M8 11.1v.01" stroke-width="2"></path></svg></button><button type="button" aria-label="Account" data-appearance="subtle" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="user" class="shrink-0 size-4" aria-hidden="true"><circle cx="8" cy="5.5" r="2.75"></circle><path d="M2.75 14a5.25 5.25 0 0 1 10.5 0"></path></svg></button></span></header><div class="flex flex-1"><nav aria-label="Sample navigation" class="hidden w-60 shrink-0 border-r border-default bg-surface p-2 md:block"><ul class="space-y-0.5"><li><a aria-current="page" class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body bg-selected font-medium text-selected" href="/sample" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full bg-neutral-bold"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="overview" class="shrink-0 size-4" aria-hidden="true"><path d="M2.25 3h11.5v10H2.25ZM6 3v10m4-10v10"></path></svg><span class="min-w-0 flex-1 truncate">Overview</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/tickets" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="tickets" class="shrink-0 size-4" aria-hidden="true"><path d="M2.25 4.25h11.5v7.5H2.25Z"></path><path d="M5.5 4.25v7.5M8 7h3.25M8 9h2"></path></svg><span class="min-w-0 flex-1 truncate">Tickets</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/runtimes" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="runtimes" class="shrink-0 size-4" aria-hidden="true"><path d="M4.5 4.5h7v7h-7Z"></path><path d="M6.5 2v2.5m3-2.5v2.5m-3 7V14m3-2.5V14M2 6.5h2.5M2 9.5h2.5m7-3H14m-2.5 3H14"></path></svg><span class="min-w-0 flex-1 truncate">Runtimes</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/agents" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="agent" class="shrink-0 size-4" aria-hidden="true"><path d="M3 5.75h10v7.5H3Z"></path><path d="M8 5.75V3.5"></path><path d="M8 2.4v.01" stroke-width="2"></path><path d="M6 9.25v.01M10 9.25v.01" stroke-width="2"></path><path d="M1.25 8.5v2m13.5-2v2"></path></svg><span class="min-w-0 flex-1 truncate">Agents</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/settings" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="settings" class="shrink-0 size-4" aria-hidden="true"><path d="M2.5 4.5h6.25m3 0h1.75M2.5 11.5h1.75m3 0h6.25"></path><path d="M8.75 3h3v3h-3ZM4.25 10h3v3h-3Z"></path></svg><span class="min-w-0 flex-1 truncate">Settings</span></a></li></ul></nav><main class="min-w-0 flex-1 px-4 py-6 lg:px-8"><div class="space-y-6"><header class="space-y-2"><div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3"><div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><h1 data-page-title="true" tabindex="-1" class="min-w-0 text-heading-lg text-default break-words">acme/widgets</h1><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">Running</span></span></div><div class="flex flex-wrap items-center gap-2"><button type="button" data-appearance="subtle" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-8 px-3 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="refresh" class="shrink-0 size-4" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71"></path><path d="M13.25 2.25v2.5h-2.5"></path></svg>Refresh</span></button><button type="button" data-appearance="primary" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-8 px-3 text-body border-transparent bg-neutral-bold text-inverse hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="plus" class="shrink-0 size-4" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New ticket</span></button></div></div><div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-body text-subtle"><div role="group" aria-label="Project facts" class="flex flex-wrap items-center gap-1"><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">claude_cli</span></span><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">process-simple v3</span></span><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">main protected</span></span></div></div></header><section data-appearance="warning" class="flex gap-3 rounded-md p-4 text-body bg-warning"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-warning" class="shrink-0 size-4 mt-0.5 text-icon-warning" aria-hidden="true"><path d="M8 1.9 14.3 13.25H1.7Z"></path><path d="M8 6.25v3.5"></path><path d="M8 11.4v.01" stroke-width="2"></path></svg><div class="min-w-0 flex-1 space-y-1 text-default"><h3 class="text-heading-xs">Two tickets need a person</h3><div class="break-words whitespace-pre-wrap"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#57</code> waits at the spec gate, and <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#7</code> is blocked after three failed attempts.</div><div class="flex flex-wrap pt-1 gap-x-4 gap-y-1"><a href="#tickets" target="_blank" rel="noreferrer" class="font-medium underline-offset-2 hover:underline">Open the gate</a></div></div></section><div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Open tickets</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">4</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">2 need a person</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Spend</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">$21.34</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">this month · 5 tickets</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Per done ticket</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">$2.31</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">median · 1 done</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Tokens</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">-</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">nothing has run today</span></div></div><div class="grid gap-6 lg:grid-cols-3"><div class="min-w-0 space-y-6 lg:col-span-2"><section aria-labelledby="_R_2pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_2pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Tickets</span><span data-appearance="neutral" class="inline-flex h-4 min-w-5 items-center justify-center rounded-xs px-1 text-body-sm tabular-nums bg-neutral text-default">5</span></span></h2></div><button type="button" data-appearance="default" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-bold bg-surface text-default hover:bg-surface-hovered active:bg-surface-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Export</span></button></header><div class="px-4"><div role="tablist" aria-label="Ticket filter" tabindex="-1" class="flex gap-1 border-b border-default"><button type="button" role="tab" id="sample-tickets-tab-open" data-value="open" aria-selected="true" aria-controls="sample-tickets-panel-open" tabindex="0" class="focus-inset -mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-body font-medium transition-colors border-selected text-selected">Open<span data-appearance="neutral" class="inline-flex h-4 min-w-5 items-center justify-center rounded-xs px-1 text-body-sm tabular-nums bg-neutral text-default">4</span></button><button type="button" role="tab" id="sample-tickets-tab-all" data-value="all" aria-selected="false" tabindex="-1" class="focus-inset -mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-body font-medium transition-colors border-transparent text-subtle hover:border-bold hover:text-default">All</button></div></div><div role="tabpanel" id="sample-tickets-panel-open" aria-labelledby="sample-tickets-tab-open" tabindex="0" class="focus-inset pt-4"><div><div role="region" aria-label="Tickets" tabindex="0" class="focus-inset relative overflow-x-auto"><table class="w-full border-collapse text-body"><caption class="sr-only">Tickets<!-- -->, 4 rows</caption><thead class="bg-table-head"><tr class="border-b border-default"><th scope="col" class="px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase text-left">Issue</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase text-left">Title</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase text-left">Step</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase text-left">Status</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold tracking-wide whitespace-nowrap text-subtle uppercase text-right">Cost</th></tr></thead><tbody class=""><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#42</code></td><td class="px-3 py-2 align-middle">Export the board as CSV</td><td class="px-3 py-2 align-middle">build</td><td class="px-3 py-2 align-middle"><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">Running</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$4.20</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#57</code></td><td class="px-3 py-2 align-middle">Rate-limit the webhook</td><td class="px-3 py-2 align-middle">spec_gate</td><td class="px-3 py-2 align-middle"><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">Waiting at gate</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$1.05</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#61</code></td><td class="px-3 py-2 align-middle">Dark mode for the settings page</td><td class="px-3 py-2 align-middle">spec</td><td class="px-3 py-2 align-middle"><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">Rejected</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$0.88</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#7</code></td><td class="px-3 py-2 align-middle">Migrate the cron jobs</td><td class="px-3 py-2 align-middle">build</td><td class="px-3 py-2 align-middle"><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger text-danger"><span class="truncate">Blocked</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$12.90</td></tr></tbody></table></div></div></div></section><section aria-labelledby="_R_4pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_4pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Spend by outcome</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">This month</span></div></div></header><div class="space-y-4 p-4"><div><div role="img" aria-label="Spend by outcome: Done $2.31 · 11%, Open $18.15 · 85%, Exited $0.88 · 4%" class="flex h-6 gap-0.5 overflow-hidden rounded-sm"><span data-segment="done" data-chart-look="outcome-done" style="flex-grow:2.31;--look:var(--dash-outcome-done)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span><span data-segment="open" data-chart-look="outcome-open" style="flex-grow:18.15;--look:var(--dash-outcome-open)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span><span data-segment="exited" data-chart-look="outcome-exited" style="flex-grow:0.88;--look:var(--dash-outcome-exited)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span></div><ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-body-sm"><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-done" style="--look:var(--dash-outcome-done)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Done</span><span class="font-medium text-default tabular-nums">$2.31 · 11%</span></li><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-open" style="--look:var(--dash-outcome-open)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Open</span><span class="font-medium text-default tabular-nums">$18.15 · 85%</span></li><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-exited" style="--look:var(--dash-outcome-exited)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Exited</span><span class="font-medium text-default tabular-nums">$0.88 · 4%</span></li></ul></div><div><ul aria-label="Cost by ticket" class="space-y-3 sm:space-y-1"><li data-row="7" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#7 Cron jobs</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:100%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$12.90</span></li><li data-row="42" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#42 CSV export</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:32.55813953488372%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$4.20</span></li><li data-row="3" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#3 Health check</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-done" style="width:17.906976744186046%;--look:var(--dash-outcome-done)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$2.31</span></li><li data-row="57" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#57 Rate limit</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:8.13953488372093%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$1.05</span></li></ul><div aria-hidden="true" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] mt-1"><span class="flex justify-between text-body-sm text-subtlest tabular-nums sm:col-start-2"><span>$0.00</span><span>$6.45</span><span>$12.90</span></span></div></div></div></section><section aria-labelledby="_R_6pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_6pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Add a runtime</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">A form, with its helper, error and valid messages</span></div></div></header><form class="grid gap-4 p-4 md:grid-cols-2"><div class="space-y-1"><label for="_R_3epa_" class="block text-body-sm font-semibold text-subtle">Name<span aria-hidden="true" class="text-danger"> <!-- -->*</span></label><input id="_R_3epa_" aria-describedby="_R_3epa_-message" required="" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 w-full"/><p id="_R_3epa_-message" class="flex items-start gap-1 text-body-sm text-subtlest"><span>Shown on the board and in the list.</span></p></div><div class="space-y-1"><label for="_R_5epa_" class="block text-body-sm font-semibold text-subtle">Slug<span aria-hidden="true" class="text-danger"> <!-- -->*</span></label><input id="_R_5epa_" aria-describedby="_R_5epa_-message" aria-invalid="true" required="" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 font-mono w-full" value="-"/><p id="_R_5epa_-message" class="flex items-start gap-1 text-body-sm text-danger"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-error" class="shrink-0 size-3 mt-0.5" aria-hidden="true"><path d="M5.3 1.75h5.4l3.55 3.55v5.4l-3.55 3.55H5.3L1.75 10.7V5.3Z"></path><path d="M8 4.75v4"></path><path d="M8 11.1v.01" stroke-width="2"></path></svg><span>A slug needs at least one letter.</span></p></div><div class="space-y-1"><label for="_R_7epa_" class="block text-body-sm font-semibold text-subtle">Adapter</label><span class="relative inline-flex items-center w-full"><select id="_R_7epa_" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled w-full appearance-none pr-7 h-8 pl-2"><option value="claude_cli">claude_cli</option><option value="codex_cli">codex_cli</option></select><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="chevron-down" class="shrink-0 size-4 pointer-events-none absolute right-2 text-icon-subtle" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg></span></div><div class="space-y-1"><label for="_R_9epa_" class="block text-body-sm font-semibold text-subtle">Repository</label><input id="_R_9epa_" aria-describedby="_R_9epa_-message" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 w-full" value="acme/widgets"/><p id="_R_9epa_-message" class="flex items-start gap-1 text-body-sm text-success"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-success" class="shrink-0 size-3 mt-0.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="m5.25 8.25 2 2 3.5-4"></path></svg><span>The App can read it.</span></p></div><div class="md:col-span-2"><fieldset><legend class="sr-only">Sandbox</legend><div class="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3"><label class="flex items-start gap-2 rounded-md text-body border-2 border-brand bg-selected p-[11px] cursor-pointer text-default"><input type="radio" aria-describedby="sample-sandbox-cloud-description" class="mt-1 size-3.5 shrink-0" name="sample-sandbox" checked="" value="cloud"/><span class="min-w-0 flex-1 space-y-1"><span class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="font-medium">Managed cloud sandbox</span></span><span id="sample-sandbox-cloud-description" class="block text-body-sm text-subtle">A fresh sandbox per run. Keys stay outside it.</span></span></label><label class="flex items-start gap-2 rounded-md text-body border border-default p-3 cursor-pointer text-default bg-surface hover:bg-surface-hovered"><input type="radio" aria-describedby="sample-sandbox-host-description" class="mt-1 size-3.5 shrink-0" name="sample-sandbox" value="host"/><span class="min-w-0 flex-1 space-y-1"><span class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="font-medium">On the host</span><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">Not recommended for prod</span></span></span><span id="sample-sandbox-host-description" class="block text-body-sm text-subtle">The agent can read the host&#x27;s files.</span></span></label></div></fieldset></div><div class="flex flex-col items-start gap-2"><span class="inline-flex items-center gap-2 text-body text-default"><button type="button" role="switch" aria-checked="true" aria-labelledby="_R_tepa_-label" class="relative inline-flex h-4 w-8 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-disabled bg-success-bold"><span class="absolute inline-flex size-3 items-center justify-center rounded-full bg-surface text-subtle transition-transform translate-x-4.5"></span></button><span id="_R_tepa_-label">Admission</span></span><label class="inline-flex items-center gap-2 text-body text-default"><input type="checkbox" data-state="off" class="size-3.5 shrink-0"/><span>Include closed issues</span></label></div><div class="flex flex-wrap items-center gap-2 pt-2 justify-end"><button type="button" data-appearance="subtle" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-8 px-3 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Cancel</span></button><button type="submit" data-appearance="primary" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-8 px-3 text-body border-transparent bg-neutral-bold text-inverse hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Add runtime</span></button></div></form></section></div><div class="min-w-0 space-y-6"><section aria-labelledby="_R_39a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_39a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Process</span></span></h2></div></header><div class="p-4"><figure class="relative min-w-0 rounded-md bg-neutral"><figcaption class="sr-only">process-simple.yaml</figcaption><div class="absolute top-1 right-1"><button aria-label="Copy process-simple.yaml" type="button" data-appearance="subtle" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="copy" class="shrink-0 size-4" aria-hidden="true"><path d="M5.5 5.5h8v8h-8Z"></path><path d="M10.5 5.5v-3h-8v8h3"></path></svg><span aria-live="polite">Copy</span></span></button></div><pre tabindex="0" class="focus-inset overflow-auto rounded-md px-3 py-2 font-mono text-body-sm text-default whitespace-pre pr-24"><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">1</span>specVersion: factorial/v1</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">2</span>kind: Process</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">3</span>steps:</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">4</span>  - name: spec</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">5</span>    agent: spec-writer</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">6</span>    next: spec_gate</span></pre></figure></div></section><section aria-labelledby="_R_59a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_59a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Agents</span></span></h2></div></header><div class="mx-auto flex flex-col items-center gap-2 px-4 py-10 text-center max-w-sm"><h3 class="text-heading-sm text-default">No agents yet</h3><div class="text-body text-subtle">Add one under .factorial/agents/ in the repository.</div><div class="flex flex-wrap items-center justify-center gap-2 pt-2"><button type="button" data-appearance="default" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-8 px-3 text-body border-bold bg-surface text-default hover:bg-surface-hovered active:bg-surface-pressed"><span class="inline-flex min-w-0 items-center gap-1.5">Read the guide</span></button></div></div></section></div></div></div></main></div></div>
+<div class="flex flex-wrap items-center gap-3 border-b border-default bg-surface-raised px-4 py-2 text-body-sm text-subtle"><span>Design system <!-- -->sample<!-- -->, generated from<!-- --> <code class="font-mono">ui/src/pages/<!-- -->Sample<!-- -->Page.tsx</code>. See docs/design-system.md.</span></div><div class="flex min-h-dvh flex-col bg-surface-sunken"><header class="flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-surface px-4 py-2"><span class="text-heading-sm">Factorial</span><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">Sample</span></span><span class="ml-auto flex flex-wrap items-center gap-1"><span class="flex flex-wrap items-center gap-1"><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97" data-appearance="default" data-spacing="compact" href="guide.html" data-discover="true">Guide</a><a class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97" data-appearance="default" data-spacing="compact" href="catalogue.html" data-discover="true">Catalogue</a><span aria-hidden="true" class="mx-1 h-4 shrink-0 border-l border-default"></span><span data-theme-switch=""><div role="group" aria-label="Theme" class="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-md bg-neutral p-0.5"><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed">Light</button><button type="button" aria-pressed="false" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed">Dark</button><button type="button" aria-pressed="true" class="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-button bg-surface-raised text-default shadow-button">Match system theme</button></div></span></span><button type="button" aria-label="Search" data-appearance="ghost" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed motion-safe:active:scale-97"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="search" class="shrink-0 size-4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="m10.5 10.5 3 3"></path></svg></button><button type="button" aria-label="Help" data-appearance="ghost" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed motion-safe:active:scale-97"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="help" class="shrink-0 size-4" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="M6.25 6.25a1.75 1.75 0 1 1 2.6 1.55c-.55.3-.85.7-.85 1.2v.25"></path><path d="M8 11.1v.01" stroke-width="2"></path></svg></button><button type="button" aria-label="Account" data-appearance="ghost" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none size-8 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed motion-safe:active:scale-97"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="user" class="shrink-0 size-4" aria-hidden="true"><circle cx="8" cy="5.5" r="2.75"></circle><path d="M2.75 14a5.25 5.25 0 0 1 10.5 0"></path></svg></button></span></header><div class="flex flex-1"><nav aria-label="Sample navigation" class="hidden w-60 shrink-0 border-r border-default bg-surface p-2 md:block"><ul class="space-y-0.5"><li><a aria-current="page" class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body bg-selected font-medium text-selected" href="/sample" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full bg-neutral-bold"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="overview" class="shrink-0 size-4" aria-hidden="true"><path d="M2.25 3h11.5v10H2.25ZM6 3v10m4-10v10"></path></svg><span class="min-w-0 flex-1 truncate">Overview</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/tickets" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="tickets" class="shrink-0 size-4" aria-hidden="true"><path d="M2.25 4.25h11.5v7.5H2.25Z"></path><path d="M5.5 4.25v7.5M8 7h3.25M8 9h2"></path></svg><span class="min-w-0 flex-1 truncate">Tickets</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/runtimes" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="runtimes" class="shrink-0 size-4" aria-hidden="true"><path d="M4.5 4.5h7v7h-7Z"></path><path d="M6.5 2v2.5m3-2.5v2.5m-3 7V14m3-2.5V14M2 6.5h2.5M2 9.5h2.5m7-3H14m-2.5 3H14"></path></svg><span class="min-w-0 flex-1 truncate">Runtimes</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/agents" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="agent" class="shrink-0 size-4" aria-hidden="true"><path d="M3 5.75h10v7.5H3Z"></path><path d="M8 5.75V3.5"></path><path d="M8 2.4v.01" stroke-width="2"></path><path d="M6 9.25v.01M10 9.25v.01" stroke-width="2"></path><path d="M1.25 8.5v2m13.5-2v2"></path></svg><span class="min-w-0 flex-1 truncate">Agents</span></a></li><li><a class="focus-inset relative flex items-center gap-2 rounded-md transition-colors w-full py-1.5 pr-2 text-left pl-3 text-body text-subtle hover:bg-neutral-subtle-hovered hover:text-default" href="/sample/settings" data-discover="true"><span aria-hidden="true" class="absolute inset-y-1 left-0 w-0.5 rounded-full"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="settings" class="shrink-0 size-4" aria-hidden="true"><path d="M2.5 4.5h6.25m3 0h1.75M2.5 11.5h1.75m3 0h6.25"></path><path d="M8.75 3h3v3h-3ZM4.25 10h3v3h-3Z"></path></svg><span class="min-w-0 flex-1 truncate">Settings</span></a></li></ul></nav><main class="min-w-0 flex-1 px-4 py-6 lg:px-8"><div class="space-y-6"><header class="space-y-2"><div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3"><div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><h1 data-page-title="true" tabindex="-1" class="min-w-0 text-heading-lg text-default break-words">acme/widgets</h1><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">Running</span></span></div><div class="flex flex-wrap items-center gap-2"><button type="button" data-appearance="default" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-8 px-3 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="refresh" class="shrink-0 size-4" aria-hidden="true"><path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71"></path><path d="M13.25 2.25v2.5h-2.5"></path></svg>Refresh</span></button><button type="button" data-appearance="primary" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-8 px-3 text-body border-transparent bg-neutral-bold text-inverse shadow-button-bold hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed active:shadow-none motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="plus" class="shrink-0 size-4" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New ticket</span></button></div></div><div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-body text-subtle"><div role="group" aria-label="Project facts" class="flex flex-wrap items-center gap-1"><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">claude_cli</span></span><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">process-simple v3</span></span><span class="inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-sm border border-default bg-surface px-1.5 text-body-sm text-subtle"><span class="truncate">main protected</span></span></div></div></header><section data-appearance="warning" class="flex gap-3 p-4 text-body rounded-l-sm rounded-r-md border border-l-3 border-default bg-surface border-l-warning"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-warning" class="shrink-0 size-4 mt-0.5 text-icon-warning" aria-hidden="true"><path d="M8 1.9 14.3 13.25H1.7Z"></path><path d="M8 6.25v3.5"></path><path d="M8 11.4v.01" stroke-width="2"></path></svg><div class="min-w-0 flex-1 space-y-1 text-default"><h3 class="text-heading-xs">Two tickets need a person</h3><div class="break-words whitespace-pre-wrap"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#57</code> waits at the spec gate, and <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#7</code> is blocked after three failed attempts.</div><div class="flex flex-wrap pt-1 gap-2 pt-2"><a href="#tickets" target="_blank" rel="noreferrer" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97" data-appearance="default" data-spacing="compact">Open the gate<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="link-external" class="shrink-0 size-3" aria-hidden="true"><path d="M12.5 9.25v4.25h-10v-10h4.25"></path><path d="M9.5 2.5h4v4m0-4-6 6"></path></svg></a></div></div></section><div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Open tickets</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">4</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">2 need a person</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Spend</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">$21.34</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">this month · 5 tickets</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Per done ticket</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">$2.31</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">median · 1 done</span></div><div data-stat="true" class="flex min-w-0 flex-col gap-1 rounded-lg border border-default bg-surface px-4 py-3"><span data-stat-label="true" class="text-body-sm text-subtle">Tokens</span><span class="flex flex-wrap items-baseline gap-x-2"><span data-stat-value="true" class="text-metric-md text-default sm:text-metric-lg">-</span></span><span data-stat-caption="true" class="text-body-sm text-subtlest">nothing has run today</span></div></div><div class="grid gap-6 lg:grid-cols-3"><div class="min-w-0 space-y-6 lg:col-span-2"><section aria-labelledby="_R_2pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_2pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Tickets</span><span data-appearance="neutral" class="inline-flex h-4 min-w-5 items-center justify-center rounded-full px-1.5 text-body-sm font-medium tabular-nums bg-neutral text-default">5</span></span></h2></div><button type="button" data-appearance="default" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5">Export</span></button></header><div class="px-4"><div role="tablist" aria-label="Ticket filter" tabindex="-1" class="flex gap-1 border-b border-default"><button type="button" role="tab" id="sample-tickets-tab-open" data-value="open" aria-selected="true" aria-controls="sample-tickets-panel-open" tabindex="0" class="focus-inset relative -mb-px inline-flex h-11 items-center gap-2 border-b-2 border-transparent px-3 text-body font-medium transition-colors after:absolute after:inset-x-0 after:-bottom-0.5 after:border-b-2 after:transition after:duration-200 after:ease-out-bold motion-reduce:after:transition-none text-selected after:scale-x-100 after:border-selected">Open<span data-appearance="neutral" class="inline-flex h-4 min-w-5 items-center justify-center rounded-full px-1.5 text-body-sm font-medium tabular-nums bg-neutral text-default">4</span></button><button type="button" role="tab" id="sample-tickets-tab-all" data-value="all" aria-selected="false" tabindex="-1" class="focus-inset relative -mb-px inline-flex h-11 items-center gap-2 border-b-2 border-transparent px-3 text-body font-medium transition-colors after:absolute after:inset-x-0 after:-bottom-0.5 after:border-b-2 after:transition after:duration-200 after:ease-out-bold motion-reduce:after:transition-none text-subtle after:scale-x-0 after:border-bold hover:text-default hover:after:scale-x-100">All</button></div></div><div role="tabpanel" id="sample-tickets-panel-open" aria-labelledby="sample-tickets-tab-open" tabindex="0" class="focus-inset pt-4"><div><div role="region" aria-label="Tickets" tabindex="0" class="focus-inset relative overflow-x-auto"><table class="w-full border-collapse text-body"><caption class="sr-only">Tickets<!-- -->, 4 rows</caption><thead class="bg-table-head"><tr class="border-b border-default"><th scope="col" class="px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle text-left">Issue</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle text-left">Title</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle text-left">Step</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle text-left">Status</th><th scope="col" class="px-3 py-2 text-body-sm font-semibold whitespace-nowrap text-subtle text-right">Cost</th></tr></thead><tbody class=""><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#42</code></td><td class="px-3 py-2 align-middle">Export the board as CSV</td><td class="px-3 py-2 align-middle">build</td><td class="px-3 py-2 align-middle"><span data-appearance="information" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-information text-information"><span class="truncate">Running</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$4.20</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#57</code></td><td class="px-3 py-2 align-middle">Rate-limit the webhook</td><td class="px-3 py-2 align-middle">spec_gate</td><td class="px-3 py-2 align-middle"><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">Waiting at gate</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$1.05</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#61</code></td><td class="px-3 py-2 align-middle">Dark mode for the settings page</td><td class="px-3 py-2 align-middle">spec</td><td class="px-3 py-2 align-middle"><span data-appearance="discovery" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-discovery text-discovery"><span class="truncate">Rejected</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$0.88</td></tr><tr class="border-b border-default transition-colors duration-50 last:border-b-0 hover:bg-neutral-subtle-hovered"><td class="px-3 py-2 align-middle"><code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words text-default">acme/widgets#7</code></td><td class="px-3 py-2 align-middle">Migrate the cron jobs</td><td class="px-3 py-2 align-middle">build</td><td class="px-3 py-2 align-middle"><span data-appearance="danger" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-danger text-danger"><span class="truncate">Blocked</span></span></td><td class="px-3 py-2 align-middle text-right tabular-nums">$12.90</td></tr></tbody></table></div></div></div></section><section aria-labelledby="_R_4pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_4pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Spend by outcome</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">This month</span></div></div></header><div class="space-y-4 p-4"><div><div role="img" aria-label="Spend by outcome: Done $2.31 · 11%, Open $18.15 · 85%, Exited $0.88 · 4%" class="flex h-6 gap-0.5 overflow-hidden rounded-sm"><span data-segment="done" data-chart-look="outcome-done" style="flex-grow:2.31;--look:var(--dash-outcome-done)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span><span data-segment="open" data-chart-look="outcome-open" style="flex-grow:18.15;--look:var(--dash-outcome-open)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span><span data-segment="exited" data-chart-look="outcome-exited" style="flex-grow:0.88;--look:var(--dash-outcome-exited)" class="min-w-0.5 basis-0 bg-[var(--look)]"></span></div><ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-body-sm"><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-done" style="--look:var(--dash-outcome-done)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Done</span><span class="font-medium text-default tabular-nums">$2.31 · 11%</span></li><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-open" style="--look:var(--dash-outcome-open)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Open</span><span class="font-medium text-default tabular-nums">$18.15 · 85%</span></li><li class="inline-flex items-center gap-1.5"><span aria-hidden="true" data-chart-look="outcome-exited" style="--look:var(--dash-outcome-exited)" class="inline-block size-2 shrink-0 rounded-xs bg-[var(--look)]"></span><span class="text-subtle">Exited</span><span class="font-medium text-default tabular-nums">$0.88 · 4%</span></li></ul></div><div><ul aria-label="Cost by ticket" class="space-y-3 sm:space-y-1"><li data-row="7" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#7 Cron jobs</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:100%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$12.90</span></li><li data-row="42" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#42 CSV export</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:32.55813953488372%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$4.20</span></li><li data-row="3" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#3 Health check</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-done" style="width:17.906976744186046%;--look:var(--dash-outcome-done)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$2.31</span></li><li data-row="57" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] min-h-6"><span class="col-span-2 min-w-0 truncate text-body sm:col-span-1">#57 Rate limit</span><span aria-hidden="true" class="flex gap-0.5"><span data-bar="true" data-chart-look="outcome-open" style="width:8.13953488372093%;--look:var(--dash-outcome-open)" class="h-4 min-w-0.5 rounded-r-sm bg-[var(--look)]"></span></span><span class="text-right text-body tabular-nums">$1.05</span></li></ul><div aria-hidden="true" class="grid grid-cols-[1fr_4rem] items-center gap-x-3 sm:grid-cols-[12rem_1fr_5rem] mt-1"><span class="flex justify-between text-body-sm text-subtlest tabular-nums sm:col-start-2"><span>$0.00</span><span>$6.45</span><span>$12.90</span></span></div></div></div></section><section aria-labelledby="_R_6pa_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_6pa_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Add a runtime</span></span></h2><div class="flex items-start gap-1.5 text-body-sm text-subtle"><span class="min-w-0">A form, with its helper, error and valid messages</span></div></div></header><form class="grid gap-4 p-4 md:grid-cols-2"><div class="space-y-1"><label for="_R_3epa_" class="block text-body-sm font-semibold text-subtle">Name<span aria-hidden="true" class="text-danger"> <!-- -->*</span></label><input id="_R_3epa_" aria-describedby="_R_3epa_-message" required="" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 w-full"/><p id="_R_3epa_-message" class="flex items-start gap-1 text-body-sm text-subtlest"><span>Shown on the board and in the list.</span></p></div><div class="space-y-1"><label for="_R_5epa_" class="block text-body-sm font-semibold text-subtle">Slug<span aria-hidden="true" class="text-danger"> <!-- -->*</span></label><input id="_R_5epa_" aria-describedby="_R_5epa_-message" aria-invalid="true" required="" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 font-mono w-full" value="-"/><p id="_R_5epa_-message" class="flex items-start gap-1 text-body-sm text-danger"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-error" class="shrink-0 size-3 mt-0.5" aria-hidden="true"><path d="M5.3 1.75h5.4l3.55 3.55v5.4l-3.55 3.55H5.3L1.75 10.7V5.3Z"></path><path d="M8 4.75v4"></path><path d="M8 11.1v.01" stroke-width="2"></path></svg><span>A slug needs at least one letter.</span></p></div><div class="space-y-1"><label for="_R_7epa_" class="block text-body-sm font-semibold text-subtle">Adapter</label><span class="relative inline-flex items-center w-full"><select id="_R_7epa_" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled w-full appearance-none pr-7 h-8 pl-2"><option value="claude_cli">claude_cli</option><option value="codex_cli">codex_cli</option></select><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="chevron-down" class="shrink-0 size-4 pointer-events-none absolute right-2 text-icon-subtle" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg></span></div><div class="space-y-1"><label for="_R_9epa_" class="block text-body-sm font-semibold text-subtle">Repository</label><input id="_R_9epa_" aria-describedby="_R_9epa_-message" class="rounded-md border border-input bg-input text-body max-md:text-body-lg text-default transition-colors placeholder:text-subtlest hover:bg-input-hovered aria-invalid:border-danger disabled:cursor-not-allowed disabled:border-disabled disabled:bg-disabled disabled:text-disabled h-8 px-2 w-full" value="acme/widgets"/><p id="_R_9epa_-message" class="flex items-start gap-1 text-body-sm text-success"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="status-success" class="shrink-0 size-3 mt-0.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"></circle><path d="m5.25 8.25 2 2 3.5-4"></path></svg><span>The App can read it.</span></p></div><div class="md:col-span-2"><fieldset><legend class="sr-only">Sandbox</legend><div class="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3"><label class="flex items-start gap-2 rounded-md text-body border p-3 border-selected bg-selected cursor-pointer text-default"><input type="radio" aria-describedby="sample-sandbox-cloud-description" class="mt-1 size-3.5 shrink-0" name="sample-sandbox" checked="" value="cloud"/><span class="min-w-0 flex-1 space-y-1"><span class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="font-medium">Managed cloud sandbox</span></span><span id="sample-sandbox-cloud-description" class="block text-body-sm text-subtle">A fresh sandbox per run. Keys stay outside it.</span></span></label><label class="flex items-start gap-2 rounded-md text-body border p-3 border-default cursor-pointer text-default bg-surface hover:bg-surface-hovered"><input type="radio" aria-describedby="sample-sandbox-host-description" class="mt-1 size-3.5 shrink-0" name="sample-sandbox" value="host"/><span class="min-w-0 flex-1 space-y-1"><span class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="font-medium">On the host</span><span data-appearance="warning" style="max-width:200px" class="inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1.5 text-body-sm font-semibold whitespace-nowrap bg-warning text-warning"><span class="truncate">Not recommended for prod</span></span></span><span id="sample-sandbox-host-description" class="block text-body-sm text-subtle">The agent can read the host&#x27;s files.</span></span></label></div></fieldset></div><div class="flex flex-col items-start gap-2"><span class="inline-flex items-center gap-2 text-body text-default"><button type="button" role="switch" aria-checked="true" aria-labelledby="_R_tepa_-label" class="relative inline-flex h-4 w-8 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-disabled bg-success-bold"><span class="absolute inline-flex size-3 items-center justify-center rounded-full bg-surface text-subtle transition-transform translate-x-4.5"></span></button><span id="_R_tepa_-label">Admission</span></span><label class="inline-flex items-center gap-2 text-body text-default"><input type="checkbox" data-state="off" class="size-3.5 shrink-0"/><span>Include closed issues</span></label></div><div class="flex flex-wrap items-center gap-2 pt-2 justify-end"><button type="button" data-appearance="default" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-8 px-3 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5">Cancel</span></button><button type="submit" data-appearance="primary" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-8 px-3 text-body border-transparent bg-neutral-bold text-inverse shadow-button-bold hover:bg-neutral-bold-hovered active:bg-neutral-bold-pressed active:shadow-none motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5">Add runtime</span></button></div></form></section></div><div class="min-w-0 space-y-6"><section aria-labelledby="_R_39a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_39a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Process</span></span></h2></div></header><div class="p-4"><figure class="relative min-w-0 rounded-md bg-neutral"><figcaption class="sr-only">process-simple.yaml</figcaption><div class="absolute top-1 right-1"><button aria-label="Copy process-simple.yaml" type="button" data-appearance="default" data-spacing="compact" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-6 px-2 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" data-glyph="copy" class="shrink-0 size-4" aria-hidden="true"><path d="M5.5 5.5h8v8h-8Z"></path><path d="M10.5 5.5v-3h-8v8h3"></path></svg><span aria-live="polite">Copy</span></span></button></div><pre tabindex="0" class="focus-inset overflow-auto rounded-md px-3 py-2 font-mono text-body-sm text-default whitespace-pre pr-24"><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">1</span>specVersion: factorial/v1</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">2</span>kind: Process</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">3</span>steps:</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">4</span>  - name: spec</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">5</span>    agent: spec-writer</span><span class="block"><span aria-hidden="true" class="mr-3 inline-block w-8 text-right text-subtlest select-none">6</span>    next: spec_gate</span></pre></figure></div></section><section aria-labelledby="_R_59a_" class="rounded-lg border border-default bg-surface"><header class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-default"><div class="min-w-0 space-y-0.5"><h2 id="_R_59a_" class="text-heading-xs text-default"><span class="flex min-w-0 items-center gap-2"><span class="truncate">Agents</span></span></h2></div></header><div class="mx-auto flex flex-col items-center gap-2 px-4 py-10 text-center max-w-sm"><h3 class="text-heading-sm text-default">No agents yet</h3><div class="text-body text-subtle">Add one under .factorial/agents/ in the repository.</div><div class="flex flex-wrap items-center justify-center gap-2 pt-2"><button type="button" data-appearance="default" data-spacing="default" class="relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition motion-reduce:transition-none select-none h-8 px-3 text-body border-transparent bg-button text-default hover:bg-button-hovered active:bg-button-pressed motion-safe:active:scale-97"><span class="inline-flex min-w-0 items-center gap-1.5">Read the guide</span></button></div></div></section></div></div></div></main></div></div>
 <script>
 const themes = ["light","dark","system"];
-const look = {"on":"relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-selected bg-selected text-selected hover:bg-selected-hovered active:bg-selected-pressed","off":"relative inline-flex max-w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium transition-colors select-none h-6 px-2 text-body border-transparent bg-neutral-subtle text-subtle hover:bg-neutral-subtle-hovered hover:text-default active:bg-neutral-subtle-pressed"};
+const look = {"on":"inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-button bg-surface-raised text-default shadow-button","off":"inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border font-medium transition motion-reduce:transition-none select-none h-7 px-3 text-body border-transparent text-subtle hover:bg-neutral-hovered hover:text-default active:bg-neutral-pressed"};
 const buttons = Array.from(document.querySelectorAll("[data-theme-switch] button"));
 buttons.forEach((button, index) => {
   button.addEventListener("click", () => {

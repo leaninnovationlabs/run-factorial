@@ -79,7 +79,6 @@ export function SettingsPanel({ thresholds, onThresholds, density, onDensity }: 
         </div>
 
         <Button
-          appearance="subtle"
           spacing="compact"
           iconBefore="undo"
           onClick={() => onThresholds(DEFAULT_THRESHOLDS)}

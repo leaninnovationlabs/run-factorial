@@ -103,7 +103,7 @@ export function States() {
         header="No projects yet"
         description="Create one to connect Factorial to a repository."
         primaryAction={<Button appearance="primary">Create project</Button>}
-        secondaryAction={<Button appearance="subtle">Read the setup guide</Button>}
+        secondaryAction={<Button>Read the setup guide</Button>}
       />
     </Section>
   );
@@ -173,7 +173,7 @@ export function Overlays() {
           ]}
         />
         <Tooltip content="A tooltip on hover and focus">
-          <Button appearance="subtle">Hover or focus me</Button>
+          <Button>Hover or focus me</Button>
         </Tooltip>
         <ConfirmPopup
           label="Exit"
@@ -227,9 +227,7 @@ export function Overlays() {
           onClose={() => setOpen(null)}
           footer={
             <>
-              <Button appearance="subtle" onClick={() => setOpen(null)}>
-                Cancel
-              </Button>
+              <Button onClick={() => setOpen(null)}>Cancel</Button>
               <Button appearance="warning" onClick={() => setOpen(null)}>
                 Replace
               </Button>

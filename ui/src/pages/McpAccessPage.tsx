@@ -215,9 +215,7 @@ export function SignInAgain({
         <Button isLoading={isChecking} onClick={onCheckAgain}>
           Check again
         </Button>
-        <Button appearance="subtle" onClick={onCancel}>
-          Cancel
-        </Button>
+        <Button onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   );
@@ -288,9 +286,7 @@ function MintForm({
             <Button type="submit" appearance="primary" isLoading={isPending}>
               Generate
             </Button>
-            <Button appearance="subtle" onClick={onCancel}>
-              Cancel
-            </Button>
+            <Button onClick={onCancel}>Cancel</Button>
           </FormFooter>
         </>
       )}

@@ -385,11 +385,7 @@ function SecretForm({
           />
           <ErrorMessage error={put.error} />
           <FormFooter>
-            {onCancel && (
-              <Button appearance="subtle" onClick={onCancel}>
-                Cancel
-              </Button>
-            )}
+            {onCancel && <Button onClick={onCancel}>Cancel</Button>}
             <Button type="submit" appearance="primary" isLoading={put.isPending}>
               {`Save ${copy.noun}`}
             </Button>
@@ -405,7 +401,7 @@ function RemoveCredential({ runtimeId, name }: { runtimeId: number; name: string
   const [confirming, setConfirming] = useState(false);
   return (
     <>
-      <Button appearance="subtle" spacing="compact" onClick={() => setConfirming(true)}>
+      <Button spacing="compact" onClick={() => setConfirming(true)}>
         Remove
       </Button>
       {confirming && (
@@ -600,11 +596,7 @@ function TemplatePicker({
       />
       <ErrorMessage error={update.error} />
       <FormFooter>
-        {onCancel && (
-          <Button appearance="subtle" onClick={onCancel}>
-            Cancel
-          </Button>
-        )}
+        {onCancel && <Button onClick={onCancel}>Cancel</Button>}
         <Button
           type="submit"
           appearance="primary"
@@ -692,7 +684,7 @@ function SubscriptionRow({ runtime }: { runtime: Runtime }) {
             {held ? "Reconnect subscription" : "Connect subscription"}
           </Button>
           {!pasting && (
-            <Button appearance="subtle" spacing="compact" onClick={() => setPasting(true)}>
+            <Button spacing="compact" onClick={() => setPasting(true)}>
               Paste auth.json
             </Button>
           )}
@@ -819,9 +811,7 @@ function PasteBundle({ runtime, onDone }: { runtime: Runtime; onDone: () => void
           />
           <ErrorMessage error={put.error} />
           <FormFooter>
-            <Button appearance="subtle" onClick={onDone}>
-              Cancel
-            </Button>
+            <Button onClick={onDone}>Cancel</Button>
             <Button type="submit" appearance="primary" isLoading={put.isPending}>
               Save auth.json
             </Button>

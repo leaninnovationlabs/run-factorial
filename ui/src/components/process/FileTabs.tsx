@@ -38,8 +38,12 @@ export function FileTabs({
           <div
             key={tab.key}
             className={cx(
-              "flex shrink-0 items-center border-r border-default",
-              isActive ? "bg-surface" : "hover:bg-neutral-subtle-hovered",
+              "relative flex shrink-0 items-center border-r border-default transition-colors",
+              // The open file carries a bar along its top, as a tab carries one along its foot.
+              "before:absolute before:inset-x-0 before:top-0 before:border-t-2 before:border-selected before:transition before:duration-200 before:ease-out-bold motion-reduce:before:transition-none",
+              isActive
+                ? "bg-surface before:scale-x-100"
+                : "before:scale-x-0 hover:bg-neutral-subtle-hovered",
             )}
           >
             <Tooltip content={tab.path}>

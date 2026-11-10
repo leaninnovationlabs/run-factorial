@@ -56,7 +56,7 @@ export function NewEntry({
         <Button type="submit" appearance="primary" spacing="compact">
           {kind === "file" ? "Create file" : "Create folder"}
         </Button>
-        <Button spacing="compact" appearance="subtle" onClick={onCancel}>
+        <Button spacing="compact" onClick={onCancel}>
           Cancel
         </Button>
       </div>

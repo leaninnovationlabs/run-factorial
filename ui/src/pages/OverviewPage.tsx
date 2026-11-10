@@ -116,7 +116,7 @@ export function OverviewPage() {
       title="Overview"
       actions={
         !phone && (
-          <Button appearance="subtle" iconBefore="settings" onClick={() => setSettingsOpen(true)}>
+          <Button iconBefore="settings" onClick={() => setSettingsOpen(true)}>
             Board settings
           </Button>
         )

@@ -74,7 +74,6 @@ export function ChartCard({ payload }: { payload: object }) {
       mark={chart.kind === "line" ? "line" : "bar"}
       actions={
         <Button
-          appearance="subtle"
           spacing="compact"
           aria-expanded={showData}
           onClick={() => setShowData((shown) => !shown)}

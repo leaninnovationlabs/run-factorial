@@ -93,7 +93,6 @@ export function CopyButton({
   const { copied, copy } = useCopy();
   return (
     <Button
-      appearance="subtle"
       spacing={spacing}
       iconBefore={copied ? "check" : "copy"}
       aria-label={name && !copied ? `${label} ${name}` : undefined}

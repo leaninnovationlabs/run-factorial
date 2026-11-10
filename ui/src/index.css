@@ -120,6 +120,11 @@
   --background-color-neutral-bold: var(--ds-background-neutral-bold);
   --background-color-neutral-bold-hovered: var(--ds-background-neutral-bold-hovered);
   --background-color-neutral-bold-pressed: var(--ds-background-neutral-bold-pressed);
+  --background-color-button: var(--button-fill);
+  --background-color-button-hovered: var(--button-fill-hovered);
+  --background-color-button-pressed: var(--button-fill-pressed);
+  --background-color-button-disabled: var(--button-fill-disabled);
+  --background-color-metric: var(--metric-fill);
   --background-color-brand-bold: var(--ds-background-brand-bold);
   --background-color-brand-bold-hovered: var(--ds-background-brand-bold-hovered);
   --background-color-brand-bold-pressed: var(--ds-background-brand-bold-pressed);
@@ -137,10 +142,12 @@
   --background-color-danger-hovered: var(--ds-background-danger-hovered);
   --background-color-danger-bold: var(--ds-background-danger-bold);
   --background-color-danger-bold-hovered: var(--ds-background-danger-bold-hovered);
+  --background-color-danger-bold-pressed: var(--ds-background-danger-bold-pressed);
   --background-color-warning: var(--ds-background-warning);
   --background-color-warning-hovered: var(--ds-background-warning-hovered);
   --background-color-warning-bold: var(--ds-background-warning-bold);
   --background-color-warning-bold-hovered: var(--ds-background-warning-bold-hovered);
+  --background-color-warning-bold-pressed: var(--ds-background-warning-bold-pressed);
   --background-color-success: var(--ds-background-success);
   --background-color-success-hovered: var(--ds-background-success-hovered);
   --background-color-success-bold: var(--ds-background-success-bold);
@@ -186,6 +193,8 @@
   --border-color-success: var(--ds-border-success);
   --border-color-information: var(--ds-border-information);
   --border-color-discovery: var(--ds-border-discovery);
+  --border-color-button: var(--button-border);
+  --border-color-metric: var(--metric-fill);
   --ring-color-default: var(--ds-border);
   --ring-color-bold: var(--ds-border-bold);
   --ring-color-input: var(--ds-border-input);
@@ -205,6 +214,8 @@
   --shadow-raised: var(--ds-shadow-raised);
   --shadow-overlay: var(--ds-shadow-overlay);
   --shadow-overflow: var(--ds-shadow-overflow);
+  --shadow-button: var(--button-shadow);
+  --shadow-button-bold: var(--button-shadow-bold);
 
   --opacity-disabled: var(--ds-opacity-disabled);
   --opacity-loading: var(--ds-opacity-loading);
@@ -230,6 +241,7 @@
   /* So a bare `transition-colors` is the ADS hover: 150ms, eased out. */
   --default-transition-duration: var(--ds-duration-short);
   --default-transition-timing-function: var(--ds-easing-out-practical);
+  --animate-settle-in: settle-in var(--ds-duration-medium) var(--ds-easing-out-bold);
 
   /* Page widths are ours (ADS publishes breakpoints but no page widths): data pages take the
      window; runtime pages keep today's 72rem; create forms today's 36rem. */
@@ -244,6 +256,13 @@
     background-color: var(--ds-surface-sunken);
     color: var(--ds-text);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* A checked box or radio in the selected ink, as a selected button's edge, not the browser's
+     own blue. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--ds-border-selected);
   }
 
   /* The default edge for a bare `border` or `divide`, where Tailwind's preflight leaves
