@@ -25,13 +25,6 @@
 
 </div>
 
-> [!NOTE]
-> We build Run-Factorial in a private repository and publish its code here. This repository
-> does not accept issues or pull requests. To report a security problem, follow
-> [SECURITY.md](SECURITY.md). The documentation is at
-> [runfactorial.com/docs](https://www.runfactorial.com/docs).
-
-
 
 **The assembly line for AI software delivery.**
 
@@ -124,6 +117,12 @@ to the ticket and the step. Move a step from one agent to another, and measure t
 on real work.
 
 The architecture and its numbered decisions live in [`docs/design.md`](docs/design.md).
+
+> [!NOTE]
+> We build Run-Factorial in a private repository and publish its code here. This repository
+> does not accept issues or pull requests. To report a security problem, follow
+> [SECURITY.md](SECURITY.md). The documentation is at
+> [runfactorial.com/docs](https://www.runfactorial.com/docs).
 
 
 
