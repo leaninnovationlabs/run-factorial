@@ -43,7 +43,9 @@ The orchestrator runs as one ECS Fargate task on AWS, behind an ALB, on RDS Post
    issue that is no open ticket asks admission about that issue at once; the worker judges it
    on its own read of the issue, never on the payload. Any other wake is a fleet pass, at least
    `worker.min_pass_gap_seconds` apart, so a burst of them costs one pass. The poll interval
-   stays the guarantee.
+   stays the guarantee. One predicate takes its input from the orchestrator's own log:
+   `request_approval()` reads a person's dashboard approval there and compares it with the
+   forge's branch head (§7.20).
 2. **Orchestrator owns the state.** The authoritative state machine per ticket lives in the
    orchestrator DB, keyed `(ticket, processVersion, step, attempt)`. Ticket labels/status are a
    *projection* of that state, written back for human visibility. Human edits to a ticket are
@@ -52,7 +54,8 @@ The orchestrator runs as one ECS Fargate task on AWS, behind an ALB, on RDS Post
    completion and step retry each append a request event that the loop answers on its next pass,
    and neither surface writes a label. The last three, #382's, are dashboard-only (tech-stack.md
    decisions 76-78). An un-block request is the label-free twin of removing `factorial:blocked`
-   (§4).
+   (§4). A dashboard Approve (§7.20) is recorded the same way and answered by nothing: the loop
+   reads it when it next judges the run.
 3. **`next`-driven state machine.** Steps advance via each step's `next` pointer once its
    postconditions hold. A step's `entry.ticket` condition is a guard for admission, not the driver.
    Besides a gate's rework edge, a person's Redo is the only move back inside a generation: it is
@@ -64,10 +67,12 @@ The orchestrator runs as one ECS Fargate task on AWS, behind an ALB, on RDS Post
    change to a file the step declares, such as its summary, moves the pull request like any
    other push. One exception is named: a person's recorded Force complete. It is dashboard-only,
    judged on a full evaluation of every leaf, recorded as `step_run.forced_by`, announced on the
-   issue, and never the agent's word (tech-stack.md decision 78).
+   issue, and never the agent's word (tech-stack.md decision 78). A dashboard approval is not a
+   second exception: `request_approval()` is a postcondition like any other (§7.20).
 5. **Human gates are first-class steps.** `kind: human_gate` steps map to required PR reviews on
    protected branches, so the forge enforces them. No agent-produced change reaches `main` without
-   an approval gate.
+   an approval gate. A dashboard approval of an agent step's work (§7.20) is not a gate: it
+   accepts one run and merges nothing.
 6. **Failure is modeled, not implied.** Every agent step has timeout, retry, and an escalation
    path to a human-visible `factorial:blocked` state. (Cost is tracked in the event log for
    reporting; enforced per-step cost budgets are deferred to keep things simple.)
@@ -485,9 +490,11 @@ loop's answers. `step_changes_requested` is a dashboard change request, recorded
 waiting gate's run; the gate's `gate_rejected` answers it by `change_request_id`, or
 `step_changes_refused` does with a reason. `preview_page_observed` is no longer appended: it
 recorded where a run's page landed on a branch of its own, before the summary became a declared
-file, and the log keeps those (tech-stack decision 71). `run_outputs_observed` records, once per
-run of a step that declares `preview.files`, every file the step's attempts changed on the run's
-branch; the API selects the declared files from the latest one per run (tech-stack decision 71). `preview_kept` is a person's
+file, and the log keeps those (tech-stack decision 71). `run_outputs_observed` records, when a
+run of a step that declares `preview.files` ends, every file the step's attempts changed on the
+run's branch; a step that awaits review (§7.20) is also recorded at each idle spell before that,
+and again when its branch moves while it waits.
+The API selects the declared files from the latest one per run (tech-stack decision 71). `preview_kept` is a person's
 Keep running; it moves only when the
 preview closes for idle. `preview_stopped` carries a `reason` (`idle`, `renewal` or `continued`),
 `preview_requested` can carry `restart` or `renewal`, and a `preview_started` or
@@ -600,6 +607,9 @@ overridable. An IDLE or INTERRUPTED run accepted or forced this way also gets an
 `agent_completed` carrying `accepted_on_request` or `forced_by`. `next_step_waiting{step,
 from_step, forced_by, unmet}` says, once per entry, that the step after a forced one waits on
 unmet preconditions or finds no pull request.
+`step_approved{step, attempt, head_sha, branch, approved_by, requested_via}` is a person's Approve
+of a run whose step awaits review (§7.20). It is not a request, and nothing answers it:
+`request_approval()` reads the run's latest one whenever the loop judges the run.
 `issue_create_requested` and `issue_created{request_id, repo, number, recovered}` bracket an
 issue opened through MCP. Neither stores the title or the body (§2.9).
 
@@ -628,6 +638,8 @@ agent-chosen part.
 | `ticket_label(name)` / `ticket_has_assignee()` | issue fields |
 | `issue_comment_contains(marker)` | the ticket carries a comment, authored by the App's own bot login, containing `marker` |
 | `pr_comment_contains(head, marker)` | a matching PR carries a comment, authored by the App's own bot login, containing `marker`; a dashboard change request the orchestrator posted (§7.8) is a person's words and never counts |
+| `request_approval()` | a person approved the current run of this step in the dashboard, at the commit the step's one branch ends on now; read from the event log, only in an agent step's postconditions (§7.20) |
+| `checklist_done(path, ref)` | every file matching `path` on every branch matching `ref`, and at least one, has a task box and none open; boxes in fenced code blocks do not count |
 
 The library is code in the orchestrator; config can only reference it. New predicates are added
 by code change, keeping conditions auditable. One acceptance check sits beside the library rather
@@ -878,7 +890,12 @@ config is that dashboard action, not a GitHub merge. An MCP client's `factorial_
 the same path with a model's tool call in place of the click, an accepted cost with its own guard
 (§7.17). The commit's parent is the `factorial` head the request read, and the ref moves only as
 a fast-forward, so a branch that moved since the page read it answers 409 and nothing changes. A
-runtime binding the lane cannot use is a 422 before anything is written.
+runtime binding the lane cannot use is a 422 before anything is written. The same click approves
+a commit that deletes files the branch has, and `POST /projects/{id}/config-restores`, which
+commits the folder back to an earlier synced version's (tech-stack decision 93): each is the
+operator's own dashboard action, and each builds only on a head the orchestrator vouches for. A
+deletion is refused on the MCP and chat surfaces, and no MCP or chat tool calls a restore. `POST /projects/{id}/config-checks` runs the commit's
+checks on a draft and writes nothing.
 `POST /projects/{id}/config-preview` answers what such a request would create, reading the
 `factorial` branch and writing nothing (both answer 409 until the branch exists); the operator
 inspects, selects and may edit any candidate file it returns before it is ever submitted. Six
@@ -1514,8 +1531,8 @@ costs to call it from a model.
    list only admits new people (§7.19).
 6. **Never a tool:** gate approval or merge (§7.3, §7.12), secrets (§7.4), permits and
    allowlists (§7.5), runtimes and their credentials, the terminal (§7.14), labels (§2.2),
-   minting, adopting a direct push to `factorial` (§7.7), and Redo, a continuing Retry and Force
-   complete (tech-stack.md decisions 76-78).
+   minting, adopting a direct push to `factorial` (§7.7), Redo, a continuing Retry and Force
+   complete (tech-stack.md decisions 76-78), and a step's Approve (§7.20).
 7. **One organization per token.** The row names the organization the token was minted in, and
    every tool call resolves within it: a project, ticket or run elsewhere is not found, and a
    list draws from that organization alone (§2.11). An assistant turn's tools resolve within
@@ -1910,6 +1927,71 @@ This design accepts five costs:
    verifies it (§7.1 item 7).
 5. **Membership changes are rows, not events.** An organization is not a project, and
    `event.project_id` is NOT NULL (§2.11), so each row records who made it.
+
+### 7.20 A dashboard approval: input the loop evaluates, not a gate
+
+An agent step whose postconditions call `request_approval()` waits for a person to read its work
+and press **Approve** on the ticket's page (tech-stack.md decision 94). The run's Files view
+shows the step's declared files as of the session's latest stop, read again when the branch
+moves while the session waits. The press is
+`POST /api/step-runs/{id}/approve` with the commit the person looked at; `GET
+/api/step-runs/{id}/review` says what a press would approve and why it would be refused. The
+route appends `step_approved` against the run and wakes the ticket. It accepts nothing itself:
+the loop accepts the run when every postcondition holds, as it would for a forge observation
+(§2.2).
+
+1. **It is not a gate, and never a path to `main`.** It accepts one agent run and merges
+   nothing. Pull request gates (§2.5, §7.12) stay the only way to `main`, and §7.3 is untouched.
+   A gate's `approvers` are forge logins and do not apply here: a dashboard session is an email
+   (§7.8 item 2). §7.8's rule still holds for gates: the dashboard widens who may reject one,
+   never who may approve one, and a step's Approve is not a gate approval.
+2. **A named person on the dashboard, with `tickets:operate`.** That is the permission
+   Interrupt and Force complete need, and Force complete can already pass the step. The shared
+   bearer names no one, so alone it gets 403. It is never an MCP or assistant tool (§7.16 item
+   6): a model under prompt injection could otherwise accept the work it was told to do.
+3. **It binds the run and the head.** `request_approval()` holds only while the step's
+   `workspace.branch` matches exactly one branch, that branch ends on the approved commit, and
+   the approval belongs to the run being judged. A push after the press, a retry, a Redo, a
+   restart or the next step on the same branch needs a new approval. Config refuses the
+   predicate anywhere but an agent step's postconditions, and under `not`; it is false wherever
+   else it would be evaluated.
+4. **The step always waits for it.** A session of such a step that stops at its prompt with its
+   postconditions unmet parks for a person under `factorial:waiting`, whatever the stop, and
+   never takes the silent finish that spends a retry. Approved while the session is still idle,
+   it is finished and accepted as any met session is. Parked, it is re-checked at the next tick
+   after an approval its re-check has not read, and a minute later when a failed read left the
+   approval unjudged. An approval counts over a person's issue comment posted before it.
+5. **Asking for changes is a conversation.** The person answers the agent in the same session:
+   Resume with an answer, or typing in its terminal. The agent pushes, the head moves, and the
+   person approves the new commit. Redo starts the step clean.
+6. **The wait is bounded by the workspace retention, not the step timeout.** The `timeout`
+   counts working time only. Past the retention (7 days by default) the session is gone, the
+   re-check stops, Approve is refused, and Redo is the way on.
+7. **Force complete can still pass a missing approval.** The unmet `request_approval()` leaf is
+   an overridable failure like any other (tech-stack.md decision 78). The run is recorded as
+   Forced, never as approved.
+
+Approve is refused with a 409 and a code: `quarantined`, `ticket_done`, `ticket_exited`,
+`stale` (not the run its ticket is on), `not_reviewed` (the step awaits no review), `mid_turn`,
+`not_waiting` (not at its prompt: a person's stop, a quit from the terminal, an ended run),
+`release_pending` (a Resume is still being answered), `expired` (past the retention),
+`no_branch` (no branch, or more than one, matches), `head_moved` (the commit is no longer the
+head) and `files_stale` (the step declares files, and the run's latest record of them is not a
+read at that head: the person would approve a commit whose files they never saw). A repository
+that is not connected answers 503, and a forge read that fails or gives no answer 502. The same
+person pressing again at the same head within 60 seconds records nothing and answers `pending`.
+Later, the press records a new approval, so an approval that a later issue comment holds can be
+renewed.
+
+Two costs are accepted:
+
+1. **A person who typed in the terminal can approve the result.** The reviewer who steered the
+   agent then approves what it produced. `terminal_input{by}` and `step_approved{approved_by}`
+   record both, and nothing refuses the pair: the same shape as §7.12's approving your own push.
+2. **A request carrying both the bearer and a session cookie is authorized as the operator and
+   recorded under the cookie's email.** The permission check reads the bearer first, as on every
+   route; the named-person check reads the session first, as minting does (§7.16 item 4). The
+   bearer already reaches everything, so this adds only the name.
 
 ## 8. Repo layout
 

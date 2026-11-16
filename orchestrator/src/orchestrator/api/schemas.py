@@ -36,6 +36,8 @@ from orchestrator.factorial.runtimes import SLUG_RE
 
 __all__ = [
     "ActivityTurnOut",
+    "ApprovalOut",
+    "ApproveIn",
     "AssistantBackendOut",
     "AssistantCredentialIn",
     "AssistantCredentialOut",
@@ -161,6 +163,7 @@ __all__ = [
     "RestartPrOut",
     "RestartPreviewOut",
     "RestartRunOut",
+    "ReviewOut",
     "RoleOut",
     "RunActivityResponse",
     "RunCountsOut",
@@ -675,6 +678,38 @@ class CompletionIn(BaseModel):
     seen_failures: list[Annotated[str, Field(max_length=2000)]] = Field(
         default_factory=list, max_length=50
     )
+
+
+class ApproveIn(BaseModel):
+    """Approve a run of a step that awaits review, at the commit the person looked at: refused
+    once its branch has moved on."""
+
+    head_sha: str = Field(min_length=1, max_length=64)
+
+
+class ApprovalOut(_Out):
+    approved_by: str
+    at: datetime
+    head_sha: str
+
+
+class ReviewOut(_Out):
+    """What Approve would approve: the step's branch and its head, the run's latest approval,
+    whether Approve applies to the run at all (`offered`: current and waiting at its prompt), and
+    `refusal`, why a press now is refused, None when it is accepted. `branch` and `head_sha` are
+    None when a refusal short of the branch read is decided, and `pushed` is then False. A step
+    that does not await review reads nothing else."""
+
+    awaits_review: bool
+    branch: str | None
+    head_sha: str | None
+    approval: ApprovalOut | None
+    offered: bool
+    refusal: str | None
+    #: The run moved its step's branch from where it stood at spawn, or the branch exists and its
+    #: spawn recorded no head for it. For the wording only: it never refuses a press, since a
+    #: retry whose earlier attempt pushed everything is still approvable.
+    pushed: bool
 
 
 class RestartIn(BaseModel):
@@ -1781,6 +1816,14 @@ class ConfigEditIn(BaseModel):
     base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class ConfigDeleteIn(BaseModel):
+    """A file the config branch has, removed by the operator. `base_sha` is the git blob the
+    operator saw; the commit is refused if the branch holds another."""
+
+    path: str = Field(min_length=1)
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
 class ConfigCommitIn(BaseModel):
     """The `process.yaml` to commit, and the files the operator assembled.
 
@@ -1789,12 +1832,54 @@ class ConfigCommitIn(BaseModel):
     so the committed config is the one that was parsed. `edits` may name only files the branch
     holds under `.factorial/`, each at the blob it started from. `created` may name only paths
     under `.factorial/` made of safe names, where the branch has nothing at, above or inside.
+    `deleted` may name only paths under `.factorial/`; one the branch holds must be at the blob
+    it names, and one the branch no longer holds is skipped.
     """
 
     content: str = Field(min_length=1, max_length=MAX_CONFIG_CHARS)
     files: list[SelectedFileIn] = Field(default_factory=list)
     edits: list[ConfigEditIn] = Field(default_factory=list)
     created: list[SelectedFileIn] = Field(default_factory=list)
+    deleted: list[ConfigDeleteIn] = Field(default_factory=list)
+
+
+class RestorePreviewOut(BaseModel):
+    """What restoring the config folder to a synced version would do to the branch head."""
+
+    target_sha: str
+    head_sha: str
+    writes: list[str]
+    deletes: list[str]
+    #: Processes the head offers and the version does not: the sync retires them.
+    retires: list[str]
+    #: The head already holds the version's folder.
+    unchanged: bool
+
+
+class ConfigRestoreIn(BaseModel):
+    """A version row to restore the folder to, and the head the preview was drawn against. The
+    request names no path and no commit: both come from the row."""
+
+    version_id: int = Field(ge=1)
+    expected_head: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+class DraftProblemOut(BaseModel):
+    #: The config file the problem is in; null for the process text itself, or for a refusal that
+    #: is about the branch.
+    path: str | None = None
+    message: str
+    hint: str | None = None
+
+
+class DraftCheckOut(BaseModel):
+    """A commit's own checks on a draft, as a verdict. `valid` means the commit would be made."""
+
+    valid: bool
+    problems: list[DraftProblemOut] = Field(default_factory=list)
+    warnings: list[LintWarning] = Field(default_factory=list)
+    would_write: list[str] = Field(default_factory=list)
+    would_delete: list[str] = Field(default_factory=list)
 
 
 class ConfigBranchIn(BaseModel):
@@ -1869,6 +1954,8 @@ class ConfigCommitOut(BaseModel):
     components: list[ComponentOut] = Field(default_factory=list)
     #: Every path the commit wrote, stubs included.
     written: list[str] = Field(default_factory=list)
+    #: Every path the commit removed.
+    deleted: list[str] = Field(default_factory=list)
     #: Null when the sync failed after the commit landed; `sync_error` then says why, and the
     #: operator can sync again from the configuration page.
     sync: ProcessSyncOut | None = None
@@ -1915,6 +2002,9 @@ class DefaultBranchConfigOut(BaseModel):
 
 class ProcessTemplatesOut(BaseModel):
     templates: list[ProcessTemplateOut]
+    #: What a new agent, skill, MCP server or process starts from: kind to file to body, with
+    #: `__NAME__` where the typed name goes.
+    shells: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class PredicateOut(BaseModel):
@@ -2611,7 +2701,9 @@ class AssistantSettingsOut(_Out):
     offered: list[str]
     #: Same gate as sending a message: enabled, and a stored credential or a Bedrock mint.
     ready_to_send: bool
-    #: The `assistant_status` row, written by the assistant process at start; null before then.
+    #: The `assistant_status` row as the organization's saved backend sees it
+    #: (`assistant_settings.backend_status`), written by the assistant process at start; null
+    #: before then.
     status: dict[str, Any] | None
 
 
@@ -2624,6 +2716,8 @@ class AssistantReadyOut(_Out):
     credential_set: bool
     credential_updated_at: datetime | None
     ready_to_send: bool
+    #: The sentence a send would be refused with (`assistant_not_ready`), null when it would go.
+    refusal: str | None
 
 
 class AssistantCredentialIn(BaseModel):

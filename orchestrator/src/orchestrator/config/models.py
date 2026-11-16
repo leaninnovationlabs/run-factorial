@@ -32,7 +32,14 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from orchestrator.config.conditions import Condition
+from orchestrator.config.conditions import (
+    REVIEW_PREDICATE,
+    AllOf,
+    AnyOf,
+    Condition,
+    Not,
+    awaits_review,
+)
 from orchestrator.config.templates import globbed, placeholders
 from runtime.contract import CONTROL_PLANE_PORT
 
@@ -693,6 +700,8 @@ class ProcessConfig(_CamelBase):
         if self.entry.step not in by_name:
             problems.append(f"entry.step {self.entry.step!r} is not a step.")
 
+        problems.extend(_review_placement_problems(self.entry.when, self.steps))
+
         for step in self.steps:
             if step.next not in targets:
                 problems.append(f"Step {step.name!r}: next {step.next!r} is not a step.")
@@ -759,6 +768,40 @@ class ProcessConfig(_CamelBase):
         if problems:
             raise ValueError(" ".join(problems))
         return self
+
+
+def _review_placement_problems(
+    entry_when: Condition, steps: tuple[AgentStep | GateStep | ActionStep | CheckStep, ...]
+) -> list[str]:
+    """`request_approval()` is fed its approval only when an agent step's run is accepted, so
+    anywhere else it reads false for ever, and under `not` an approval would fail the run."""
+    places = ["entry.when"] if awaits_review(entry_when) else []
+    for step in steps:
+        if isinstance(step, AgentStep):
+            misplaced = awaits_review(step.preconditions) or _negates_review(step.postconditions)
+        elif isinstance(step, CheckStep):
+            misplaced = awaits_review(step.conditions)
+        else:
+            misplaced = False
+        if misplaced:
+            places.append(f"Step {step.name!r}")
+    return [
+        f"{where}: {REVIEW_PREDICATE}() may appear only in an agent step's postconditions, "
+        "and never under not."
+        for where in places
+    ]
+
+
+def _negates_review(condition: Condition | None) -> bool:
+    match condition:
+        case Not():
+            return awaits_review(condition.not_)
+        case AllOf():
+            return any(_negates_review(child) for child in condition.all_of)
+        case AnyOf():
+            return any(_negates_review(child) for child in condition.any_of)
+        case _:
+            return False
 
 
 def _page_branch_overlaps(

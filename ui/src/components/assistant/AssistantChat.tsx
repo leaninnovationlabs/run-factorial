@@ -13,8 +13,8 @@
  * to the next not being deleted, and at the press rather than on the API's answer: a second
  * delete made before the first is answered would otherwise strand it on the first. When the
  * API's `ready_to_send` says a message would be refused (off, or no way to sign in: no stored
- * credential, or no Bedrock token from the host's role), the foot says so in place of the
- * composer, and links to its settings for a reader who may change them; what was said before
+ * credential, or no Bedrock token from the host's role), the foot says which, in the API's own
+ * sentence, in place of the composer, and links to its settings for a reader who may change them; what was said before
  * stays readable. Not `credential_set`: Bedrock through the host's role stores none.
  *
  * A send the API refuses because a turn is already under way here (another tab's) keeps the
@@ -77,9 +77,11 @@ export function AssistantChat({
   const [focusAsked, askFocus] = useState(0);
   /** The turn the stream showed when the API said another was under way. */
   const [refusedAt, setRefusedAt] = useState<{ conversation: number; turn: number } | null>(null);
-  /** The settings as they stood when a send was refused as not set up: the refusal holds until
-   *  they change. */
-  const [refusedWith, setRefusedWith] = useState<{ settings: unknown } | null>(null);
+  /** The settings as they stood when a send was refused as not set up, and the API's sentence:
+   *  the refusal holds until they change. */
+  const [refusedWith, setRefusedWith] = useState<{ settings: unknown; reason: string } | null>(
+    null,
+  );
   /** Deletes not yet answered: out of the history at once, and back in it if the API refuses. */
   const [deleting, setDeleting] = useState<ReadonlySet<number>>(() => new Set());
   /** Conversations made here, untitled until their first message names them. */
@@ -100,8 +102,11 @@ export function AssistantChat({
   const configured = settings.data;
   const refusal = message.error instanceof ApiError ? message.error.code : null;
   const notSetUp =
-    (refusedWith !== null && refusedWith.settings === configured) ||
-    (configured !== undefined && !configured.ready_to_send);
+    refusedWith !== null && refusedWith.settings === configured
+      ? refusedWith.reason
+      : configured !== undefined && !configured.ready_to_send
+        ? (configured.refusal ?? "It is off, or it has no way to sign in yet.")
+        : null;
   const blocked =
     refusedAt !== null &&
     refusedAt.conversation === conversationId &&
@@ -129,7 +134,7 @@ export function AssistantChat({
         setRefusedAt({ conversation: id, turn: stream.turn?.id ?? 0 });
       }
       if (error instanceof ApiError && error.code === "not_configured") {
-        setRefusedWith({ settings: configured });
+        setRefusedWith({ settings: configured, reason: error.message });
         void settings.refetch();
       }
       return false;
@@ -208,7 +213,7 @@ export function AssistantChat({
   );
   const foot = notSetUp ? (
     <SectionMessage appearance="warning" title="Set up the assistant">
-      It is off, or it has no way to sign in yet.{" "}
+      {notSetUp}{" "}
       {canConfigure ? (
         <DashboardLink to="/settings">Open the assistant settings</DashboardLink>
       ) : (

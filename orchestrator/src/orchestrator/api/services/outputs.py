@@ -1,7 +1,7 @@
 """What a run shows beside its terminal, read against the ticket's PINNED process: the step's
-`preview:` block, and the blobs `/pages/{id}` may serve for the run (decision 58) — the files its
-step declares (decision 71), each as the worker recorded it. A recorded blob the config does not
-select is not served, whatever link it comes with.
+`preview:` block, whether it awaits a review, and the blobs `/pages/{id}` may serve for the run
+(decision 58) — the files its step declares (decision 71), each as the worker recorded it. A
+recorded blob the config does not select is not served, whatever link it comes with.
 """
 
 from __future__ import annotations
@@ -11,11 +11,12 @@ from typing import NamedTuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config import GateStep, Preview, ProcessConfig
+from orchestrator.config import AgentStep, GateStep, Preview, ProcessConfig
+from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import ProcessVersion, StepRun, Ticket
 from orchestrator.events.outputs import outputs_observation, select_files
 
-__all__ = ["Servable", "pinned_config", "pinned_preview", "servable_blobs"]
+__all__ = ["Servable", "pinned_config", "pinned_preview", "pinned_review_step", "servable_blobs"]
 
 
 class Servable(NamedTuple):
@@ -32,6 +33,15 @@ async def pinned_config(session: AsyncSession, ticket: Ticket) -> ProcessConfig:
         )
     ).scalar_one()
     return ProcessConfig.model_validate(content)
+
+
+async def pinned_review_step(
+    session: AsyncSession, ticket: Ticket, run: StepRun
+) -> AgentStep | None:
+    """The run's step in the ticket's PINNED process when its postconditions call
+    `request_approval()`, else None."""
+    step = (await pinned_config(session, ticket)).find_step(run.step_name)
+    return step if isinstance(step, AgentStep) and awaits_review(step.postconditions) else None
 
 
 async def pinned_preview(session: AsyncSession, ticket: Ticket, run: StepRun) -> Preview | None:

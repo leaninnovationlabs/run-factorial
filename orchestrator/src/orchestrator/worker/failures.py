@@ -117,9 +117,9 @@ def template_summary(summary: str) -> str:
 
 
 def spoken(span: timedelta) -> str:
-    """A duration as a person says it: `1 hour`, `30 minutes`, `45 seconds`."""
+    """A duration as a person says it: `7 days`, `1 hour`, `30 minutes`, `45 seconds`."""
     seconds = int(span.total_seconds())
-    for unit, size in (("hour", 3600), ("minute", 60)):
+    for unit, size in (("day", 86400), ("hour", 3600), ("minute", 60)):
         if seconds >= size and seconds % size == 0:
             count = seconds // size
             return f"{count} {unit}{'' if count == 1 else 's'}"

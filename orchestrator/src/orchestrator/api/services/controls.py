@@ -1,7 +1,7 @@
 """The requests a person makes of a ticket's run or its park: stop the run, start its retry
 now, resume its session, or release an escalation (decisions 26, 29, 56), check its
-postconditions now and accept it (decision 78), or retry a failed step, continuing its session
-(decision 77). The last two are dashboard only.
+postconditions now and accept it (decision 78), retry a failed step, continuing its session
+(decision 77), or approve a run of a step that awaits review. The last three are dashboard only.
 
 Transport-neutral, like `services.tickets`. Each one appends the event the loop honours,
 commits, and waits for the pass it wakes (`api.wakes`). The API never calls a substrate: a
@@ -11,15 +11,28 @@ route or tool that reached for the adapter would race the loop for a run the loo
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
+import httpx
+from githubkit.exception import RequestError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.registry import host_failure
+from orchestrator.adapters.state import BranchState
+from orchestrator.api.deps import RunObserver
+from orchestrator.api.schemas import ApprovalOut, ReviewOut
 from orchestrator.api.services.actor import Actor
-from orchestrator.api.services.errors import Conflict, Forbidden, Invalid
-from orchestrator.api.services.outputs import pinned_config
+from orchestrator.api.services.errors import (
+    Conflict,
+    Forbidden,
+    Invalid,
+    ServiceError,
+    Unavailable,
+    UpstreamFailed,
+)
+from orchestrator.api.services.outputs import pinned_config, pinned_review_step
 from orchestrator.api.services.results import RequestResult
 from orchestrator.api.services.tickets import (
     _latest_attempt,
@@ -31,6 +44,7 @@ from orchestrator.config import AgentStep, CheckStep, GateStep, ProcessConfig, R
 from orchestrator.db.models import (
     Event,
     ProcessVersion,
+    Project,
     StepKind,
     StepRun,
     StepRunStatus,
@@ -38,26 +52,44 @@ from orchestrator.db.models import (
     TicketStatus,
 )
 from orchestrator.events import EventType, append
-from orchestrator.events.read_models import blocked_on, ticket_park_reason, ticket_row
+from orchestrator.events.approvals import latest_approval
+from orchestrator.events.outputs import outputs_observation, pushed, spawn_heads
+from orchestrator.events.read_models import (
+    blocked_on,
+    latest_park,
+    parked_at_prompt,
+    ticket_park_reason,
+    ticket_row,
+)
 from orchestrator.events.terminals import is_current_run
 from orchestrator.events.types import RequestedVia
+from orchestrator.predicates.globs import resolve_refs, sole_ref
+from orchestrator.worker.branches import declares_files
 from orchestrator.worker.completions import forceable, pending_completion_request
+from orchestrator.worker.failures import spoken
 from orchestrator.worker.interrupts import pending_resume_request
 from orchestrator.worker.reconcile import escalated_since, pending_unblock_request
 from orchestrator.worker.retries import RetryRefusal, pending_step_retry, retry_refusal
-from orchestrator.worker.tick_context import _FAILED_STATUSES, _next_attempt, latest_current_run
+from orchestrator.worker.templates import _glob
+from orchestrator.worker.tick_context import (
+    _FAILED_STATUSES,
+    _next_attempt,
+    latest_current_run,
+)
 from runtime.contract import ParkReason
 
 __all__ = [
     "STEP_KINDS",
     "dashboard_only",
     "parked_at_its_step",
+    "request_approval",
     "request_completion",
     "request_interrupt",
     "request_resume",
     "request_retry",
     "request_step_retry",
     "request_unblock",
+    "review_state",
     "ticket_of",
 ]
 
@@ -309,7 +341,10 @@ _RETRY_REFUSALS: Final[dict[RetryRefusal, tuple[str, str | None]]] = {
         "Attempt {attempt} of {step} isn't the step's latest failed attempt.",
         None,
     ),
-    RetryRefusal.GATE: ("A gate isn't retried.", "Review the pull request, or press Unblock."),
+    RetryRefusal.GATE: (
+        "A gate isn't retried.",
+        "Review the pull request, or press Unblock.",
+    ),
     RetryRefusal.NOT_ESCALATED: (
         "This ticket is blocked on something other than this attempt's failure.",
         "Press Unblock to ask again.",
@@ -340,7 +375,9 @@ async def request_step_retry(session: AsyncSession, run: StepRun, actor: Actor) 
         words, hint = _RETRY_REFUSALS[refusal]
         raise Conflict(
             words.format(
-                attempt=run.attempt, step=run.step_name, status=_TICKET_STATES[ticket.status]
+                attempt=run.attempt,
+                step=run.step_name,
+                status=_TICKET_STATES[ticket.status],
             ),
             hint=hint,
         )
@@ -402,7 +439,8 @@ async def request_resume(
     ticket = await ticket_of(session, run)
     if not await parked_at_its_step(session, ticket, run):
         raise Conflict(
-            "This run isn't paused, so there is no session to resume.", code="not_parked"
+            "This run isn't paused, so there is no session to resume.",
+            code="not_parked",
         )
     refuse_while_quarantined(ticket, "resume")
     if (
@@ -516,3 +554,302 @@ async def request_unblock(session: AsyncSession, ticket: Ticket, actor: Actor) -
     await session.commit()
     landed = await wake_and_wait(session, ticket)
     return RequestResult(ticket_id=ticket.id, action="unblock", status="requested", landed=landed)
+
+
+_NO_BRANCH: Final = "Nothing is pushed yet, so there is no commit to approve."
+_BRANCHES: Final = (
+    "More than one branch matches this step's branch, so there is no one commit to approve."
+)
+_UNREAD: Final = "Factorial couldn't read this step's branch, so it can't be approved now."
+_FILES_STALE: Final = (
+    "The branch moved after its files were read. Look again in a moment, then approve."
+)
+#: How long a repeat press by the same person at the same head is the same press. Past it a press
+#: records again, so an approval a later issue comment holds can be renewed.
+_DOUBLE_PRESS: Final = timedelta(seconds=60)
+#: A forge that gave no answer at all: githubkit's timeout or transport error, or httpx's
+#: beneath a GitLab call.
+_NO_ANSWER: Final = (RequestError, httpx.TransportError, TimeoutError)
+
+
+async def request_approval(
+    session: AsyncSession,
+    run: StepRun,
+    actor: Actor,
+    *,
+    head_sha: str,
+    observed: RunObserver,
+    retention: timedelta,
+) -> RequestResult:
+    """Approve, in the dashboard, the run of a step whose postconditions call
+    `request_approval()`, at `head_sha`, the commit its branch ends on. It queues nothing for the
+    loop: the `step_approved` it appends is what the predicate reads when the loop next judges
+    the run.
+
+    Refused unless a person on the dashboard asks, the run is the one its ticket is on, and it
+    waits at its prompt: IDLE, or parked where `recheck_parked` re-reads it, within `retention`.
+    `head_sha` must still be the head of the one branch the step's branch names, and for a step
+    that declares `preview.files` the run's latest record of them must be a read at that head.
+    The same person approving the same head again within `_DOUBLE_PRESS` records nothing, and
+    `status` is then `pending`.
+    """
+    dashboard_only(
+        actor,
+        action="approve a step",
+        hint="Press Approve on the ticket page in the dashboard.",
+    )
+    ticket = await ticket_of(session, run)
+    step = await pinned_review_step(session, ticket, run)
+    # Before the forge read, so a press that cannot land costs no branch listing.
+    await _refuse_approval(session, run, ticket, step, now=datetime.now(UTC), retention=retention)
+    # Read before the lock: the worker's tick waits on that row, and a forge can be slow.
+    branches = await _branches(observed)
+    await _lock_run(session, run)
+    # The worker may have moved the ticket while the forge answered: judge the run against now.
+    await session.refresh(ticket)
+    step = await _refuse_approval(
+        session, run, ticket, step, now=datetime.now(UTC), retention=retention
+    )
+    if isinstance(branches, ServiceError):
+        raise branches
+    head = await _branch_head(session, ticket, step, branches)
+    if head.sha != head_sha:
+        raise Conflict(
+            "The branch moved after you opened this. Look again, then approve.",
+            code="head_moved",
+        )
+    if await _files_stale(session, step, run, head):
+        raise Conflict(_FILES_STALE, code="files_stale")
+    latest = await latest_approval(session, run.ticket_id, run.id)
+    duplicate = (
+        latest is not None
+        and (latest.approved_by, latest.head_sha) == (actor.by, head_sha)
+        and datetime.now(UTC) - latest.at < _DOUBLE_PRESS
+    )
+    if not duplicate:
+        await append(
+            session,
+            type=EventType.STEP_APPROVED,
+            project_id=ticket.project_id,
+            ticket_id=ticket.id,
+            step_run_id=run.id,
+            step=run.step_name,
+            attempt=run.attempt,
+            head_sha=head_sha,
+            branch=head.name,
+            **actor.fields("approved_by"),
+        )
+    await session.commit()
+    landed = await wake_and_wait(session, ticket)
+    return RequestResult(
+        ticket_id=ticket.id,
+        action="approve",
+        status="pending" if duplicate else "requested",
+        landed=landed,
+    )
+
+
+async def review_state(
+    session: AsyncSession, run: StepRun, observed: RunObserver, *, retention: timedelta
+) -> ReviewOut:
+    """What Approve on this run would approve, whether it applies to the run at all, whether the
+    run has pushed, and the refusal a press now would get, in `request_approval`'s order. The
+    forge is read only when no refusal short of it is decided: a step that does not await
+    review, or a press refused before the branch read, reads none, and has no branch or head."""
+    ticket = await ticket_of(session, run)
+    step = await pinned_review_step(session, ticket, run)
+    if step is None:
+        return ReviewOut(
+            awaits_review=False,
+            branch=None,
+            head_sha=None,
+            approval=None,
+            offered=False,
+            refusal=None,
+            pushed=False,
+        )
+    latest = await latest_approval(session, run.ticket_id, run.id)
+    approval = (
+        None
+        if latest is None
+        else ApprovalOut(approved_by=latest.approved_by, at=latest.at, head_sha=latest.head_sha)
+    )
+    refused, offered = await _approval_refusal(
+        session, run, ticket, step, now=datetime.now(UTC), retention=retention
+    )
+    unread = ReviewOut(
+        awaits_review=True,
+        branch=None,
+        head_sha=None,
+        approval=approval,
+        offered=offered,
+        refusal=None if refused is None else refused.message,
+        pushed=False,
+    )
+    if refused is not None:
+        return unread
+    branches = await _branches(observed)
+    if isinstance(branches, ServiceError):
+        return unread.model_copy(update={"refusal": _UNREAD})
+    try:
+        head = await _branch_head(session, ticket, step, branches)
+    except Conflict as exc:
+        return unread.model_copy(update={"refusal": exc.message})
+    return unread.model_copy(
+        update={
+            "branch": head.name,
+            "head_sha": head.sha,
+            "refusal": _FILES_STALE if await _files_stale(session, step, run, head) else None,
+            "pushed": pushed(head, await spawn_heads(session, run)),
+        }
+    )
+
+
+async def _refuse_approval(
+    session: AsyncSession,
+    run: StepRun,
+    ticket: Ticket,
+    step: AgentStep | None,
+    *,
+    now: datetime,
+    retention: timedelta,
+) -> AgentStep:
+    """`step`, the run's pinned step that awaits review, unless an approval is refused short of
+    the branch read: then that refusal is raised."""
+    refused, _ = await _approval_refusal(session, run, ticket, step, now=now, retention=retention)
+    if refused is not None:
+        raise refused
+    assert step is not None  # `_approval_refusal` refuses `not_reviewed` for no step
+    return step
+
+
+async def _approval_refusal(
+    session: AsyncSession,
+    run: StepRun,
+    ticket: Ticket,
+    step: AgentStep | None,
+    *,
+    now: datetime,
+    retention: timedelta,
+) -> tuple[Conflict | None, bool]:
+    """The first refusal of an approval short of the branch read, or None, and whether Approve
+    applies to the run at all, refused now or not: it is current and at its prompt."""
+    current = await _current(session, ticket, run)
+    at_prompt = await _at_prompt(session, ticket, run)
+    offered = current and at_prompt
+    try:
+        refuse_while_quarantined(ticket, "approve")
+    except Conflict as exc:
+        return exc, offered
+    if ticket.status in (TicketStatus.DONE, TicketStatus.EXITED):
+        return nothing_to(ticket, "approve"), offered
+    if not current:
+        return Conflict(
+            f"Attempt {run.attempt} of {run.step_name} isn't the one this ticket is on.",
+            code="stale",
+        ), offered
+    if step is None:
+        return Conflict(
+            f"{run.step_name} doesn't wait for an approval.", code="not_reviewed"
+        ), offered
+    if run.status == StepRunStatus.RUNNING:
+        return Conflict(
+            "The agent is still working. Approve when it stops.", code="mid_turn"
+        ), offered
+    if not at_prompt:
+        return Conflict(
+            f"Attempt {run.attempt} of {run.step_name} is {_RUN_STATES[run.status]}, so it "
+            "can't be approved.",
+            code="not_waiting",
+        ), offered
+    if await pending_resume_request(session, ticket.id) is not None:
+        return Conflict(
+            "A Resume of this run is still being answered. Approve when the agent stops again.",
+            code="release_pending",
+        ), offered
+    if (
+        run.status == StepRunStatus.INTERRUPTED
+        and run.ended_at is not None
+        and run.ended_at < now - retention
+    ):
+        return Conflict(
+            f"This step waited past its {spoken(retention)} and its session is gone. Press Redo "
+            "to run it again.",
+            code="expired",
+        ), offered
+    return None, offered
+
+
+async def _files_stale(
+    session: AsyncSession, step: AgentStep, run: StepRun, head: BranchState
+) -> bool:
+    """For a step that declares files, is the run's latest record of them anything but a read of
+    its branch at `head`? The person would approve a commit whose files they never saw. A step
+    that declares none has no record and is never held."""
+    if not declares_files(step):
+        return False
+    record = await outputs_observation(session, run)
+    return record is None or record.get("status") != "observed" or record.get("commit") != head.sha
+
+
+async def _current(session: AsyncSession, ticket: Ticket, run: StepRun) -> bool:
+    return await is_current_run(
+        session,
+        ticket_id=ticket.id,
+        step=run.step_name,
+        attempt=run.attempt,
+        current_step=ticket.current_step,
+    )
+
+
+async def _at_prompt(session: AsyncSession, ticket: Ticket, run: StepRun) -> bool:
+    """The run waits at its prompt: IDLE, or parked by the loop at its prompt on a BLOCKED
+    ticket, never by a person's stop. Whether it is current is the caller's to judge."""
+    if run.status == StepRunStatus.IDLE:
+        return True
+    if run.status != StepRunStatus.INTERRUPTED or ticket.status != TicketStatus.BLOCKED:
+        return False
+    park = await latest_park(session, run.ticket_id, run.id)
+    return park is not None and parked_at_prompt(park.reason, park.at_prompt)
+
+
+async def _branches(observed: RunObserver) -> Sequence[BranchState] | ServiceError:
+    """The repo's branches, or the refusal a request that needed them answers with."""
+    source = await observed()
+    if source is None:
+        return Unavailable(
+            "This project's repository isn't connected, so its branch can't be read."
+        )
+    try:
+        return await source.branches()
+    except Exception as exc:
+        failure = host_failure(exc)
+        if failure is None and not isinstance(exc, _NO_ANSWER):
+            raise
+        status = None if failure is None else failure.status
+        return UpstreamFailed(
+            "Factorial couldn't read this step's branch"
+            + ("." if status is None else f" (HTTP {status}).")
+        )
+
+
+async def _branch_head(
+    session: AsyncSession,
+    ticket: Ticket,
+    step: AgentStep,
+    branches: Sequence[BranchState],
+) -> BranchState:
+    """The one branch the step's branch names, as `request_approval()` resolves it."""
+    repo = (
+        await session.execute(select(Project.github_repo).where(Project.id == ticket.project_id))
+    ).scalar_one()
+    values = {
+        "ticket": ticket.external_key,
+        "ticket_owner": ticket.owner_at_admission,
+        "repo": repo,
+    }
+    glob = _glob(step.workspace.branch, values)
+    head = sole_ref(branches, glob)
+    if head is None:
+        raise Conflict(_BRANCHES if resolve_refs(branches, glob) else _NO_BRANCH, code="no_branch")
+    return head

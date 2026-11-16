@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.vocabulary import (
     BACKENDS,
+    HOST_ROLE_MODE,
     SLOT_PREFIX,
     assistant_offer,
     credential_slot,
@@ -37,13 +38,17 @@ from orchestrator.factorial.bedrock_token import BedrockMintError, mint_bearer
 from orchestrator.secrets import store
 
 __all__ = [
+    "ASSISTANT_OFF",
     "HOST_BEDROCK_REFUSED",
+    "NO_CREDENTIAL",
     "SETTING_KEY",
     "STATUS_KEY",
     "CredentialState",
     "StoredCredential",
     "assistant_credential",
+    "assistant_not_ready",
     "assistant_ready_to_send",
+    "backend_status",
     "clear_assistant_credential",
     "credential_state",
     "host_bedrock_refused",
@@ -103,7 +108,7 @@ def model_refused(assistant: AssistantSettings) -> str | None:
 
 
 def host_bedrock_refused(assistant: AssistantSettings, *, multi_org: bool) -> bool:
-    return multi_org and assistant.backend == "codex_cli" and assistant.auth_mode == "bedrock"
+    return multi_org and assistant.auth_mode == HOST_ROLE_MODE
 
 
 def offer_refused(
@@ -181,6 +186,22 @@ async def load_assistant_status(session: AsyncSession) -> JsonDict | None:
     ).scalar_one_or_none()
 
 
+def backend_status(health: JsonDict, backend: str) -> JsonDict:
+    """The status row as one backend sees it: `{ok, message, version, at}` with that backend's own
+    `ok` and `message`, so a backend this organization doesn't use can't mark its assistant broken.
+    A row written before the check was per backend answers for every backend at once."""
+    backends = health.get("backends")
+    own = backends.get(backend) if isinstance(backends, dict) else None
+    if not isinstance(own, dict):
+        return health
+    return {
+        "ok": bool(own.get("ok")),
+        "message": own.get("message"),
+        "version": health.get("version"),
+        "at": health.get("at"),
+    }
+
+
 async def save_assistant_status(session: AsyncSession, value: JsonDict) -> None:
     insert = pg_insert(AppSetting).values(key=STATUS_KEY, value=value, updated_by="assistant")
     await session.execute(
@@ -248,13 +269,44 @@ async def credential_state(
     return CredentialState(set=True, updated_by=meta[0], updated_at=meta[1])
 
 
+#: Why a message or Settings test may not queue a turn, one sentence per cause. One sentence for
+#: all of them sent a person who had stored a key, and only left Enabled off, to look for a fault
+#: in the key.
+ASSISTANT_OFF: Final = (
+    "The assistant is off. Select Enabled under Availability in Assistant settings, then save."
+)
+NO_CREDENTIAL: Final = (
+    "The assistant has no credential stored. Store one under Connection in Assistant settings."
+)
+
+
+def _cannot_mint(region: str) -> str:
+    return (
+        f"This host can't get a Bedrock token from its AWS role in {region}. Check the host's AWS "
+        "credentials and the Bedrock region in Assistant settings."
+    )
+
+
+async def assistant_not_ready(
+    session: AsyncSession, organization_id: int, settings: AssistantSettings, *, multi_org: bool
+) -> str | None:
+    """Why a message or Settings test may not queue a turn, or None when it may: enabled, and a
+    credential the turn can use — stored, or Bedrock minted from the factory host role at send
+    time. Whether a stored credential is valid only a turn can tell."""
+    if not settings.enabled:
+        return ASSISTANT_OFF
+    if host_bedrock_refused(settings, multi_org=multi_org):
+        return HOST_BEDROCK_REFUSED
+    if settings.auth_mode == HOST_ROLE_MODE:
+        ok = await _host_can_mint(settings.bedrock_region)
+        return None if ok else _cannot_mint(settings.bedrock_region)
+    stored = (await credential_state(session, organization_id, settings)).set
+    return None if stored else NO_CREDENTIAL
+
+
 async def assistant_ready_to_send(
     session: AsyncSession, organization_id: int, settings: AssistantSettings, *, multi_org: bool
 ) -> bool:
-    """Whether a message or Settings test may queue a turn: enabled, and a credential the turn
-    can use — stored, or Bedrock minted from the factory host role at send time."""
-    if not settings.enabled or host_bedrock_refused(settings, multi_org=multi_org):
-        return False
-    if settings.backend == "codex_cli" and settings.auth_mode == "bedrock":
-        return await _host_can_mint(settings.bedrock_region)
-    return (await credential_state(session, organization_id, settings)).set
+    return (
+        await assistant_not_ready(session, organization_id, settings, multi_org=multi_org)
+    ) is None

@@ -17,6 +17,7 @@ __all__ = [
     "Unavailable",
     "UpstreamFailed",
     "as_sentence",
+    "located",
     "render",
 ]
 
@@ -41,6 +42,16 @@ RefusalCode = Literal[
     "ceiling",
     # Retry now refused: the backoff has run, so the retry is starting anyway.
     "already_due",
+    # Approve refused (`controls.request_approval`), in the order it checks.
+    "stale",
+    "not_reviewed",
+    "mid_turn",
+    "not_waiting",
+    "release_pending",
+    "expired",
+    "no_branch",
+    "head_moved",
+    "files_stale",
     "process_retired",
     # Restart refused: the process has a newer version than the one the caller restarted onto.
     "process_moved",
@@ -69,7 +80,8 @@ class ServiceError(Exception):
     branch on. `missing_runtimes` lists the slugs a `runtime_missing` refusal asks to create.
     `tool_hint` is the next step for a tool caller, an MCP client or the assistant,
     when it differs from the person's: the tool to call or the argument to pass. The dashboard
-    never shows it."""
+    never shows it. `path` is the config file the refusal is about; every reader gets it in
+    front of the message, and the dashboard also as a field it can open."""
 
     status: ClassVar[int] = 500
 
@@ -82,9 +94,11 @@ class ServiceError(Exception):
         code: RefusalCode | None = None,
         tool_hint: str | None = None,
         missing_runtimes: Sequence[str] = (),
+        path: str | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
+        self.path = path
         self.hint = hint
         self.candidates = tuple(candidates)
         self.code = code
@@ -96,9 +110,14 @@ def as_sentence(text: str) -> str:
     return text if text.endswith((".", "?", "!")) else f"{text}."
 
 
+def located(exc: ServiceError) -> str:
+    """The message, behind the file it is about when it is about one."""
+    return f"{exc.path}: {exc.message}" if exc.path else exc.message
+
+
 def render(exc: ServiceError) -> str:
     """The refusal as an MCP client reads it: the message, then `Next:` and `Valid:` lines."""
-    lines = [exc.message]
+    lines = [located(exc)]
     if exc.tool_hint or exc.hint:
         lines.append(f"Next: {exc.tool_hint or exc.hint}")
     if exc.candidates:

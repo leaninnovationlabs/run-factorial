@@ -58,7 +58,8 @@ __all__ = [
 ]
 
 RESTART_NOTICE: Final = "The assistant restarted. Send your message again."
-#: Why a send is refused, and a turn fails, while the assistant is off or has no credential.
+#: Why a turn fails when its credential can't be had at run time. A send is refused before that
+#: with a sentence for its own cause (`assistant_settings.assistant_not_ready`).
 NOT_SET_UP: Final = "Set up the assistant in Assistant settings."
 
 

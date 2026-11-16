@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useViewParams } from "../../searchParams";
+import { safeGet, safeSet } from "../../storage";
 import { SegmentedControl } from "../ui";
 
 export type ActiveView = "all" | "active" | "paused";
@@ -14,13 +16,33 @@ export function shows(view: ActiveView, active: boolean): boolean {
   }
 }
 
-/** Active is the default and the URL's absence of `show`: paused projects are mostly toys, and
- *  the page a demo opens on should not need a click to hide them. */
-export function useActiveView() {
+const asView = (value: string | null): ActiveView | null =>
+  value === "all" || value === "active" || value === "paused" ? value : null;
+
+/**
+ * Which projects a list shows, kept in the URL's `show`.
+ *
+ * Without `remember` — the Overview, the page a demo opens on — Active is the default and the
+ * absence of `show`: paused projects are mostly toys, and hiding them should not need a click.
+ *
+ * With `remember`, a browser storage key — the Projects list, where a reader goes to find a
+ * paused one too — All is the default, and the reader's last press is kept and applies wherever
+ * the address has no `show`, so coming back finds the list as they left it. A `show` in a link
+ * that was followed is honoured but not kept: only a press is the reader's choice.
+ */
+export function useActiveView(remember?: string) {
   const [params, update] = useViewParams();
-  const show = params.get("show");
-  const value: ActiveView = show === "all" || show === "paused" ? show : "active";
-  const setValue = (next: ActiveView) => update({ show: next === "active" ? null : next });
+  const [kept, setKept] = useState(() => (remember ? asView(safeGet(remember)) : null));
+  const fallback: ActiveView = remember ? (kept ?? "all") : "active";
+  const value = asView(params.get("show")) ?? fallback;
+  const setValue = (next: ActiveView) => {
+    if (remember) {
+      safeSet(remember, next);
+      setKept(next);
+    }
+    const omitted: ActiveView = remember ? "all" : "active";
+    update({ show: next === omitted ? null : next });
+  };
   return [value, setValue] as const;
 }
 

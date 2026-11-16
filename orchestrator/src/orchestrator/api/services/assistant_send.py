@@ -15,8 +15,7 @@ from orchestrator.api.services import assistant_settings as svc
 from orchestrator.api.services.errors import as_sentence
 from orchestrator.api.services.organizations import conversation_organization_id
 from orchestrator.assistant.items import append_item, notify_items
-from orchestrator.assistant.turns import NOT_SET_UP, budget_spent, enqueue_turn, live_turn
-from orchestrator.db.base import JsonDict
+from orchestrator.assistant.turns import budget_spent, enqueue_turn, live_turn
 from orchestrator.db.models import ChatItemKind, ChatTurn, ChatTurnTrigger
 
 __all__ = ["TURN_LIVE", "SendRefused", "queue_user_message"]
@@ -34,15 +33,6 @@ class SendRefused(Exception):
         self.detail = detail
 
 
-def _backend_ok(health: JsonDict, backend: str) -> bool:
-    """The organization's own backend passed its check. A row written before the check was per
-    backend answers for every backend at once."""
-    backends = health.get("backends")
-    if isinstance(backends, dict) and isinstance(backends.get(backend), dict):
-        return bool(backends[backend].get("ok"))
-    return bool(health.get("ok"))
-
-
 async def queue_user_message(
     session: AsyncSession,
     conversation_id: int,
@@ -54,18 +44,20 @@ async def queue_user_message(
 ) -> ChatTurn:
     organization_id = await conversation_organization_id(session, conversation_id)
     assistant = await svc.load_assistant_settings(session, organization_id)
-    if not await svc.assistant_ready_to_send(
+    not_ready = await svc.assistant_not_ready(
         session, organization_id, assistant, multi_org=multi_org
-    ):
-        raise SendRefused(409, "not_configured", NOT_SET_UP)
+    )
+    if not_ready is not None:
+        raise SendRefused(409, "not_configured", not_ready)
     health = await svc.load_assistant_status(session)
     # No row yet is a process still starting: its first turn is only seconds away.
-    if health is not None and not _backend_ok(health, assistant.backend):
+    own = None if health is None else svc.backend_status(health, assistant.backend)
+    if own is not None and not own.get("ok"):
         raise SendRefused(
             503,
             "assistant_unavailable",
             "The assistant can't run a turn: "
-            + as_sentence(str(health.get("message") or "its check failed")),
+            + as_sentence(str(own.get("message") or "its check failed")),
         )
     if await live_turn(session, conversation_id) is not None:
         raise SendRefused(409, "turn_live", TURN_LIVE)

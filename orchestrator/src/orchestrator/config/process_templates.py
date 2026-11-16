@@ -10,22 +10,49 @@ them to the `factorial` branch. Each folder ships as package data beside the sca
 `scaffold/templates/process-templates/<key>/processes/process-<lane>.yaml`, because the image
 carries no `docs/`.
 
-`simple` is the GitHub template: the lanes of docs/samples/factorial-simple. `simple-gitlab` is
-the GitLab counterpart, the lanes of docs/samples/factorial-gitlab, started from a working
-`.factorial` on GitLab. The tests hold each template's parsed content equal to its sample's, and
-hold a first commit of each template to every path its sample folder has, with the sample's text.
+`simple` is the lanes of docs/samples/factorial-simple. `superpowers` is the one lane of
+docs/samples/factorial-superpowers, whose design and plan a person approves in the dashboard.
+Both serve GitHub and GitLab: a process file names no forge, and their agents' prompts name both
+`gh` and `glab`. The tests hold each template's parsed content equal to its sample's, and hold a
+first commit of each template, on either forge, to every path its sample folder has, with the
+sample's text.
+
+The shells are what the editor fills a new agent, skill, MCP server or process from: one folder
+per kind under `scaffold/templates/shells/`, with `__NAME__` where the name the operator types
+goes. An agent shell and a skill shell parse as written. An MCP server shell and a process shell
+cannot have a safe default, so the part the operator must write is a commented example between
+two marker lines, and the loader refuses the file until it is filled in. The tests parse each
+example once it is uncommented, so a shell cannot go stale against the models.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from orchestrator.config.loader import PROCESS_PREFIX, PROCESS_SUFFIX, PROCESSES_DIR
-from orchestrator.config.scaffold.catalog import TEMPLATE_ROOT, Forge
+from orchestrator.config.scaffold.catalog import TEMPLATE_ROOT
 
-__all__ = ["PROCESS_TEMPLATES", "ProcessTemplate", "TemplateLane"]
+__all__ = ["CONFIG_SHELLS", "PROCESS_TEMPLATES", "ProcessTemplate", "TemplateLane"]
 
 TEMPLATES_DIR = TEMPLATE_ROOT / "process-templates"
+SHELLS_DIR = TEMPLATE_ROOT / "shells"
+
+
+def _shells() -> Mapping[str, Mapping[str, str]]:
+    return {
+        kind.name: {
+            str(path.relative_to(kind)): path.read_text()
+            for path in sorted(kind.rglob("*"))
+            if path.is_file()
+        }
+        for kind in sorted(SHELLS_DIR.iterdir())
+        if kind.is_dir()
+    }
+
+
+#: Kind (`agent`, `skill`, `mcp`, `process`) to file name inside that shell to body.
+CONFIG_SHELLS: Mapping[str, Mapping[str, str]] = _shells()
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,9 +68,6 @@ class ProcessTemplate:
     key: str
     title: str
     description: str
-    #: The forge whose agents the gallery previews for it. An import writes the agents of the
-    #: project's own forge, whichever template it came from.
-    forge: Forge
 
     @property
     def lanes(self) -> tuple[TemplateLane, ...]:
@@ -64,18 +88,16 @@ PROCESS_TEMPLATES: tuple[ProcessTemplate, ...] = (
         title="Simple template",
         description=(
             "Two lanes: simple plans, builds and tests each ticket; primary skips the test step "
-            "for a repo without CI on pull requests. A person reviews the spec and the code."
+            "for a repo with no test suite to run. A person reviews the spec and the code."
         ),
-        forge="github",
     ),
     ProcessTemplate(
-        key="simple-gitlab",
-        title="Simple template (GitLab)",
+        key="superpowers",
+        title="Superpowers template",
         description=(
-            "Two lanes on GitLab: simple plans, builds and tests each ticket; primary skips the "
-            "test step for a repo without CI on merge requests. "
-            "A person reviews the spec and the code."
+            "One lane: an agent agrees a design with a person, writes a plan of small "
+            "test-first tasks, builds it and reviews the branch. A person approves the design and "
+            "the plan in the dashboard, then the pull request."
         ),
-        forge="gitlab",
     ),
 )

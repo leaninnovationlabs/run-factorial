@@ -16,6 +16,7 @@ export function Panel({
   title,
   subtitle,
   count,
+  titleAction,
   actions,
   headingLevel = 2,
   isCollapsible = false,
@@ -31,6 +32,9 @@ export function Panel({
   subtitle?: ReactNode;
   /** A number the title is about, drawn as a badge beside it. */
   count?: number;
+  /** One icon control beside the title, outside the heading so its name stays the panel's: the
+   *  activity's sort. */
+  titleAction?: ReactNode;
   actions?: ReactNode;
   headingLevel?: 2 | 3;
   /** The header folds the body away; `isOpen` and `onToggle` say whether it is folded. */
@@ -53,6 +57,23 @@ export function Panel({
       {count !== undefined && <Badge>{count}</Badge>}
     </span>
   );
+  const titled = (
+    <Heading id={headingId} className="text-heading-xs text-default">
+      {isCollapsible ? (
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          onClick={onToggle}
+          className="-ml-1 inline-flex items-center gap-1 rounded-sm px-1 hover:bg-neutral-subtle-hovered"
+        >
+          <Icon glyph={isOpen ? "chevron-down" : "chevron-right"} className="text-icon-subtle" />
+          {heading}
+        </button>
+      ) : (
+        heading
+      )}
+    </Heading>
+  );
   return (
     <section
       {...data}
@@ -67,24 +88,14 @@ export function Panel({
           )}
         >
           <div className="min-w-0 space-y-0.5">
-            <Heading id={headingId} className="text-heading-xs text-default">
-              {isCollapsible ? (
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  onClick={onToggle}
-                  className="-ml-1 inline-flex items-center gap-1 rounded-sm px-1 hover:bg-neutral-subtle-hovered"
-                >
-                  <Icon
-                    glyph={isOpen ? "chevron-down" : "chevron-right"}
-                    className="text-icon-subtle"
-                  />
-                  {heading}
-                </button>
-              ) : (
-                heading
-              )}
-            </Heading>
+            {titleAction ? (
+              <div className="flex min-w-0 items-center gap-1">
+                {titled}
+                {titleAction}
+              </div>
+            ) : (
+              titled
+            )}
             {(note || subtitle) && (
               <div className="flex items-start gap-1.5 text-body-sm text-subtle">
                 {note && (

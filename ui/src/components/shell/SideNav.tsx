@@ -1,16 +1,19 @@
 /**
- * The side navigation: where the reader is, and at its foot the organization the page acts in —
- * the button that switches to another — where to read about it, and, last, the account: who is
- * signed in, the theme as a row of icons, and the way to sign out. The top bar keeps only the menu button,
- * the product and the search.
+ * The side navigation: the pages of the place the top bar names, and at its foot where to read
+ * about them and, last, the account: who is signed in, the theme as a row of icons, and the way
+ * to sign out. Which organization and which project the reader is in, and the way to another, are
+ * the top bar's (`TopNav`).
  *
  * Outside a project it names the organization's places — Overview, Projects, the Assistant — and
  * a Settings group under them: Runtimes, MCP access and the assistant's settings, each shown only
- * to a reader who holds the permission its page needs, and the group not at all when none is. Inside one — a project's own pages,
- * or a ticket's, which belongs to a project — it is the project's: the project's name on a filled
- * band from edge to edge, the button that switches to another (`ProjectSwitcher`), then its pages
- * with its configuration under them (`ProjectNav`). The band sits above the region the items
- * scroll in, which would otherwise clip it to the navigation's padding.
+ * to a reader who holds the permission its page needs, and the group not at all when none is.
+ * Inside one — a project's own pages, or a ticket's, which belongs to a project — it is the
+ * project's: its pages with its configuration under them (`ProjectNav`).
+ *
+ * Drawn over the page it covers the top bar, so it carries what the bar says: the product, the
+ * organization's switcher, and inside a project the project's, on a filled band from edge to edge.
+ * The band sits above the region the items scroll in, which would otherwise clip it to the
+ * navigation's padding.
  *
  * Full or compact on a wide screen, as the reader chose; compact whatever the choice below
  * 1024px, where each item is an icon named by its label and a tooltip; and below 768px off the
@@ -111,7 +114,9 @@ export function SideNav({
   useEffect(() => {
     if (mode !== "overlay" || !panel.current) return;
     const pop = pushLayer(panel.current, onClose);
-    panel.current.querySelector<HTMLElement>("a")?.focus();
+    // The first of the place's pages, past the organization's and the project's names, which
+    // are links too.
+    panel.current.querySelector<HTMLElement>("[data-nav-items] a")?.focus();
     return pop;
   }, [mode, onClose]);
 
@@ -129,37 +134,32 @@ export function SideNav({
         compact ? "w-14 items-center" : mode === "full" && "w-56",
       )}
     >
-      {/* Over the page it covers the top bar too, so it carries the product and its own way out. */}
       {mode === "overlay" && (
-        <div className="mb-2 flex items-center justify-between gap-2 pl-2">
-          <span className="flex items-center gap-2">
-            <img data-nav-mark src={logoUrl} alt="" className="size-6" />
-            <span className="text-heading-xs text-default">Factorial</span>
-          </span>
-          <IconButton icon="close" label="Close navigation" onClick={onClose} />
-        </div>
-      )}
-      {place && (
-        <div
-          data-project-band
-          className={cx(
-            // Out to the navigation's edges, past its own padding: the band is the place, not a
-            // row in it.
-            "-mx-2 mb-1 self-stretch border-b border-default bg-neutral p-2",
-            mode !== "overlay" && "-mt-2",
-            compact && "flex justify-center",
+        <>
+          <div className="mb-2 flex items-center justify-between gap-2 pl-2">
+            <span className="flex items-center gap-2">
+              <img data-nav-mark src={logoUrl} alt="" className="size-6" />
+              <span className="text-heading-xs text-default">Factorial</span>
+            </span>
+            <IconButton icon="close" label="Close navigation" onClick={onClose} />
+          </div>
+          <OrganizationSwitcher onNavigate={onClose} />
+          {place && (
+            <div
+              data-project-band
+              // Out to the navigation's edges, past its own padding: the band is the place, not a
+              // row in it.
+              className="-mx-2 my-1 self-stretch border-y border-default bg-neutral p-2"
+            >
+              <ProjectSwitcher place={place} onNavigate={onClose} />
+            </div>
           )}
-        >
-          <ProjectSwitcher
-            place={place}
-            isCompact={compact}
-            onNavigate={mode === "overlay" ? onClose : undefined}
-          />
-        </div>
+        </>
       )}
       {/* The items scroll on their own when a project's configuration outgrows a short window,
           so the foot stays where it is. */}
       <div
+        data-nav-items
         className={cx(
           "flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto",
           compact && "items-center",
@@ -185,7 +185,6 @@ export function SideNav({
           compact ? "items-center" : "w-full",
         )}
       >
-        <OrganizationSwitcher isCompact={compact} />
         <FootMenu
           icon="help"
           label="Help"

@@ -1,5 +1,6 @@
 /**
- * Where a person writes to the assistant. Enter sends and Shift+Enter starts a new line. One turn
+ * Where a person writes to the assistant. Enter sends; Shift+Enter, Option+Enter (Alt+Enter) and
+ * Ctrl+Enter each start a new line, since people bring the habit of one chat app or another. One turn
  * runs per conversation, so while one is queued or running the field waits and Stop takes Send's
  * place; the thread's typing dots say the turn is under way, so no line here repeats it. A line
  * shows only for what the dots would hide: a queued turn nobody has claimed for 10 seconds (the
@@ -95,6 +96,20 @@ export function Composer({
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
+    if (event.altKey || event.ctrlKey) {
+      // The browser writes a newline for Shift+Enter alone, so these ask it for the same edit:
+      // over any selection, the caret after it and in view, and one step of the field's undo.
+      // Assigning `value` does none of the last two, so it is only for a browser without the
+      // command.
+      if (!document.execCommand?.("insertText", false, "\n")) {
+        const field = event.currentTarget;
+        const { selectionStart: start, selectionEnd: end, value } = field;
+        field.value = `${value.slice(0, start)}\n${value.slice(end)}`;
+        field.setSelectionRange(start + 1, start + 1);
+        setText(field.value);
+      }
+      return;
+    }
     void send();
   }
 

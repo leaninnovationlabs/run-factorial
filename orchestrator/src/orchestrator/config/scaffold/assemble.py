@@ -8,8 +8,11 @@ the request read, and the branch must still hold the blob the edit started from 
 otherwise), so an edit never overwrites a change it did not see. A created file is the one path
 the client names freely, so it is proven rather than looked up: every segment under
 `.factorial/` a safe name (`_SAFE_NAME`, so no `..` and no dot-folder), and nothing on the branch
-at that path, above it or below it — a create never overwrites. A submitted body is data: it is
-written and compared, never executed and never interpolated into a command.
+at that path, above it or below it — a create never overwrites. A deleted file must be under
+`.factorial/` and, while the branch has it, at the blob the operator saw (`EditConflict`
+otherwise); one the branch no longer has is skipped, so a retried commit stays a no-op. A
+submitted body is data: it is written and compared, never executed and never interpolated into a
+command.
 
 The process file is taken from `yaml_text` and never from the selection. Accepting a body for it
 would let the committed YAML differ from the config that was parsed and used to compute the
@@ -19,8 +22,12 @@ weaker one.
 
 One layout is written: `.factorial/processes/process-<name>.yaml`. The legacy root
 `process.yaml` is read for ever and never written again (decision 37), and a repo still carrying
-it is refused before this function runs (`api.routes.admin._refuse_legacy_layout`) — writing the
+it is refused before this function runs (`api.services.config._refuse_legacy_layout`) — writing the
 new path beside the old file would create the mixed layout the loader refuses at sync.
+
+Deleting the lane's own process file writes no process and no stub: the commit retires the lane,
+and a retry of it, which finds the file already gone, writes nothing either. The last process is
+never deleted, because a folder with none does not load.
 """
 
 from __future__ import annotations
@@ -29,7 +36,15 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from orchestrator.config.loader import AGENT_FILE, AGENTS_DIR, PROCESSES_DIR, process_file_name
+from orchestrator.config.loader import (
+    AGENT_FILE,
+    AGENTS_DIR,
+    PROCESS_FILE,
+    PROCESS_PREFIX,
+    PROCESS_SUFFIX,
+    PROCESSES_DIR,
+    process_file_name,
+)
 from orchestrator.config.models import AgentStep, ProcessConfig
 from orchestrator.config.scaffold import CONFIG_DIR, ScaffoldBundle
 from orchestrator.config.scaffold.catalog import TEMPLATE_ROOT
@@ -38,6 +53,7 @@ from orchestrator.config.scaffold.propose import Proposal, substitute
 
 __all__ = [
     "EditConflict",
+    "FileDelete",
     "FileEdit",
     "SelectionError",
     "assemble",
@@ -86,8 +102,17 @@ class FileEdit:
     base_sha: str
 
 
+@dataclass(frozen=True, slots=True)
+class FileDelete:
+    """A file the config branch has, removed by the operator."""
+
+    path: str
+    #: The git blob the operator saw.
+    base_sha: str
+
+
 class EditConflict(Exception):
-    """An edit whose file changed on the branch after the operator opened it."""
+    """An edit or a deletion whose file changed on the branch after the operator opened it."""
 
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
@@ -120,6 +145,7 @@ def assemble(
     *,
     edits: Sequence[FileEdit] = (),
     created: Mapping[str, str] | None = None,
+    deleted: Sequence[FileDelete] = (),
     repo_blobs: Mapping[str, str] | None = None,
 ) -> ScaffoldBundle:
     process_path = process_bundle_path(config.name)
@@ -168,7 +194,22 @@ def assemble(
             raise SelectionError(f"{path} was submitted twice; send it once")
         _check_created(path, blobs, proposal)
 
-    files: dict[str, str] = {process_path: yaml_text, **selected, **edited, **new}
+    removed = _checked_deletes(deleted, blobs, written={*selected, *new}, edited=set(edited))
+    # From the request, not from what was removed: a retry finds the file already gone, and must
+    # still write no process, or the retry would put back the process the first try deleted.
+    retiring = any(delete.path == process_path for delete in deleted)
+    if retiring and selected:
+        raise SelectionError(
+            f"{process_path} is deleted by this commit, so it cannot add files for that process"
+        )
+
+    files: dict[str, str] = {**selected, **edited, **new}
+    if not retiring:
+        files = {process_path: yaml_text, **files}
+    if removed and not any(_is_process_file(p) for p in (set(blobs) - removed) | set(files)):
+        raise SelectionError(
+            "A project keeps at least one process. Add another process before you delete this one."
+        )
     stub_paths: set[str] = set()
 
     # The authoritative presence signal: `proposal.components` carries one `ComponentProposal`
@@ -183,7 +224,8 @@ def assemble(
     # Any referenced agent left without a manifest gets the comments-only stub, so unticking
     # everything reproduces the behaviour that existed before per-file choice.
     stub = (TEMPLATE_ROOT / "stub" / "agent.yaml").read_text()
-    for name in sorted({s.agent for s in config.steps if isinstance(s, AgentStep)}):
+    referenced = {s.agent for s in config.steps if isinstance(s, AgentStep)}
+    for name in sorted(set() if retiring else referenced):
         if not _SAFE_NAME.match(name):
             raise SelectionError(
                 f"agent name {name!r} must be a single folder name (match "
@@ -211,4 +253,41 @@ def assemble(
         shared_skills=components("skill", present=False),
         present_skills=components("skill", present=True),
         present_mcp=components("mcp", present=True),
+        deleted=frozenset(removed),
     )
+
+
+def _is_process_file(path: str) -> bool:
+    folder = f"{CONFIG_DIR}/{PROCESSES_DIR}/"
+    name = path.removeprefix(folder)
+    in_folder = path.startswith(folder) and "/" not in name
+    return path == f"{CONFIG_DIR}/{PROCESS_FILE}" or (
+        in_folder and name.startswith(PROCESS_PREFIX) and name.endswith(PROCESS_SUFFIX)
+    )
+
+
+def _checked_deletes(
+    deleted: Sequence[FileDelete], blobs: Mapping[str, str], *, written: set[str], edited: set[str]
+) -> set[str]:
+    removed: set[str] = set()
+    seen: set[str] = set()
+    for delete in sorted(deleted, key=lambda d: d.path):
+        path = delete.path
+        if not path.startswith(f"{CONFIG_DIR}/"):
+            raise SelectionError(
+                f"{path} is not under {CONFIG_DIR}/, so the editor cannot delete it"
+            )
+        if path in edited:
+            raise SelectionError(f"{path} is both edited and deleted. Send one.")
+        if path in written or path in seen:
+            raise SelectionError(f"{path} was submitted twice; send it once")
+        seen.add(path)
+        if path not in blobs:
+            continue
+        if blobs[path] != delete.base_sha:
+            raise EditConflict(
+                f"{path} changed on the config branch after it was opened; "
+                "reload it before you delete it"
+            )
+        removed.add(path)
+    return removed

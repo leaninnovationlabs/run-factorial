@@ -5,7 +5,10 @@
  * `default` for a page of panels; `narrow` for a form, where a stretched line reads worse. A
  * `fill` page is exactly the height of the window below the top bar, and its own regions scroll
  * inside it: the board and its list, the ticket's activity. A `bleed` page takes the window to
- * its edges on a phone, where the page's own frame would only spend width: the assistant.
+ * its edges on a phone, where the page's own frame would only spend width: the assistant. A
+ * `focus` page is drawn without the side navigation, as `useFocusMode` puts it away for a while:
+ * creating an organization, which is about none of the current one's places. Its Cancel and the
+ * top bar's mark are the way back.
  *
  * A page with `needs` is drawn only for a reader who holds that permission (`RequirePermission`):
  * the settings pages, whose reads the API keeps to the roles that hold them. A project's
@@ -29,6 +32,7 @@ export type AppRoute = {
   width: RouteWidth;
   fill?: boolean;
   bleed?: boolean;
+  focus?: boolean;
   needs?: string;
 };
 
@@ -78,6 +82,7 @@ const PAGES = {
   settings: page(() => import("../../pages/SettingsPage")),
   members: page(() => import("../../pages/MembersPage")),
   inviteMembers: page(() => import("../../pages/InviteMembersPage")),
+  newOrganization: page(() => import("../../pages/NewOrganizationPage")),
 };
 
 export const ROUTES: AppRoute[] = [
@@ -120,6 +125,8 @@ export const ROUTES: AppRoute[] = [
     width: "narrow",
     needs: "members:invite",
   },
+  // No `needs`: making another organization is not a permission held in this one.
+  { path: "/organizations/new", page: PAGES.newOrganization, width: "narrow", focus: true },
 ];
 
 export const WIDTH_CLASS: Record<RouteWidth, string> = {

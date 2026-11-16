@@ -5,28 +5,33 @@ include that the pull request its gate rejected has moved, or the page a change 
 preview was about (`postconditions_met`): met, and no writer input for `terminal.finish_grace`, the
 worker calls `finish()` once and accepts the run as any other; unmet, the run stays IDLE,
 `agent_idle` is appended once per spell and, when the stop will park (below), the ticket shows
-`factorial:waiting`. Outside a rework a step with no postconditions is met by definition, so its
-session finishes at its first turn end. A finish still unsettled `terminal.idle_park_after` later
-is sent once more. Writer input is the later of what the session reports and the gateway's latest
-`terminal_input`; a viewer without the seat writes none.
+`factorial:waiting`. A step that awaits review records its declared files once per spell, and
+again when its branch moves (`outputs.observe_waiting_outputs`). Outside a rework a step with no
+postconditions is met by definition, so its session finishes at its first turn end. A finish
+still unsettled `terminal.idle_park_after` later is sent once more. Writer input is the later of
+what the session reports and the gateway's latest `terminal_input`; a viewer without the seat
+writes none.
 
 A spell unanswered for `terminal.idle_park_after` parks for a person when the agent asked, or its
 turn failed, in this spell or earlier in the active stretch, or a person worked with the session
-(`person_engaged`: typed through the gateway, or released a park). So does an earned finish re-sent
+(`person_engaged`: typed through the gateway, or released a park), or the step awaits review
+(`request_approval()` in its postconditions), whatever the stop. So does an earned finish re-sent
 and unsettled that long. Parked, the session is interrupted with reason `idle`, the ticket is
-BLOCKED under `factorial:waiting` with one comment carrying the agent's question, the
-postconditions still unmet, and a link to the run's terminal when the dashboard's URL is known,
-and nothing retries it; while parked, its postconditions are read every `terminal.parked_recheck`,
-and met, it is accepted without a resume (`agent_steps.recheck_parked`). Any other unmet stop is
-silent: `finish()` is sent with `silent: true`, the ended run fails on its postconditions, and the
-step's retry policy applies; a silent finish unsettled after its re-send is cancelled and failed
-with `finish_unsettled`. A silent stop's clock waits while a check run on a head the step's
-`ci_green` calls name is not completed and restarts when the last one completes, never past the
-step timeout (`_idle_waited_out`). Typing into the terminal before a silent finish settles makes
-it a park instead, with no re-send, once the typing has been quiet `terminal.idle_park_after`. A
-question the CLI would answer itself (`question_expires_at`, codex's question box) parks at the
-first tick that sees it, unless a writer typed into the terminal since it was asked. Removing the
-label, or the dashboard's Resume, resumes a park (`interrupts`).
+BLOCKED under `factorial:waiting` with one comment carrying the agent's question, or, for a step
+that awaits review whose run has pushed to its branch, where to approve it, the postconditions
+still unmet, and a link to the run's terminal when the dashboard's URL is known, and nothing
+retries it; while parked, its postconditions are read every `terminal.parked_recheck`, and at
+the first tick after a dashboard approval its re-check has not read, and met, it is accepted
+without a resume (`agent_steps.recheck_parked`). Any other unmet stop is silent: `finish()` is
+sent with `silent: true`, the ended run fails on its postconditions, and the step's retry policy
+applies; a silent finish unsettled after its re-send is cancelled and failed with
+`finish_unsettled`. A silent stop's clock waits while a check run on a head the step's `ci_green`
+calls name is not completed and restarts when the last one completes, never past the step timeout
+(`_idle_waited_out`). Typing into the terminal before a silent finish settles makes it a park
+instead, with no re-send, once the typing has been quiet `terminal.idle_park_after`. A question
+the CLI would answer itself (`question_expires_at`, codex's question box) parks at the first tick
+that sees it, unless a writer typed into the terminal since it was asked. Removing the label, or
+the dashboard's Resume, resumes a park (`interrupts`).
 
 A spell is named by the session's `idle_since` and bounded by the latest `agent_active` or
 non-rollover `agent_resumed`, all read from the event log, never from the adapter's memory of
@@ -77,8 +82,10 @@ from sqlalchemy import Row, func, select
 from sqlalchemy.orm import aliased
 
 from orchestrator.config import AgentStep
+from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import Event, StepRun, StepRunStatus, TicketStatus
 from orchestrator.events import EventType, ResumedVia
+from orchestrator.events.outputs import pushed, spawn_heads
 from orchestrator.events.terminals import (
     ask_this_stretch,
     last_terminal_input,
@@ -89,12 +96,14 @@ from orchestrator.events.terminals import (
 )
 from orchestrator.github import LABEL_INTERRUPTED, LABEL_WAITING
 from orchestrator.predicates import Unmet
+from orchestrator.predicates.globs import sole_ref
 from orchestrator.terminal.protocol import AUDIT_MAX
 from orchestrator.worker.acceptance import ci_checks, postconditions_met
 from orchestrator.worker.failures import _fail_run
 from orchestrator.worker.inputs import release_run_credential
-from orchestrator.worker.outputs import observe_outputs
+from orchestrator.worker.outputs import observe_outputs, observe_waiting_outputs
 from orchestrator.worker.pricing import record_usage
+from orchestrator.worker.templates import _glob
 from orchestrator.worker.tick_context import _Tick, _timeout
 from runtime.contract import (
     ParkReason,
@@ -296,6 +305,10 @@ async def _park_idle(
         at_prompt=True,
     )
     tick.plan.label = LABEL_WAITING
+    review = not finishing and awaits_review(step.postconditions)
+    # A run that has pushed nothing asked a question or failed its turn: Approve would approve
+    # whatever the branch held before it, so it is answered like any other wait.
+    approve = review and await _pushed(tick, step, run)
     if finishing:
         why = "Its expected results are there, but the session did not end when asked to finish."
     elif question:
@@ -303,29 +316,72 @@ async def _park_idle(
         why = f"The agent asked:\n\n{_fenced(clipped)}"
     elif turn_error:
         why = f"Its last reply failed:\n\n{_fenced(turn_error)}"
+    elif approve:
+        why = "This step waits for a person to review its work."
+    elif review:
+        why = "This step waits for a person to review its work, but the agent has pushed nothing."
     else:
         why = "A person worked with this session, so it waits for them."
     if not finishing and unmet:
         why += f"\n\nStill missing: {'; '.join(unmet.said)}."
+    to = (
+        f"accept the work, read it, then press Approve {_ticket_link(tick)}. To ask for changes"
+        if approve
+        else "resume it"
+    )
+    way_on = (
+        f"The session and its workspace are kept. To {to}, answer here and remove the "
+        f"`{LABEL_WAITING}` label, or press Resume {_terminal_link(tick, run)}. The agent "
+        f"reads the comments posted since it {'stopped' if approve else 'asked'}."
+    )
     tick.plan.comments.append(
         f"`{step.name}` (attempt {run.attempt}) is paused: the agent sat idle at its prompt, "
-        f"waiting for a person.\n\n{why}\n\n"
-        f"The session and its workspace are kept. To resume it, answer here and remove the "
-        f"`{LABEL_WAITING}` label, or press Resume {_terminal_link(tick, run)}. The agent reads "
-        "the comments posted since it asked."
+        f"waiting for a person.\n\n{why}\n\n{way_on}"
     )
 
 
-def _terminal_link(tick: _Tick, run: StepRun) -> str:
-    """Where Resume is: the run's terminal on the dashboard. Named, not linked, without an
-    absolute URL: GitHub resolves a relative one against the repository."""
+async def _pushed(tick: _Tick, step: AgentStep, run: StepRun) -> bool:
+    """Has the run pushed to its step's one branch (`events.outputs.pushed`)? The tick's listing
+    is memoized, and one that fails reads as nothing pushed: the comment then names no Approve."""
+    try:
+        branches = await tick.source.branches()
+    except Exception:
+        logger.warning(
+            "ticket %s run %s: the branch listing failed; the park comment names no Approve",
+            tick.ticket.external_key,
+            run.id,
+            exc_info=True,
+        )
+        return False
+    head = sole_ref(branches, _glob(step.workspace.branch, tick.values))
+    return pushed(head, await spawn_heads(tick.session, run))
+
+
+def _ticket_page(tick: _Tick) -> str | None:
+    """The ticket's page on the dashboard, or None without an absolute URL: GitHub resolves a
+    relative one against the repository, so the place is then named, not linked."""
     base = tick.deps.sessions.dashboard_url
     parts = urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
-        return "on the run's terminal in the dashboard"
+        return None
     # Under the ticket's organization: the dashboard's every page is (tech-stack decision 68).
-    page = f"{base}/orgs/{tick.project.organization_slug}/tickets/{tick.ticket.id}"
+    return f"{base}/orgs/{tick.project.organization_slug}/tickets/{tick.ticket.id}"
+
+
+def _terminal_link(tick: _Tick, run: StepRun) -> str:
+    """Where Resume is: the run's terminal on the dashboard."""
+    page = _ticket_page(tick)
+    if page is None:
+        return "on the run's terminal in the dashboard"
     return f"on [the run's terminal]({page}?terminal={run.id})"
+
+
+def _ticket_link(tick: _Tick) -> str:
+    """Where Approve is: the ticket's page on the dashboard."""
+    page = _ticket_page(tick)
+    if page is None:
+        return "on the ticket's page in the dashboard"
+    return f"on [the ticket's page]({page}) in the dashboard"
 
 
 def _last_typed(state: SessionState | None, gateway: datetime | None) -> datetime | None:
@@ -620,7 +676,7 @@ async def _renewed_if_due(
     return await _roll_over(tick, step, run, adapter, minted_at, turn=turn, at_prompt=at_prompt)
 
 
-async def _idle_park_was_due(tick: _Tick, run: StepRun) -> bool:
+async def _idle_park_was_due(tick: _Tick, step: AgentStep, run: StepRun) -> bool:
     """Had the open spell waited out `terminal.idle_park_after` by the log's own times, on a
     stop that parks? The session's own report of input, which only ever delays a park, is not in
     the log, so a stop it delayed reads due; the gateway's `terminal_input` is. A silent stop
@@ -646,7 +702,11 @@ async def _idle_park_was_due(tick: _Tick, run: StepRun) -> bool:
     else:
         reason = last.details.get("reason")
         waits, _ = await waits_for_a_person(
-            tick.session, run, reason if isinstance(reason, str) else None, typed
+            tick.session,
+            run,
+            reason if isinstance(reason, str) else None,
+            typed,
+            review=awaits_review(step.postconditions),
         )
         if not waits:
             return False
@@ -674,7 +734,7 @@ async def _recover_stop(
     if (
         run.status == StepRunStatus.IDLE
         and tick.now < minted_at + _AT_TURN_END.after
-        and await _idle_park_was_due(tick, run)
+        and await _idle_park_was_due(tick, step, run)
     ):
         await _repark_lost(tick, step, run, adapter)
         return None
@@ -720,7 +780,7 @@ async def _settle_exit(
     assert run.id is not None and run.runtime_run_id is not None
     seen = tick.deps.exits_seen
     # Before any adapter side effect: an unreadable verdict rolls the tick back.
-    met, unmet = await postconditions_met(tick, step, run.attempt)
+    met, unmet = await postconditions_met(tick, step, run)
     # A finish the loop sent this stretch asked for this end, and on a host a finish that reaches
     # the ended run ends its park with HEAD detached: parked, it would resume on no branch.
     finishing = any(
@@ -886,7 +946,7 @@ async def _poll_session(
 
     # Before any adapter side effect: an unreadable verdict rolls the tick back, and a `finish()`
     # already sent is the one write a rollback cannot take back.
-    met, unmet = await postconditions_met(tick, step, run.attempt)
+    met, unmet = await postconditions_met(tick, step, run)
     gateway_typed = await last_terminal_input(tick.session, run)
     typed = _last_typed(state, gateway_typed)
     if met:
@@ -915,11 +975,20 @@ async def _poll_session(
             **({"turn_error": state.turn_error} if state.turn_error is not None else {}),
             **(unmet.details() if unmet else {}),
         )
+    if awaits_review(step.postconditions):
+        # The person reads the files while it waits, before they press Approve.
+        await observe_waiting_outputs(tick, step, run)
     if question_parks_now(state.question_expires_at, gateway_typed, state.idle_since):
         # The CLI answers the question itself at the expiry, likely before the next tick.
         await _park_idle(tick, step, run, adapter, state.question, finishing=False, unmet=unmet)
         return None
-    waits, ask = await waits_for_a_person(tick.session, run, state.idle_reason, gateway_typed)
+    waits, ask = await waits_for_a_person(
+        tick.session,
+        run,
+        state.idle_reason,
+        gateway_typed,
+        review=awaits_review(step.postconditions),
+    )
     if (
         await _waited_out(tick, run, typed, state.idle_since)
         if waits

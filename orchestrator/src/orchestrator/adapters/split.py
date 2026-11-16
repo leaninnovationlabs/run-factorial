@@ -95,6 +95,7 @@ class Forge(Protocol):
     async def branches(self) -> Sequence[BranchState]: ...
     async def pull_requests(self) -> Sequence[PullRequestState]: ...
     async def files(self, ref: str) -> Sequence[str]: ...
+    async def file_text(self, ref: str, path: str) -> str | None: ...
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]: ...
     async def pr_comments(self, number: int) -> Sequence[CommentState]: ...
     async def pr_reviews(self, number: int) -> Sequence[ReviewState]: ...
@@ -145,6 +146,9 @@ class SourceForge:
 
     async def files(self, ref: str) -> Sequence[str]:
         return await self.inner.files(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return await self.inner.file_text(ref, path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         return await self.inner.check_runs(sha)
@@ -207,6 +211,9 @@ class CompositeStateSource:
 
     async def files(self, ref: str) -> Sequence[str]:
         return await self.forge.files(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return await self.forge.file_text(ref, path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         return await self.forge.check_runs(sha)

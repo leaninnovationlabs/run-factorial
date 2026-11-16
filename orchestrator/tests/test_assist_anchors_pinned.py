@@ -17,9 +17,9 @@ from orchestrator.mcp_server.chat.routes import (
 from tests.paths import REPO_ROOT
 
 UI = REPO_ROOT / "ui" / "src"
-#: The forms that create a project, a runtime or an invite: nothing to show on a page not yet
-#: made.
-NEW_FORMS = {"/projects/new", "/runtimes/new", "/members/invite"}
+#: The forms that create a project, a runtime, an invite or an organization: nothing to show on a
+#: page not yet made.
+NEW_FORMS = {"/projects/new", "/runtimes/new", "/members/invite", "/organizations/new"}
 
 
 def _anchors_in_ui() -> list[str]:

@@ -4,9 +4,9 @@ polling."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Final
 
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from orchestrator.config import (
     AgentStep,
     expand,
 )
+from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import (
     Event,
     Runtime,
@@ -26,6 +27,8 @@ from orchestrator.db.models import (
     TicketStatus,
 )
 from orchestrator.events import EventType
+from orchestrator.events.approvals import Approval
+from orchestrator.events.read_models import parked_at_prompt
 from orchestrator.factorial import ResolvedAgent
 from orchestrator.factorial.runtime_policy import (
     SettingsInvalid,
@@ -43,6 +46,7 @@ from orchestrator.factorial.runtimes import (
     template_of,
 )
 from orchestrator.github import LABEL_BLOCKED
+from orchestrator.github.state import CommentState
 from orchestrator.predicates import Unmet, evaluate
 from orchestrator.worker.acceptance import (
     _accept,
@@ -75,7 +79,7 @@ from orchestrator.worker.interrupts import (
     _latest_park,
 )
 from orchestrator.worker.leases import renew
-from orchestrator.worker.outputs import observe_outputs
+from orchestrator.worker.outputs import observe_outputs, observe_waiting_outputs
 from orchestrator.worker.previews import carry_preview
 from orchestrator.worker.pricing import record_usage
 from orchestrator.worker.rework import Adopt, Skip, SkipReason, _resume_plan
@@ -895,7 +899,8 @@ async def _record_result(tick: _Tick, step: AgentStep, run: StepRun, result: Run
     )
     _write_artifacts(tick, run, result.artifacts)
     # Before the outcome: a run that fails can park its ticket, and a parked ticket's tick stops
-    # before `observe_pending_outputs` until a human releases it.
+    # before `observe_pending_outputs` until a human releases it. A step that awaits review was
+    # recorded while it waited: the end state replaces the last idle spell's.
     await observe_outputs(tick, step, run)
 
 
@@ -923,28 +928,51 @@ async def _emit_completed(
     )
 
 
-def parked_recheck_due(deps: ReconcileDeps, run: StepRun, now: datetime) -> bool:
+#: How soon a parked re-check tries again an approval that a failed read left unjudged.
+APPROVAL_RETRY: Final = timedelta(minutes=1)
+
+
+def parked_recheck_due(
+    deps: ReconcileDeps, run: StepRun, now: datetime, approval_id: int | None = None
+) -> bool:
     """Is `run` parked, within the keep rule's retention, and unread for
-    `terminal.parked_recheck`? Reads nothing: it runs on every parked tick."""
+    `terminal.parked_recheck`, or approved (`approval_id`, its latest `step_approved`) by an
+    approval its re-check has not read nor tried within `APPROVAL_RETRY`? Reads nothing: it runs
+    on every parked tick."""
     if run.id is None or run.status != StepRunStatus.INTERRUPTED or run.ended_at is None:
         return False
     if run.ended_at < now - deps.sessions.retention:
         return False
     last = deps.parked_rechecks.get(run.id)
-    return last is None or now - last >= deps.sessions.parked_recheck
+    if last is None or now - last >= deps.sessions.parked_recheck:
+        return True
+    if approval_id is None or deps.approvals_seen.get(run.id) == approval_id:
+        return False
+    tried = deps.approvals_tried.get(approval_id)
+    return tried is None or now - tried >= APPROVAL_RETRY
 
 
-#: Parks that may catch a session mid-turn: re-checked only when it sat at its prompt.
-_PROMPT_OR_TURN: Final = frozenset({ParkReason.CEILING, ParkReason.ROLLOVER})
+def _approved_after(approval: Approval | None, comments: Sequence[CommentState]) -> bool:
+    """Was the run approved in the dashboard after every one of `comments` was posted?"""
+    if approval is None:
+        return False
+    # GitHub stamps whole seconds: a comment from the approval's own second may be the later one.
+    approved = approval.at.replace(microsecond=0)
+    return all(datetime.fromisoformat(c.created_at) < approved for c in comments)
 
 
-async def recheck_parked(tick: _Tick, ticket: Ticket, run: StepRun) -> bool:
-    """Accept a loop-parked session whose postconditions have come to hold, from the result its
-    substrate already holds: no resume, no mint (decision 56). True when it was accepted.
+async def recheck_parked(
+    tick: _Tick, ticket: Ticket, run: StepRun, step: AgentStep, approval: Approval | None
+) -> bool:
+    """Accept a loop-parked session of `step` whose postconditions have come to hold, from the
+    result its substrate already holds: no resume, no mint (decision 56). True when it was
+    accepted.
 
     Never a person's stop (an Interrupt or a quit from the terminal), nor a park taken mid-turn:
     there a PR can be open with CI green and half the turn undone.
-    A person's comment newer than the park holds it: their release decides.
+    A person's comment newer than the park holds it: their release decides. On a step that
+    awaits review, `approval`, the run's latest, newer than every such comment is the later
+    word, and accepts the run over them.
     """
     assert run.id is not None and run.ended_at is not None
     rechecks = tick.deps.parked_rechecks
@@ -952,16 +980,35 @@ async def recheck_parked(tick: _Tick, ticket: Ticket, run: StepRun) -> bool:
     interval = tick.deps.sessions.parked_recheck
     for stale in [key for key, at in rechecks.items() if tick.now - at >= interval]:
         del rechecks[stale]
-    # First: a read that raises still waits out the interval.
+        tick.deps.approvals_seen.pop(stale, None)
+    tried = tick.deps.approvals_tried
+    for stale in [key for key, at in tried.items() if tick.now - at >= APPROVAL_RETRY]:
+        del tried[stale]
+    # First: a read that raises still waits out the interval, and an approval `APPROVAL_RETRY`.
     rechecks[run.id] = tick.now
+    if approval is not None:
+        tried[approval.id] = tick.now
+    # Marked read only once judged: one that a failed read left unjudged is due again
+    # `APPROVAL_RETRY` after this try.
+    judged = await _recheck(tick, ticket, run, step, approval)
+    if judged is not None and approval is not None:
+        tick.deps.approvals_seen[run.id] = approval.id
+    return bool(judged)
+
+
+async def _recheck(
+    tick: _Tick, ticket: Ticket, run: StepRun, step: AgentStep, approval: Approval | None
+) -> bool | None:
+    """`recheck_parked`'s verdict: None when the substrate's result could not be read. An
+    unreadable verdict raises."""
+    assert run.ended_at is not None
     if await _interrupt_pending(tick, run):
         # A person's stop the park overtook: theirs is the newer word.
         return False
     park = await _latest_park(tick, run)
-    if park is None or not (park.idle or (park.reason in _PROMPT_OR_TURN and park.at_prompt)):
+    if park is None or not parked_at_prompt(park.reason, park.at_prompt):
         return False
-    step = tick.config.find_step(ticket.current_step)
-    if not isinstance(step, AgentStep) or run.runtime_run_id is None:
+    if run.runtime_run_id is None:
         return False
     try:
         adapter = await tick.deps.adapter_for_run(tick.session, run)
@@ -974,15 +1021,18 @@ async def recheck_parked(tick: _Tick, ticket: Ticket, run: StepRun) -> bool:
             run.runtime_run_id,
             exc,
         )
-        return False
-    met, _ = await postconditions_met(tick, step, run.attempt)
+        return None
+    met, _ = await postconditions_met(tick, step, run)
     if not met:
+        if awaits_review(step.postconditions):
+            # A parked tick reads no forge, so the files catch up with a moved branch here.
+            await observe_waiting_outputs(tick, step, run)
         return False
     newer = await _observed(
         _comments_since(tick, replace(park, cutoff=run.ended_at)),
         what=f"step {step.name} attempt {run.attempt}: comments since the park",
     )
-    if newer:
+    if newer and not _approved_after(approval, newer):
         return False
     try:
         # Ends the park, which on a host holds the branch a later fresh attempt checks out.

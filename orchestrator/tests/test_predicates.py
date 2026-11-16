@@ -39,6 +39,7 @@ from orchestrator.predicates import (
     PREDICATES,
     EvalContext,
     Evaluation,
+    ReviewFacts,
     UnknownPredicateError,
     evaluate,
     failures,
@@ -73,6 +74,7 @@ def snapshot(
     branches: tuple[BranchState, ...] = (),
     pull_requests: tuple[PullRequestState, ...] = (),
     files: Mapping[str, Sequence[str]] | None = None,
+    texts: Mapping[str, Mapping[str, str]] | None = None,
     check_runs: Mapping[str, Sequence[CheckRunState]] | None = None,
     issue_comments: tuple[CommentState, ...] = (),
     pr_comments: Mapping[int, Sequence[CommentState]] | None = None,
@@ -83,7 +85,8 @@ def snapshot(
         issue_state=issue,
         branch_states=branches,
         pull_request_states=pull_requests,
-        files_by_ref=dict(files or {}),
+        files_by_ref=dict(files or {ref: tuple(paths) for ref, paths in (texts or {}).items()}),
+        file_texts_by_ref=dict(texts or {}),
         check_runs_by_sha=dict(check_runs or {}),
         issue_comment_states=issue_comments,
         pr_comment_states_by_number=dict(pr_comments or {}),
@@ -175,6 +178,10 @@ class CountingState:
         self.calls["files"] += 1
         self.file_refs.append(ref)
         return await self._inner.files(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        self.calls["file_text"] += 1
+        return await self._inner.file_text(ref, path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         self.calls["check_runs"] += 1
@@ -284,6 +291,113 @@ async def test_file_exists_stops_at_the_first_matching_branch() -> None:
     assert result.value is True
     assert spy.calls["files"] == 1
     assert spy.file_refs == ["spec/12-a"]
+
+
+# --- checklist_done -------------------------------------------------------------------------
+
+PLAN = "docs/plans/{ticket}-plan.md"
+PLAN_BRANCH = "spec/{ticket}-*"
+
+
+def _plan(*texts: str) -> SnapshotState:
+    plans = {f"docs/plans/12-plan{n or ''}.md": text for n, text in enumerate(texts)}
+    return snapshot(
+        branches=(BranchState(name="spec/12-widget", sha="s1"),), texts={"spec/12-widget": plans}
+    )
+
+
+async def _checklist(source: SnapshotState, path: str = PLAN) -> bool | None:
+    return (await check(source, f'checklist_done("{path}", "{PLAN_BRANCH}")')).value
+
+
+async def test_checklist_done_true_when_every_task_is_ticked() -> None:
+    assert await _checklist(_plan("# Plan\n- [x] one\n  * [X] two\n")) is True
+
+
+async def test_checklist_done_false_with_one_open_task() -> None:
+    assert await _checklist(_plan("- [x] one\n- [ ] two\n")) is False
+
+
+@pytest.mark.parametrize(
+    "open_task",
+    [
+        "+ [ ] a plus bullet",
+        "3. [ ] a numbered item",
+        "4) [ ] a numbered item",
+        "- [ ]",
+        "-  [ ] two spaces after the bullet",
+        "-\t[ ] a tab after the bullet",
+        "5.  [ ] two spaces after the number",
+    ],
+)
+async def test_checklist_done_sees_an_open_task_however_the_item_is_written(
+    open_task: str,
+) -> None:
+    assert await _checklist(_plan(f"- [x] one\n1. [x] two\n{open_task}\n")) is False
+
+
+async def test_checklist_done_false_without_any_task_box() -> None:
+    assert await _checklist(_plan("# Plan\n\nNothing to tick.\n")) is False
+
+
+async def test_checklist_done_false_without_the_file() -> None:
+    assert await _checklist(_plan("- [x] one\n"), path="docs/plans/99-plan.md") is False
+
+
+async def test_checklist_done_ignores_a_box_inside_a_fenced_block() -> None:
+    text = "- [x] one\n```markdown\n- [ ] an example\n```\n~~~\n* [ ] another\n~~~\n"
+    assert await _checklist(_plan(text)) is True
+
+
+async def test_checklist_done_sees_open_tasks_after_a_line_that_starts_with_inline_code() -> None:
+    """Backticks later on the line make it prose, not a fence: read as one, it would hide every
+    open task after it."""
+    text = "- [x] one\n```make check``` runs the suite.\n- [ ] two\n"
+    assert await _checklist(_plan(text)) is False
+
+
+@pytest.mark.parametrize(
+    "example",
+    [
+        # An info string on a backtick line makes it no closing fence.
+        "```\n```python\n- [ ] an example\n```\n",
+        # A longer fence holds a shorter one as text.
+        "````markdown\n```\n- [ ] an example\n```\n````\n",
+    ],
+)
+async def test_checklist_done_reads_a_fence_as_one_block_until_its_own_closer(
+    example: str,
+) -> None:
+    assert await _checklist(_plan(f"- [x] one\n{example}- [x] two\n")) is True
+    assert await _checklist(_plan(f"- [x] one\n{example}- [ ] two\n")) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "done"),
+    [
+        # A fence nested in a list item, indented four spaces: its example is not work left open.
+        ("- [x] one\n    ```markdown\n    - [ ] an example\n    ```\n", True),
+        # Its closer, less indented than the opener, must not open a fence that hides `two`.
+        ("- [x] one\n    ```\n    - [x] an example\n```\n- [ ] two\n", False),
+        # A task inside a blockquote is a task.
+        ("- [x] one\n> - [ ] quoted\n> > * [ ] quoted twice\n", False),
+    ],
+)
+async def test_checklist_done_reads_nested_fences_and_quoted_tasks(text: str, done: bool) -> None:
+    assert await _checklist(_plan(text)) is done
+
+
+async def test_checklist_done_false_when_one_of_two_matching_files_has_an_open_task() -> None:
+    source = _plan("- [x] one\n", "- [ ] two\n")
+    assert await _checklist(source, path="docs/plans/12-plan*.md") is False
+
+
+async def test_checklist_done_false_for_a_file_that_reads_as_no_text() -> None:
+    source = snapshot(
+        branches=(BranchState(name="spec/12-widget", sha="s1"),),
+        files={"spec/12-widget": ("docs/plans/12-plan.md",)},
+    )
+    assert await _checklist(source) is False
 
 
 # --- pr_open / pr_merged --------------------------------------------------------------------
@@ -568,6 +682,51 @@ async def test_ticket_label_matches_either_vocabulary_of_a_factory_label() -> No
 async def test_ticket_has_assignee() -> None:
     assert (await check(snapshot(), "ticket_has_assignee()")).value is True
     assert (await check(snapshot(issue=UNASSIGNED), "ticket_has_assignee()")).value is False
+
+
+# --- request_approval -------------------------------------------------------------------------
+
+
+async def reviewed(branches: tuple[BranchState, ...], review: ReviewFacts | None) -> Evaluation:
+    return await evaluate(
+        PredicateCall.model_validate("request_approval()"),
+        EvalContext(source=_source(snapshot(branches=branches)), values=TICKET, review=review),
+    )
+
+
+async def test_request_approval_true_when_the_branch_ends_at_the_approved_commit() -> None:
+    branches = (BranchState(name="spec/12-widget", sha="s1"),)
+    review = ReviewFacts(branch="spec/12-*", approved_sha="s1")
+    assert (await reviewed(branches, review)).value is True
+
+
+async def test_request_approval_false_without_review_facts() -> None:
+    """Every evaluation but an agent step's acceptance has no facts: admission, preconditions
+    and check steps must never read an approval as given."""
+    branches = (BranchState(name="spec/12-widget", sha="s1"),)
+    assert (await reviewed(branches, None)).value is False
+
+
+async def test_request_approval_false_once_the_branch_moves_past_the_approved_commit() -> None:
+    branches = (BranchState(name="spec/12-widget", sha="s2"),)
+    review = ReviewFacts(branch="spec/12-*", approved_sha="s1")
+    assert (await reviewed(branches, review)).value is False
+
+
+async def test_request_approval_false_when_two_branches_match() -> None:
+    """Two candidates leave the approved branch unnamed, so neither may carry the approval."""
+    branches = (
+        BranchState(name="spec/12-widget", sha="s1"),
+        BranchState(name="spec/12-gadget", sha="s1"),
+    )
+    review = ReviewFacts(branch="spec/12-*", approved_sha="s1")
+    assert (await reviewed(branches, review)).value is False
+
+
+async def test_request_approval_false_without_an_approval() -> None:
+    branches = (BranchState(name="spec/12-widget", sha="s1"),)
+    review = ReviewFacts(branch="spec/12-*", approved_sha=None)
+    assert (await reviewed(branches, review)).value is False
 
 
 # --- comment predicates ----------------------------------------------------------------------

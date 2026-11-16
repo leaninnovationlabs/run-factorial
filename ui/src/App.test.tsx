@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -257,5 +258,32 @@ describe("App", () => {
     await settle();
 
     expect(view.container.querySelector("h1")?.textContent).toBe("Set a new password");
+  });
+
+  it("opens the page that takes a pasted invite link outside any organization", async () => {
+    vi.spyOn(api, "authMe").mockResolvedValue({ email: "ada@example.com" });
+    vi.spyOn(api, "authProviders").mockResolvedValue({
+      google: false,
+      oidc: false,
+      oidc_label: "",
+      password: true,
+      signup: true,
+      multi_org: true,
+    });
+    vi.spyOn(api, "listOrganizations").mockResolvedValue([]);
+    await import("./pages/accountPages");
+    view = await mount(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/join"]}>
+            <App />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await settle(50);
+    await settle();
+
+    expect(view.container.querySelector("h1")?.textContent).toBe("Join an organization");
   });
 });

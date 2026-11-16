@@ -1,7 +1,8 @@
 /**
- * The org-less pages multi-org adds (design.md §7.19): password sign-in, signup, onboarding and
- * an invite's link. The account comes first and the organization second: a person with no
- * organization lands on onboarding, and joins one only through an invite's link.
+ * The org-less pages multi-org adds (design.md §7.19): password sign-in, signup, onboarding,
+ * joining by a pasted link, and an invite's link. The account comes first and the organization
+ * second: a person with no organization lands on onboarding, and joins one only through an
+ * invite's link.
  *
  * Leaving any of them for an organization is a full load: the organization is the router's
  * basename and fixed for a page's life (`org.tsx`).
@@ -18,37 +19,22 @@ import {
   useRoles,
 } from "../api/organizationQueries";
 import { useAuth } from "../auth";
+import { OrganizationFields, useNewOrganization } from "../components/account/OrganizationFields";
 import { LogoPlate } from "../components/LogoPlate";
 import {
   Button,
   ErrorMessage,
   Form,
-  Panel,
   SectionMessage,
   Spinner,
   TextField,
   usePageTitle,
 } from "../components/ui";
-import { inOrganization, orgless } from "../org";
+import { inOrganization, orgless, rememberedOrganization } from "../org";
 import { SsoDoors } from "./SsoDoors";
 
 /** `access.accounts.PASSWORD_MIN`. */
 export const PASSWORD_MIN = 12;
-
-/** A slug from a name, as the create form suggests it: what `POST /api/orgs` accepts, or "". */
-export function slugFor(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .normalize("NFKD")
-      // The accents NFKD splits off, so "é" becomes "e" rather than a dash.
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40)
-      .replace(/-+$/, "")
-  );
-}
 
 const INVITE_PATH = /^\/invite\/([A-Za-z0-9_-]+)$/;
 
@@ -293,150 +279,113 @@ export function SignUpPage() {
   );
 }
 
-/** Where an account with no organization lands. With many organizations it makes one or joins
- *  one by invite. With one, nobody chooses: a member goes straight in, and anyone else waits for
- *  an owner's invite link, which opens on its own page. */
-export function OnboardingPage() {
+/** Who is signed in, and the way out: an org-less page is the only page such a person has. */
+function SignedInAs() {
   const { sessionEmail, signOut } = useAuth();
-  const providersQuery = useAuthProviders();
-  const organizationsQuery = useOrganizations();
-  const loaded = organizationsQuery.data;
-  const organizations = loaded ?? [];
-  const multiOrg = useMultiOrg();
-  const single = providersQuery.data?.multi_org === false;
-  const into = single ? (loaded?.[0] ?? null) : null;
-  usePageTitle(["Get started"]);
-  useEffect(() => {
-    if (into) window.location.replace(inOrganization(into.slug, "/overview"));
-  }, [into]);
-  if (providersQuery.isPending || into || (single && organizationsQuery.isPending)) return null;
+  if (!sessionEmail) return null;
   return (
-    <div className="min-h-full bg-surface-sunken px-4 py-10">
-      <div className="mx-auto max-w-page-narrow space-y-6">
-        <div>
-          <h1 className="text-heading-lg text-default">Get started</h1>
-          {sessionEmail && (
-            <p className="mt-1 text-body text-subtle">
-              Signed in as {sessionEmail}. Not you?{" "}
-              <a
-                href={orgless("/")}
-                className="font-medium underline"
-                onClick={(event) => {
-                  event.preventDefault();
-                  signOut();
-                }}
-              >
-                Sign out
-              </a>
-            </p>
-          )}
-        </div>
-        {multiOrg && organizations.length > 0 && (
-          <Panel title="Your organizations">
-            <ul className="space-y-1 p-4">
-              {organizations.map((each) => (
-                <li key={each.slug}>
-                  <a
-                    href={inOrganization(each.slug, "/overview")}
-                    className="font-medium underline"
-                  >
-                    {each.name}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        )}
-        {multiOrg ? (
-          <CreateOrganization />
-        ) : organizationsQuery.isError ? (
-          <ErrorMessage error={organizationsQuery.error} />
-        ) : (
-          <SectionMessage
-            appearance="information"
-            title="You aren't a member of this organization yet"
-          >
-            Ask one of its owners for an invite, then open the link they send you.
-          </SectionMessage>
-        )}
-        {multiOrg && <JoinOrganization />}
-      </div>
-    </div>
+    <p className="text-center text-body-sm text-subtle">
+      Signed in as {sessionEmail}.{" "}
+      <span className="whitespace-nowrap">
+        Not you?{" "}
+        <a
+          href={orgless("/")}
+          className="font-medium underline"
+          onClick={(event) => {
+            event.preventDefault();
+            signOut();
+          }}
+        >
+          Sign out
+        </a>
+      </span>
+    </p>
   );
 }
 
-function CreateOrganization() {
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  const shownSlug = slugEdited ? slug : slugFor(name);
-
-  async function submit() {
-    setError(null);
-    setBusy(true);
-    try {
-      const created = await api.createOrganization({ name, slug: shownSlug });
-      window.location.assign(inOrganization(created.slug, "/overview"));
-    } catch (caught) {
-      setError(caught);
-      setBusy(false);
-    }
+/** Where an account with no organization lands. With many organizations it makes one, and an
+ *  invite's link is pasted on a page of its own (`JoinPage`). With one, nobody makes another, so
+ *  it waits for an owner's invite. A member of any organization goes into the one this browser
+ *  last used while they are still in it, and otherwise into the first: leaving one lands here,
+ *  and the organization this browser remembers is then the one just left. */
+export function OnboardingPage() {
+  const providersQuery = useAuthProviders();
+  const organizationsQuery = useOrganizations();
+  const multiOrg = providersQuery.data?.multi_org === true;
+  const listed = organizationsQuery.data;
+  const remembered = rememberedOrganization();
+  const into = listed?.find((each) => each.slug === remembered) ?? listed?.[0] ?? null;
+  const draft = useNewOrganization();
+  usePageTitle([multiOrg ? "Create your organization" : "Get started"]);
+  useEffect(() => {
+    if (into) window.location.replace(inOrganization(into.slug, "/overview"));
+  }, [into]);
+  if (providersQuery.isPending || organizationsQuery.isPending || into) return null;
+  if (!multiOrg) {
+    // A list that failed says nothing about membership, so the card does not claim any.
+    return organizationsQuery.isError ? (
+      <AccountCard title="Get started">
+        <ErrorMessage error={organizationsQuery.error} />
+        <SignedInAs />
+      </AccountCard>
+    ) : (
+      <AccountCard title="You aren't a member of this organization yet">
+        <p className="text-center text-body text-subtle">
+          Ask one of its owners for an invite, then open the link they send you.
+        </p>
+        <SignedInAs />
+      </AccountCard>
+    );
   }
-
   return (
-    <Panel title="Create an organization">
+    <AccountCard title="Create your organization">
       <Form
-        aria-label="Create an organization"
-        validate={() => name.trim() !== "" && shownSlug.length >= 3}
-        onSubmit={submit}
-        className="space-y-3 p-4"
+        aria-label="Create your organization"
+        validate={() => draft.valid}
+        onSubmit={draft.submit}
+        className="space-y-3"
       >
         {({ attempted }) => (
           <>
-            <TextField
-              label="Name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              errorMessage={attempted && name.trim() === "" ? "Name the organization." : undefined}
-            />
-            <TextField
-              label="Address"
-              isMonospaced
-              value={shownSlug}
-              onChange={(event) => {
-                setSlugEdited(true);
-                setSlug(event.target.value.toLowerCase());
-              }}
-              helperMessage="Used in every link to the organization. You can't change it later."
-              errorMessage={
-                attempted && shownSlug.length < 3 ? "Use at least 3 characters." : undefined
-              }
-            />
-            <ErrorMessage error={error} />
-            <Button type="submit" appearance="primary" isLoading={busy}>
+            <OrganizationFields draft={draft} attempted={attempted} />
+            <ErrorMessage error={draft.error} />
+            <Button type="submit" appearance="primary" shouldFitContainer isLoading={draft.busy}>
               Create organization
             </Button>
           </>
         )}
       </Form>
-    </Panel>
+      <p className="text-center text-body-sm text-subtle">
+        Have an invite link?{" "}
+        <a href={orgless("/join")} className="font-medium underline">
+          Join an organization
+        </a>
+      </p>
+      <SignedInAs />
+    </AccountCard>
   );
 }
 
-function JoinOrganization() {
+/** Where an invite's link is pasted, by a person who has one and did not open it: onboarding
+ *  links here for a person in no organization, the organization menu for a member. It opens the
+ *  invite's own page, which says who sent it and accepts it. Making an organization instead is
+ *  onboarding's for a person in none, and the page in the app for a member: onboarding would only
+ *  move a member into the organization they have. */
+export function JoinPage() {
+  const multiOrg = useMultiOrg();
+  const member = useOrganizations().data?.[0];
   const [pasted, setPasted] = useState("");
   const token = inviteToken(pasted);
+  usePageTitle(["Join an organization"]);
   return (
-    <Panel title="Join an organization">
+    <AccountCard title="Join an organization">
       <Form
         aria-label="Join an organization"
         validate={() => token !== null}
         onSubmit={() => {
           if (token) window.location.assign(orgless(`/invite/${encodeURIComponent(token)}`));
         }}
-        className="space-y-3 p-4"
+        className="space-y-3"
       >
         {({ attempted }) => (
           <>
@@ -447,11 +396,27 @@ function JoinOrganization() {
               helperMessage="Ask someone in the organization to invite you, then paste their link."
               errorMessage={attempted && token === null ? "That isn't an invite link." : undefined}
             />
-            <Button type="submit">Open invite</Button>
+            <Button type="submit" appearance="primary" shouldFitContainer>
+              Open invite
+            </Button>
           </>
         )}
       </Form>
-    </Panel>
+      {multiOrg && (
+        <p className="text-center text-body-sm text-subtle">
+          Or{" "}
+          <a
+            href={
+              member ? inOrganization(member.slug, "/organizations/new") : orgless("/onboarding")
+            }
+            className="font-medium underline"
+          >
+            create your own organization
+          </a>
+        </p>
+      )}
+      <SignedInAs />
+    </AccountCard>
   );
 }
 

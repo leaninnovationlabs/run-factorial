@@ -4,6 +4,18 @@ Operational context. The orchestrator verified the spec pull request (PR) merged
 It will verify your output against the process postconditions, and it owns all labels,
 assignment and promotion.
 
+## GitHub or GitLab
+
+The repository is on one of the two forges. Find out which before your first forge command:
+
+```bash
+[ -n "$GITLAB_HOST" ] && echo gitlab || echo github
+```
+
+On GitHub, use `gh`. On GitLab, use `glab`, and read every "pull request (PR)" in your prompts
+and skills as a merge request (MR). Where the two differ, both commands are given: run only
+your forge's.
+
 ## Task input
 
 Your task names the ticket number `<N>` and the spec directory `specs/<N>-<slug>/`. The
@@ -34,7 +46,12 @@ git commit -m "<One-line summary of the change>
 Factory-Stage: build"
 
 git push -u origin impl/<N>-<slug>
+
+# GitHub
 gh pr create --base main --title "[Issue #<N>] Build: <one-line outcome>" --body-file /tmp/pr-body.md
+# GitLab
+glab mr create --source-branch impl/<N>-<slug> --target-branch main \
+  --title "[Issue #<N>] Build: <one-line outcome>" --description "$(cat /tmp/pr-body.md)" --yes
 ```
 
 Commit only files you changed: no lockfile churn, no build output, no incidental

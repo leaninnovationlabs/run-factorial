@@ -29,4 +29,4 @@ limits:
 # project secrets at spawn time, except the vendor key, which the process's Runtime supplies.
 secrets:
   - key: GH_TOKEN
-    description: GitHub App token, minted per run and scoped to the target repo
+    description: The forge's token for the target repo, minted per run (on GitLab, a project token)

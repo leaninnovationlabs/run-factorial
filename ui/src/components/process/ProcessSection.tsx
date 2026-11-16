@@ -18,10 +18,12 @@ import type {
   ProjectDetail,
   ReadinessItem,
 } from "../../api/types";
+import { DOCS } from "../../docs";
 import { forgeHost } from "../../forge";
 import { errorText, formatRelative, NO_VALUE, shortSha } from "../../format";
 import { asSentence } from "../activity/words";
 import { Fact, FlowFacts, isProcessConfigLike } from "../flow";
+import { configurationHref } from "../project/place";
 import { useFocusMode } from "../shell/focusMode";
 import {
   Button,
@@ -39,11 +41,13 @@ import {
   TabPanel,
   Tabs,
   Tooltip,
+  useDismissible,
 } from "../ui";
 import { AdoptHeadDialog } from "./AdoptHeadDialog";
 import { agentsFromQuery } from "./AgentCards";
 import { BranchNotice, branchState } from "./BranchNotice";
 import { ConfigGallery, type GalleryChoice, type GalleryMode } from "./ConfigGallery";
+import { ConfigHistory } from "./ConfigHistory";
 import { LaneView } from "./LaneView";
 import { withLaneName } from "./laneName";
 import { ProcessEditorBody } from "./ProcessEditorBody";
@@ -80,11 +84,15 @@ import { useEditorDraft } from "./useEditorDraft";
 export function ProcessSection({
   project,
   branch,
+  notConnected = false,
   onFullPage,
   actionsSlot,
 }: {
   project: ProjectDetail;
   branch?: ReadinessItem;
+  /** The project has no GitHub connection: nothing can read the branch, sync or commit, so the
+   *  section says that once, with where to connect, and Edit and Sync wait for it. */
+  notConnected?: boolean;
   /** Told when the editor opens and closes, so the page can hand it the whole content area. */
   onFullPage?: (on: boolean) => void;
   /** The page header's actions, where Edit config and Sync config go: they act on every lane, so
@@ -101,6 +109,13 @@ export function ProcessSection({
    * it.
    */
   const [editing, setEditing] = useState(false);
+  /**
+   * The process the editor was opened on; null is one not written yet. Held while the editor is
+   * open and never read from the live project: a commit from the editor can retire that process
+   * or add one that sorts before it, and an editor that followed the section's own pick would
+   * show one process's text under another's name and save its drafts under the wrong key.
+   */
+  const [editingKey, setEditingKey] = useState<string | null>(null);
   const canManage = useCan("projects:manage");
   const setDefault = useSetDefaultProcess(project.id);
   const [selectedNode, selectNode] = useState<string | null>(null);
@@ -139,12 +154,13 @@ export function ProcessSection({
     }
     setFileToOpen(null);
     setHanded((previous) => ({ draft, taken: (previous?.taken ?? 0) + 1 }));
+    setEditingKey(lane);
     setEditing(true);
     handoff.done();
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: a draft arriving is the event
   useEffect(() => {
-    if (canManage && handoff.draft && !replacing) takeDraft();
+    if (canManage && !notConnected && handoff.draft && !replacing) takeDraft();
   }, [handoff.draft, canManage]);
 
   function closeEditor() {
@@ -164,7 +180,10 @@ export function ProcessSection({
   const importer = useImportProcesses(project.id);
   const sync = useSyncProcessVersions(project.id);
   const [reviewing, setReviewing] = useState(false);
+  const [history, setHistory] = useState(false);
   const [adoption, setAdoption] = useState<ConfigAdoption | null>(null);
+  const [syncShown, dismissSync] = useDismissible(sync.data);
+  const [adoptionShown, dismissAdoption] = useDismissible(adoption?.sync);
   useEffect(() => {
     if (sync.isPending) setAdoption(null);
   }, [sync.isPending]);
@@ -180,8 +199,9 @@ export function ProcessSection({
   }, [reported, importer]);
   // The builder commits to the branch, so with none, or one it will not build on, an editor would
   // only end in a refused commit: the notice says how to fix the branch, and Edit waits for it.
-  const editBlocked =
-    state === "missing"
+  const editBlocked = notConnected
+    ? NOT_CONNECTED_BLOCK
+    : state === "missing"
       ? "Create the branch first"
       : state === "unknown-head"
         ? "Adopt the head first"
@@ -275,7 +295,6 @@ export function ProcessSection({
   }
   const syncError = syncFailure.current?.sha === shown?.source_commit_sha ? sync.error : null;
 
-  const editingNew = opening !== null || processKey === null;
   const hasLane = shown !== undefined;
   const pendingNew = canManage && hasPendingEdits(project.id, null);
 
@@ -284,27 +303,37 @@ export function ProcessSection({
       canManage={canManage}
       sync={sync}
       onReview={review}
-      editBlocked={editBlocked}
+      editBlocked={notConnected ? undefined : editBlocked}
+      notConnected={notConnected}
       hasLane={hasLane}
       pendingNew={pendingNew}
       pendingLane={canManage && processKey !== null && hasPendingEdits(project.id, processKey)}
       onResumeNew={() => {
         setOpening({});
+        setEditingKey(null);
         setEditing(true);
       }}
-      onEdit={() => setEditing(true)}
+      onEdit={() => {
+        setEditingKey(processKey);
+        setEditing(true);
+      }}
+      onHistory={() => setHistory(true)}
     />
   );
   const unpermittedSlugs = permits.variables?.runtime_allowlist?.add ?? [];
   // What is wrong with the branch, and what the last sync said, at the top of the lane on show.
   const notices = (
     <>
-      <BranchNotice
-        row={state === "checking" ? undefined : branch}
-        onCreate={canManage ? () => showGallery("branch-missing") : undefined}
-        onReview={review}
-        noLanes={processKey === null}
-      />
+      {notConnected ? (
+        <NotConnectedNotice project={project} canManage={canManage} />
+      ) : (
+        <BranchNotice
+          row={state === "checking" ? undefined : branch}
+          onCreate={canManage ? () => showGallery("branch-missing") : undefined}
+          onReview={review}
+          noLanes={processKey === null}
+        />
+      )}
       <ErrorMessage error={importer.error} className="mx-4 mt-3" />
       {permits.error && (
         <SectionMessage
@@ -327,6 +356,8 @@ export function ProcessSection({
         error={syncError}
         headNoticeShown={state === "unknown-head"}
         adoption={adoption ?? undefined}
+        synced={{ shown: syncShown !== undefined, dismiss: dismissSync }}
+        adopted={{ shown: adoptionShown !== undefined, dismiss: dismissAdoption }}
       />
     </>
   );
@@ -346,14 +377,14 @@ export function ProcessSection({
           <ProcessEditorBody
             key={handed?.taken ?? 0}
             project={project}
-            processKey={opening ? null : processKey}
+            processKey={editingKey}
             initialText={opening?.text}
             initialTitle={opening?.title}
             initialFile={fileToOpen ?? undefined}
             initialDraft={handed?.draft}
             readOnly={!canManage}
             heading={{
-              title: `${canManage ? "Edit config" : "Config"} · ${editingNew ? "new process" : processKey}`,
+              title: `${canManage ? "Edit config" : "Config"} · ${editingKey ?? "new process"}`,
               subtitle: canManage ? (
                 <span>
                   Nothing is committed to <Code>{project.github_repo}</Code> until you press Commit
@@ -389,11 +420,13 @@ export function ProcessSection({
             <>
               {notices}
               <p className="p-4 text-body text-subtle">
-                {!canManage || editBlocked
-                  ? "No process yet."
-                  : hasPendingEdits(project.id, null)
-                    ? "No process yet. Your draft is waiting: press Edit config, then Commit and sync."
-                    : "No process yet. Press Edit config to write one, then Commit and sync."}
+                {notConnected && canManage && hasPendingEdits(project.id, null)
+                  ? "No process yet. Your draft is kept for when GitHub is connected."
+                  : !canManage || editBlocked
+                    ? "No process yet."
+                    : hasPendingEdits(project.id, null)
+                      ? "No process yet. Your draft is waiting: press Edit config, then Commit and sync."
+                      : "No process yet. Press Edit config to write one, then Commit and sync."}
               </p>
             </>
           )}
@@ -430,10 +463,11 @@ export function ProcessSection({
                     selectedId={selectedNode}
                     onSelect={selectNode}
                     onOpenTool={
-                      canManage && editBlocked
+                      notConnected || (canManage && editBlocked)
                         ? undefined
                         : (path) => {
                             setFileToOpen(path);
+                            setEditingKey(processKey);
                             setEditing(true);
                           }
                     }
@@ -481,6 +515,7 @@ export function ProcessSection({
         </>
       )}
 
+      {history && <ConfigHistory project={project} onClose={() => setHistory(false)} />}
       {reviewing && (
         <AdoptHeadDialog
           projectId={project.id}
@@ -516,19 +551,21 @@ export function ProcessSection({
 }
 
 /**
- * The page's actions: where the config comes from, and the two things to do with it — edit it, or
- * sync the branch it lives on.
+ * The page's actions: where the config comes from, and what to do with it — look back through
+ * the synced commits and restore one, edit it, or sync the branch it lives on.
  */
 function ConfigActions({
   canManage,
   sync,
   onReview,
   editBlocked,
+  notConnected,
   hasLane,
   pendingNew,
   pendingLane,
   onResumeNew,
   onEdit,
+  onHistory,
 }: {
   /** Without it, View config alone: every other action here writes. */
   canManage: boolean;
@@ -538,6 +575,9 @@ function ConfigActions({
   onReview?: () => void;
   /** Why Edit is shut: the branch it would commit to is missing or refused. */
   editBlocked?: string;
+  /** No GitHub connection: Edit and Sync are shut, and the notice under them says why once
+   *  rather than a reason beside each button. */
+  notConnected: boolean;
   /** A lane is synced. Without one a project can still sync, because the repo may have one. */
   hasLane: boolean;
   /** A lane not written yet has a draft: the gallery's pick, or work an earlier editor left. */
@@ -546,6 +586,8 @@ function ConfigActions({
   pendingLane: boolean;
   onResumeNew: () => void;
   onEdit: () => void;
+  /** Opens the synced commits, and the way back to one. */
+  onHistory: () => void;
 }) {
   const pending = pendingLane || (!hasLane && pendingNew);
   return (
@@ -553,20 +595,30 @@ function ConfigActions({
       <span className="text-body-sm text-subtle">
         Config is fetched from the <Code>factorial</Code> branch.
       </span>
-      {!canManage && hasLane && <Button onClick={onEdit}>View config</Button>}
+      {!canManage && hasLane && (
+        <Button disabledReason={notConnected ? NOT_CONNECTED_BLOCK : undefined} onClick={onEdit}>
+          View config
+        </Button>
+      )}
       {canManage && (
         <>
           {pending && <Lozenge appearance="warning">Unsaved edits</Lozenge>}
+          {hasLane && (
+            <Button iconBefore="history" onClick={onHistory}>
+              History
+            </Button>
+          )}
           {/* A drafted new lane beside lanes that already run has no tab of its own, so this is the
           only way back to it. */}
           {hasLane && pendingNew && (
-            <Button disabledReason={editBlocked} onClick={onResumeNew}>
+            <Button disabledReason={editBlocked} isDisabled={notConnected} onClick={onResumeNew}>
               Edit and finalize new process
             </Button>
           )}
           <Button
             appearance={pending ? "primary" : "default"}
             disabledReason={editBlocked}
+            isDisabled={notConnected}
             onClick={onEdit}
           >
             Edit config
@@ -574,6 +626,7 @@ function ConfigActions({
           <Button
             appearance={onReview ? "warning" : pending ? "default" : "primary"}
             isLoading={sync.isPending}
+            isDisabled={notConnected && !onReview}
             onClick={() => (onReview ? onReview() : sync.mutate(null))}
           >
             {onReview ? "Review and adopt" : "Sync config"}
@@ -584,12 +637,52 @@ function ConfigActions({
   );
 }
 
+const NOT_CONNECTED_BLOCK = "Connect GitHub first";
+
+/** Why nothing here works yet, said once with its fix: the process config lives on a branch of
+ *  the repository, and without a connection Factorial can read, sync and commit none of it. */
+function NotConnectedNotice({
+  project,
+  canManage,
+}: {
+  project: ProjectDetail;
+  canManage: boolean;
+}) {
+  return (
+    <div className="border-b border-default p-4">
+      <SectionMessage
+        appearance="error"
+        title="Connect this project to GitHub"
+        actions={[
+          ...(canManage
+            ? [{ text: "Connect GitHub", to: configurationHref(project.id, "ticket-source") }]
+            : []),
+          { text: "GitHub App guide", href: `${DOCS}/github-app/` },
+        ]}
+      >
+        Factorial reads the process config from the <Code>factorial</Code> branch of{" "}
+        <Code>{project.github_repo}</Code>, and this project has no GitHub connection yet. Connect
+        it with a GitHub App or a token under Settings, Tickets. Then sync a process, or write one
+        with Edit config.
+        {!canManage && " Ask a project admin to connect it."}
+      </SectionMessage>
+    </div>
+  );
+}
+
+interface Dismissal {
+  shown: boolean;
+  dismiss: () => void;
+}
+
 /** What the last sync, or adoption, had to say. */
 function SyncMessages({
   sync,
   error,
   headNoticeShown,
   adoption,
+  synced,
+  adopted,
 }: {
   sync: ReturnType<typeof useSyncProcessVersions>;
   /** The sync's failure while the snapshot it failed on is still the one shown. */
@@ -597,6 +690,9 @@ function SyncMessages({
   /** The branch notice already says why the head is refused, so that refusal is not said again. */
   headNoticeShown: boolean;
   adoption?: ConfigAdoption;
+  /** Whether each success is still open, kept by the section: the editor unmounts this. */
+  synced: Dismissal;
+  adopted: Dismissal;
 }) {
   const canRuntimes = useCan("runtimes:manage");
   const refusal = error instanceof ApiError ? error : null;
@@ -619,8 +715,17 @@ function SyncMessages({
       ) : (
         <ErrorMessage error={error} />
       )}
-      {sync.data && <SyncResults result={sync.data} />}
-      {adoption?.sync && <SyncResults result={adoption.sync} adopted={adoption.adopted} />}
+      {sync.data && (
+        <SyncResults result={sync.data} shown={synced.shown} onDismiss={synced.dismiss} />
+      )}
+      {adoption?.sync && (
+        <SyncResults
+          result={adoption.sync}
+          adopted={adoption.adopted}
+          shown={adopted.shown}
+          onDismiss={adopted.dismiss}
+        />
+      )}
       {adoption?.sync_error && (
         <SectionMessage
           appearance="warning"

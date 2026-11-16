@@ -23,6 +23,8 @@ export function unconfirmedStaleCount(
 }
 
 export interface CommitButtonInputs {
+  /** The pinned file has not been read yet, so there is no text to judge. */
+  loading: boolean;
   /** `text.trim()` truthy. */
   hasText: boolean;
   /** The validate request for the text on screen has not answered yet. */
@@ -61,6 +63,7 @@ export interface CommitButtonState {
 
 export function commitButtonState(input: CommitButtonInputs): CommitButtonState {
   const {
+    loading,
     hasText,
     checkingConfig,
     checkFailed,
@@ -72,21 +75,23 @@ export function commitButtonState(input: CommitButtonInputs): CommitButtonState 
     unconfirmedStale,
   } = input;
   if (committing) return { reason: null, isLoading: true };
-  const reason = !hasText
-    ? "Write or import a config first."
-    : checkingConfig
-      ? "Checking the config…"
-      : checkFailed
-        ? "Factorial couldn't check the config. Edit it to check again."
-        : !validForText
-          ? "Fix the errors below first."
-          : checkingRepo || !previewed
-            ? "Checking which files the commit would write…"
-            : unchanged
-              ? "Nothing to commit. Edit a file first."
-              : unconfirmedStale > 0
-                ? `${unconfirmedStale} file${unconfirmedStale === 1 ? "" : "s"} changed since you edited ${unconfirmedStale === 1 ? "it" : "them"}. Review ${unconfirmedStale === 1 ? "it" : "them"} before you commit.`
-                : null;
+  const reason = loading
+    ? "Loading the config…"
+    : !hasText
+      ? "Write or import a config first."
+      : checkingConfig
+        ? "Checking the config…"
+        : checkFailed
+          ? "Factorial couldn't check the config. Edit it to check again."
+          : !validForText
+            ? "Fix the errors below first."
+            : checkingRepo || !previewed
+              ? "Checking which files the commit would write…"
+              : unchanged
+                ? "Nothing to commit. Edit a file first."
+                : unconfirmedStale > 0
+                  ? `${unconfirmedStale} file${unconfirmedStale === 1 ? "" : "s"} changed since you edited ${unconfirmedStale === 1 ? "it" : "them"}. Review ${unconfirmedStale === 1 ? "it" : "them"} before you commit.`
+                  : null;
   return { reason, isLoading: false };
 }
 

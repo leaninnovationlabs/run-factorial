@@ -104,6 +104,25 @@ function saved(over: Partial<AssistantSettingsOut["settings"]>): Partial<Assista
   return { settings: { ...DEFAULTS.settings, ...over } };
 }
 
+/** A deployment that also offers the backend that calls Bedrock itself. */
+const WITH_BEDROCK: Partial<AssistantSettingsOut> = {
+  backends: [
+    ...DEFAULTS.backends,
+    {
+      kind: "bedrock_responses",
+      label: "Bedrock",
+      auth_modes: ["bedrock"],
+      default_models: { bedrock: "us.xai.grok-4.6" },
+    },
+  ],
+};
+const ON_BEDROCK = saved({
+  backend: "bedrock_responses",
+  auth_mode: "bedrock",
+  model: "us.xai.grok-4.6",
+  bedrock_region: "us-east-1",
+});
+
 function radio(root: HTMLElement, label: string): HTMLInputElement {
   for (const element of root.querySelectorAll("label")) {
     if (element.textContent?.trim() === label) {
@@ -202,6 +221,21 @@ describe("the credential", () => {
     expect(root.querySelector('input[type="password"]')).toBeNull();
     expect(root.textContent).toContain("short-lived Bedrock token");
   });
+
+  it("asks the Bedrock backend for a region and no credential", async () => {
+    const root = await page({ ...WITH_BEDROCK, ...ON_BEDROCK });
+    expect(root.querySelector('input[type="password"]')).toBeNull();
+    expect(root.textContent).toContain("short-lived Bedrock token");
+    expect((control(root, "Bedrock region") as HTMLInputElement).value).toBe("us-east-1");
+  });
+
+  it("switches to the Bedrock backend on its one sign-in and its model", async () => {
+    const root = await page(WITH_BEDROCK);
+    await choose(control(root, "Backend"), "bedrock_responses");
+    expect(radio(root, "AWS Bedrock (host role)").checked).toBe(true);
+    expect((control(root, "Model") as HTMLInputElement).value).toBe("us.xai.grok-4.6");
+    expect(control(root, "Bedrock region")).not.toBeNull();
+  });
 });
 
 describe("the fields", () => {
@@ -294,6 +328,11 @@ describe("the fields", () => {
     expect(root.textContent).toContain(
       "On a subscription, these budgets count each reply at API prices, as the SDK estimates them.",
     );
+  });
+
+  it("says on Bedrock that the budgets don't limit it, since it reports no cost", async () => {
+    const root = await page({ ...WITH_BEDROCK, ...ON_BEDROCK });
+    expect(root.textContent).toContain("Bedrock reports no cost, so these budgets don't limit it.");
   });
 
   it("says on Codex that the budgets don't limit it, since it reports no cost", async () => {
@@ -423,7 +462,16 @@ function streamed() {
   return { body, open };
 }
 
-describe("Test", () => {
+describe("the credential check", () => {
+  it("sits in the Connection section, under the credential, not in a panel of its own", async () => {
+    const root = await page();
+    const button = byText(root, "button", "Test credential");
+    const section = button?.closest("section");
+    expect(section?.querySelector("h3")?.textContent).toBe("Connection");
+    expect(section?.textContent).toContain("Credential check");
+    expect(byText(root, "button", "Test")).toBeNull();
+  });
+
   it("shows the reply, the latency and the estimated cost", async () => {
     vi.spyOn(api, "testAssistant").mockResolvedValue({ conversation_id: 7 });
     const items = vi
@@ -432,7 +480,7 @@ describe("Test", () => {
     const stream = streamed();
     const root = await page();
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    await click(byText(root, "button", "Test"));
+    await click(byText(root, "button", "Test credential"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
@@ -445,11 +493,16 @@ describe("Test", () => {
     });
     expect(items).toHaveBeenCalledWith(7);
     expect(stream.open).toHaveBeenCalledWith(7, 0, expect.any(AbortSignal));
-    expect(root.textContent).toContain("Reply OK");
+    expect(root.textContent).toContain("The assistant replied");
+    expect(root.textContent).toContain("OK");
     expect(root.textContent).not.toContain("stale");
     expect(root.textContent).toContain("Answered in 1.0s");
     expect(root.textContent).toContain("Cost ~$0.03");
     expect(root.textContent).not.toContain("estimated");
+
+    vi.useRealTimers();
+    await click(root.querySelector('button[aria-label="Dismiss"]'));
+    expect(root.textContent).not.toContain("The assistant replied");
   });
 
   it("shows the server's reason when the send path refuses", async () => {
@@ -457,7 +510,7 @@ describe("Test", () => {
       new ApiError(409, "Set up the assistant in Assistant settings."),
     );
     const root = await page();
-    await click(byText(root, "button", "Test"));
+    await click(byText(root, "button", "Test credential"));
     await settle();
     expect(root.querySelector('[role="alert"]')?.textContent).toBe(
       "Set up the assistant in Assistant settings.",
@@ -472,9 +525,34 @@ describe("Test", () => {
       turn: { ...TURN, status: "failed", failure_message: "the credential was refused" },
     });
     const root = await page();
-    await click(byText(root, "button", "Test"));
+    await click(byText(root, "button", "Test credential"));
     await settle();
-    expect(root.querySelector('[role="alert"]')?.textContent).toBe("the credential was refused");
+    const alert = root.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("The test reply failed");
+    expect(alert?.textContent).toContain("the credential was refused");
+  });
+
+  it("says the key was rejected when the provider refuses it, its own text behind Details", async () => {
+    vi.spyOn(api, "testAssistant").mockResolvedValue({ conversation_id: 7 });
+    streamed();
+    vi.spyOn(api, "getAssistantItems").mockResolvedValue({
+      items: [],
+      turn: {
+        ...TURN,
+        status: "failed",
+        failure_reason: "auth",
+        failure_message: "authentication_error: invalid x-api-key",
+      },
+    });
+    const root = await page();
+    await click(byText(root, "button", "Test credential"));
+    await settle();
+    const alert = root.querySelector<HTMLElement>('[role="alert"]');
+    expect(alert?.querySelector("h3")?.textContent).toBe("The Anthropic API key was rejected");
+    expect(alert?.textContent).toContain("Replace it with a valid one");
+    const details = alert?.querySelector("code");
+    expect(details?.textContent).toBe("authentication_error: invalid x-api-key");
+    expect(details?.hidden).toBe(true);
   });
 
   it("gives up after a minute without an end to the turn", async () => {
@@ -486,7 +564,7 @@ describe("Test", () => {
     });
     const root = await page();
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    await click(byText(root, "button", "Test"));
+    await click(byText(root, "button", "Test credential"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });

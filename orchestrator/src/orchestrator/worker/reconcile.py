@@ -53,6 +53,7 @@ from orchestrator.config import (
     GateStep,
     ProcessConfig,
 )
+from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import (
     Event,
     Project,
@@ -62,6 +63,7 @@ from orchestrator.db.models import (
     TicketStatus,
 )
 from orchestrator.events import EventType
+from orchestrator.events.approvals import latest_approval
 from orchestrator.events.types import requested_via
 from orchestrator.events.workspaces import WHY_NOT_SERVABLE
 from orchestrator.factorial import AgentPins
@@ -554,15 +556,26 @@ async def _recheck_if_due(
 ) -> bool:
     """A parked session's re-check (`agent_steps.recheck_parked`), or a refused spawn's
     (`agent_steps.spawn_cleared`), when due. True when it accepted the run or released the
-    ticket, and the tick projected; the ticket's other parks read nothing here. `locked` is
-    the step's latest run as `_lock_latest_run` read it."""
-    if not isinstance(config.find_step(ticket.current_step), AgentStep):
+    ticket, and the tick projected; the ticket's other parks read nothing here, but a parked
+    run of a step that awaits review reads its latest approval every tick. `locked` is the
+    step's latest run as `_lock_latest_run` read it."""
+    step = config.find_step(ticket.current_step)
+    if not isinstance(step, AgentStep):
         return False
-    parked = locked if locked and parked_recheck_due(deps, locked, deps.now()) else None
+    now = deps.now()
+    approval = None
+    if (
+        locked is not None
+        and locked.status == StepRunStatus.INTERRUPTED
+        and awaits_review(step.postconditions)
+    ):
+        approval = await latest_approval(session, locked.ticket_id, locked.id)
+    approval_id = None if approval is None else approval.id
+    parked = locked if locked and parked_recheck_due(deps, locked, now, approval_id) else None
     if parked is None and (
         # A parked session is never released by a spawn's re-check: `_release` would resume it.
         (locked is not None and locked.status == StepRunStatus.INTERRUPTED)
-        or not await spawn_recheck_due(session, deps, ticket, deps.now())
+        or not await spawn_recheck_due(session, deps, ticket, now)
     ):
         return False
     tick = await tick_for()
@@ -570,7 +583,7 @@ async def _recheck_if_due(
         with revert_on_error():
             async with session.begin_nested():
                 if parked is not None:
-                    accepted = await recheck_parked(tick, ticket, parked)
+                    accepted = await recheck_parked(tick, ticket, parked, step, approval)
                 elif accepted := await spawn_cleared(tick):
                     await _release(tick, _RECHECK, via="recheck")
     except _EvaluationUnavailable as exc:

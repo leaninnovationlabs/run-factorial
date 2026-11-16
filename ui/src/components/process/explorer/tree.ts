@@ -126,7 +126,7 @@ export function isSelectable(file: ExplorerFile | undefined): boolean {
   return Boolean(file?.proposal && !file.proposal.present_in_repo);
 }
 
-export type ChangeKind = "added" | "modified";
+export type ChangeKind = "added" | "modified" | "deleted";
 
 /**
  * What the commit would do to this node: create it, change a file the repo already has, or
@@ -138,20 +138,28 @@ export type ChangeKind = "added" | "modified";
  * no tick governs. "Modified" is handed down rather than derived: a repo file is rewritten only
  * from the editor's own state — the lane's process text, or a held edit of the branch's copy —
  * never from a proposal.
+ *
+ * "Deleted" is a file staged for deletion. A directory is deleted only when everything beneath it
+ * is; one that keeps a file is a folder something changes in.
  */
 export function changeOf(
   node: TreeNode,
   selected: Set<string>,
   modified: Set<string>,
   created: Set<string> = EMPTY,
+  deleted: Set<string> = EMPTY,
 ): ChangeKind | null {
   if (node.kind === "file") {
+    if (deleted.has(node.path)) return "deleted";
     if (modified.has(node.path)) return "modified";
     if (created.has(node.path)) return "added";
     return isSelectable(node.file) && selected.has(node.path) ? "added" : null;
   }
-  const beneath = node.children.map((child) => changeOf(child, selected, modified, created));
-  if (beneath.includes("modified")) return "modified";
+  const beneath = node.children.map((child) =>
+    changeOf(child, selected, modified, created, deleted),
+  );
+  if (beneath.length > 0 && beneath.every((change) => change === "deleted")) return "deleted";
+  if (beneath.includes("modified") || beneath.includes("deleted")) return "modified";
   return beneath.includes("added") ? "added" : null;
 }
 
@@ -173,6 +181,14 @@ const PROCESS_SUFFIX = ".yaml";
 /** Mirrors `orchestrator/config/loader.py`'s `process_file_name`; change the two together. */
 export function lanePath(configDir: string, name: string): string {
   return `${configDir}/${PROCESSES_DIR}/${PROCESS_PREFIX}${name}${PROCESS_SUFFIX}`;
+}
+
+/** The process whose file `path` is, or null for any other path. */
+export function laneOf(configDir: string, path: string): string | null {
+  const prefix = `${configDir}/${PROCESSES_DIR}/${PROCESS_PREFIX}`;
+  if (!path.startsWith(prefix) || !path.endsWith(PROCESS_SUFFIX)) return null;
+  const name = path.slice(prefix.length, -PROCESS_SUFFIX.length);
+  return name && !name.includes("/") ? name : null;
 }
 
 export const EMPTY: Set<string> = new Set();

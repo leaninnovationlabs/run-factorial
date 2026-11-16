@@ -7,9 +7,9 @@ it, because they ship together.
 
 A variant has two axes, both read from `CATALOG.yaml`: the lane topology its prompts describe
 (`lane:`, absent for one that fits any lane) and the forge whose CLI they call (`forge:`,
-`github` when absent). The lane decides which offered variant is ticked; the forge decides whether
-a variant is offered at all, because a prompt that opens pull requests with `gh` cannot deliver on
-a GitLab project.
+absent for prompts that name both `gh` and `glab` and tell the agent how to choose). The lane
+decides which offered variant is ticked; the forge decides whether a variant is offered at all,
+because a prompt that opens pull requests with `gh` alone cannot deliver on a GitLab project.
 
 Agents resolve by NAME, from one flat catalog — never by role within a chosen process template.
 An operator edits the template's text before committing it, so keying files on the template
@@ -62,7 +62,7 @@ class VariantMeta:
     declares_skills: tuple[str, ...]  # skills.shared, read back out of the manifest
     declares_mcp: tuple[str, ...]     # mcp.shared, same
     lane: Lane | None = None          # None: fits any lane
-    forge: Forge = "github"
+    forge: Forge | None = None        # None: its prompts serve both forges
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +90,7 @@ def _declared(files: Mapping[str, str], block: str) -> tuple[str, ...]:
 
 
 def _meta(
-    files: Mapping[str, str], summary: str, lane: Lane | None = None, forge: Forge = "github"
+    files: Mapping[str, str], summary: str, lane: Lane | None = None, forge: Forge | None = None
 ) -> VariantMeta:
     body = "".join(files.values())
     return VariantMeta(
@@ -106,8 +106,8 @@ def _meta(
 
 def _variant(folder: Path, spec: Any, *, lane_required: bool = False) -> VariantMeta:
     lane = spec.get("lane")
-    forge = spec.get("forge", "github")
-    if lane not in (None, *get_args(Lane)) or forge not in get_args(Forge):
+    forge = spec.get("forge")
+    if lane not in (None, *get_args(Lane)) or forge not in (None, *get_args(Forge)):
         raise ValueError(f"{folder}: lane {lane!r} or forge {forge!r} is not one the catalog knows")
     # An agent's prompts always describe one lane; with no `lane:` it would be ticked on both.
     if lane_required and lane is None:
@@ -191,7 +191,7 @@ def variant_fit(
     The lane-match question applies to a shared skill exactly as it does to an agent: a
     skill can carry a `stacked` and a `base-target` variant too (its naming table names branches
     the same way a prompt does), so `kind` never enters this decision — only the lane the
-    variant declares. One that declares none (spec-page's forge variants, an MCP server's lone
+    variant declares. One that declares none (a variant-less skill, an MCP server's lone
     `""`) fits every lane. The forge is not asked here: a variant of another forge is never
     offered at all (`propose.offers_for`).
     """

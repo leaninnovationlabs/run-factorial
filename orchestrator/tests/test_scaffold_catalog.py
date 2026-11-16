@@ -11,7 +11,7 @@ from tests.scaffold_lanes import STACKED, UNSTACKED
 
 def test_agent_entry_carries_its_variants():
     entry = catalog.entries()[("agent", "plan-agent")]
-    assert entry.version == 8
+    assert entry.version == 9
     assert "stacked" in entry.variants
 
 
@@ -75,31 +75,30 @@ def test_base_target_variant_is_offered_but_unticked_on_a_stacked_lane():
     assert (offered, default_on) == (True, False)
 
 
-@pytest.mark.parametrize("variant", ["base-target", "base-target-gitlab"])
-def test_base_target_prompts_never_name_a_stacked_only_fact(variant):
+def test_base_target_prompts_never_name_a_stacked_only_fact():
     for name in ("plan-agent", "build-agent", "test-agent"):
-        markers = catalog.entries()[("agent", name)].variants[variant].markers
+        markers = catalog.entries()[("agent", name)].variants["base-target"].markers
         assert not markers & {"__SPEC_PREFIX__", "__IMPL_PREFIX__"}, name
 
 
 def test_every_variant_names_its_lane_and_forge():
-    """A GitLab variant is base-target only: a stacked GitLab lane gets the stub."""
+    """Only the stacked prompts call one forge's CLI, so a stacked GitLab lane gets the stub."""
     for (kind, name), entry in catalog.entries().items():
         for variant, meta in entry.variants.items():
-            if variant.endswith("-gitlab"):
-                assert (meta.lane, meta.forge) == ("base-target", "gitlab"), (name, variant)
-            elif variant in ("stacked", "base-target"):
-                assert (meta.lane, meta.forge) == (variant, "github"), (name, variant)
+            if variant == "stacked":
+                assert (meta.lane, meta.forge) == ("stacked", "github"), name
+            elif variant == "base-target":
+                assert (meta.lane, meta.forge) == ("base-target", None), name
             else:
-                assert meta.lane is None, (kind, name, variant)
-    spec_page = catalog.entries()[("skill", "spec-page")].variants
-    assert {v: m.forge for v, m in spec_page.items()} == {"github": "github", "gitlab": "gitlab"}
+                assert (meta.lane, meta.forge) == (None, None), (kind, name, variant)
 
 
 def test_an_agent_variant_without_a_lane_fails_the_catalog_load():
     with pytest.raises(ValueError, match="must name its lane"):
         catalog._variants("agents", "build-agent", {"variants": {"stacked": {"summary": "s"}}})
-    assert catalog._variants("skills", "spec-page", {"variants": {"github": {"summary": "s"}}})
+    assert catalog._variants(
+        "skills", "project-constitution", {"variants": {"stacked": {"summary": "s"}}}
+    )
 
 
 def test_plan_agent_ships_its_local_speckit_skills():
@@ -125,7 +124,7 @@ def test_the_mcp_server_ships_as_an_inert_example_no_agent_declares():
 
 def test_test_agent_has_an_entry():
     variants = set(catalog.entries()[("agent", "test-agent")].variants)
-    assert variants == {"base-target", "base-target-gitlab"}
+    assert variants == {"base-target"}
 
 
 def test_every_shipped_skill_is_declared_by_its_own_variant():

@@ -2,9 +2,13 @@ import { useState } from "react";
 import { Button, TextField } from "../../ui";
 
 /**
- * The explorer's inline form for a new file or folder: a path under the config folder, started at
- * the folder of the file on show. Enter creates it, Escape or Cancel puts the form away; a name
- * the server would refuse is refused here as it is typed (`newPathProblem`).
+ * The explorer's prompt for a new file or folder: a path under the config folder, started at the
+ * folder it was asked for in. It floats where the person pressed to add (`PopupAt` holds it), so
+ * it carries no frame of its own. Enter creates it, Escape or Cancel puts it away; a name the
+ * server would refuse is refused here as it is typed (`newPathProblem`).
+ *
+ * With `naming` it asks for one name instead of a path: an agent's, a skill's, an MCP server's
+ * or a process's, which the caller turns into every folder and file that construct needs.
  */
 export function NewEntry({
   kind,
@@ -13,20 +17,23 @@ export function NewEntry({
   problemOf,
   onCreate,
   onCancel,
+  naming,
 }: {
   kind: "file" | "folder";
   configDir: string;
   /** Where the typed path starts, relative to the config folder: a folder and a slash, or "". */
   start: string;
-  /** Why a full path cannot be created, or null. */
+  /** Why a full path (or, with `naming`, a name) cannot be created, or null. */
   problemOf: (path: string) => string | null;
-  /** Called with the full path, under the config folder. */
+  /** Called with the full path, under the config folder; with `naming`, with the name. */
   onCreate: (path: string) => void;
   onCancel: () => void;
+  /** Ask for a construct's name: the field's label, its example and the button's words. */
+  naming?: { label: string; placeholder: string; submit: string };
 }) {
   const [value, setValue] = useState(start);
   const [tried, setTried] = useState(false);
-  const path = `${configDir}/${value.trim().replace(/\/+$/, "")}`;
+  const path = naming ? value.trim() : `${configDir}/${value.trim().replace(/\/+$/, "")}`;
   const problem = value.trim() ? problemOf(path) : "Type a name.";
   const shown = tried || (value !== start && value.trim() !== "") ? problem : null;
 
@@ -40,13 +47,16 @@ export function NewEntry({
       onKeyDown={(event) => {
         if (event.key === "Escape") onCancel();
       }}
-      className="mb-3 space-y-2 rounded-md border border-default p-2"
+      className="w-72 max-w-full space-y-2 p-3"
     >
       <TextField
-        label={kind === "file" ? `New file in ${configDir}/` : `New folder in ${configDir}/`}
+        label={
+          naming?.label ??
+          (kind === "file" ? `New file in ${configDir}/` : `New folder in ${configDir}/`)
+        }
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder={kind === "file" ? "folder/name.md" : "folder"}
+        placeholder={naming?.placeholder ?? (kind === "file" ? "folder/name.md" : "folder")}
         isMonospaced
         spacing="compact"
         autoFocus
@@ -54,7 +64,7 @@ export function NewEntry({
       />
       <div className="flex gap-2">
         <Button type="submit" appearance="primary" spacing="compact">
-          {kind === "file" ? "Create file" : "Create folder"}
+          {naming?.submit ?? (kind === "file" ? "Create file" : "Create folder")}
         </Button>
         <Button spacing="compact" onClick={onCancel}>
           Cancel

@@ -17,7 +17,7 @@ from orchestrator.api.services.config import (
     commit_config,
 )
 from orchestrator.api.services.errors import Invalid
-from orchestrator.config.scaffold.assemble import FileEdit
+from orchestrator.config.scaffold.assemble import FileDelete, FileEdit
 from orchestrator.db.models import ChatItem, ChatProposal, Event, Project
 from orchestrator.events import EventType
 from orchestrator.factorial import RepoConfigSource
@@ -122,6 +122,23 @@ async def test_chat_commit_refuses_agent_and_skill_paths(async_session: AsyncSes
     assert chat.offered and not any(
         path.startswith((".factorial/agents/", ".factorial/skills/")) for path in chat.offered
     )
+
+
+async def test_deletions_are_dashboard_only(async_session: AsyncSession) -> None:
+    contents = FakeContents(AGENTS | {SKILL: "# review\n"})
+    project = await project_in(async_session)
+    draft = ConfigDraft(content=lane(), deleted=[FileDelete(SKILL, blob("# review\n"))])
+    for surface in ("mcp", "chat"):
+        check = await check_config(
+            async_session, RepoConfigSource(contents), project, draft, surface=surface
+        )
+        assert not check.valid
+        assert "deletions are dashboard-only" in check.blockers[0]
+    dashboard = await check_config(
+        async_session, RepoConfigSource(contents), project, draft, surface="dashboard"
+    )
+    assert dashboard.valid, dashboard.blockers
+    assert dashboard.would_delete == [SKILL]
 
 
 async def test_chat_commit_refuses_an_approver_change(async_session: AsyncSession) -> None:

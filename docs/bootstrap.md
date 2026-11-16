@@ -319,7 +319,22 @@ to `factorial` and press **Sync config**.
    on the right opens the process file in a tab. Each file you open from the explorer gets a tab
    of its own, and closing a tab keeps its edits. **New file** and **New folder** over the
    explorer add a path under `.factorial/` that the branch does not have; a folder is written
-   once a file is in it. Choose **Simple lane** under **Replace with
+   once a file is in it. Right-click a folder, or press the menu button on its row, to add what
+   belongs in it. The menu lists it under **Add new**: on `.factorial/` that is **Agent**,
+   **MCP server**, **Process** and **Skill**, then **File** and **Folder**, and inside one
+   agent's folder it is a skill or an MCP server of that agent's own. The explorer asks for a
+   name in a small prompt beside the place you pressed, then creates every folder and file the
+   construct needs, each filled from a commented shell. An agent shell and a skill shell parse as they are. An MCP
+   server shell and a process shell do not, because neither has a safe default: uncomment and
+   edit the example each one carries, or the commit is refused and names the file. The same menu
+   has **Delete folder**, and each file row has **Delete**. A deletion is staged like an edit,
+   the row stays in the explorer struck through with **Restore**, and nothing leaves the branch
+   until the commit. Deleting a process file retires that process at the sync, after a
+   confirmation, and the last process cannot be deleted. **Validate** runs the commit's own
+   checks on every edited, new and deleted file and lists each problem under the file it is in.
+   Drag the file panel's right border to make it wider, up to two fifths of the editor; a name
+   the panel cuts short shows in full when the pointer is over it.
+   Choose **Simple lane** under **Replace with
    template** at the top of the editor, or paste an existing process file. On an existing lane, the
    template keeps the name of that lane, so the commit replaces it. The template is the lane of
    `docs/samples/factorial-simple/`, with its comments. The server takes the exact text, comments
@@ -919,11 +934,18 @@ requests target `main`. The defence is the gate: each pull request merges only a
 person approves it there. Branch protection is a second control only where the repo has it.
 Readiness reports it and does not enforce it. On an App project, the App holds no bypass.
 
-**`pr_approval` is the only gate type.** Anything a human must approve is expressed as a gate on
+**`pr_approval` is the only gate type.** Any merge a human must approve is expressed as a gate on
 a pull request, or it is not expressed. Ordering between gates is expressed by the graph, not by
 a condition: "the merged implementation is in the spec pull request before gate 2" holds because
 the code gate's merge is the only edge into gate 2, and there is no predicate that could state
 it.
+
+**A step that names `request_approval()` asks and waits.** Its run parks under
+`factorial:waiting` whenever the agent stops with its postconditions unmet, so the prompt need not
+make the agent ask a question: it tells the agent to push its work, say it is ready for review,
+and stop, then to answer a person's change request in the same session and push again. The
+approval accepts the run and merges nothing; a gate still carries the work to `main`
+(process-yaml.md, "Waiting for a person's approval"; design.md §7.20).
 
 **Predicate arguments glob on both sides.** `pr_open`'s base is globbed symmetrically with its
 head (`predicates/library.py`), so `pr_open("impl/{ticket}-*", "spec/{ticket}-*")` matches
@@ -971,9 +993,9 @@ the prompt alone, so removing it removes the control.
 
 A person can type into any run. An agent that follows them away from its task delivers nothing.
 Give every agent that opens a pull request a system-prompt section that keeps it on task, and
-keep the shared constitution from undoing it. Both samples and the Simple template do both, for
-`plan-agent` and `build-agent`. The GitLab sample says "MR" where the others say "PR" (step 4). Do these steps for a new agent, and for any config whose prompts
-do not have the section.
+keep the shared constitution from undoing it. The Simple sample and the Simple template do both,
+for `plan-agent` and `build-agent`. Do these steps for a new agent, and for any config whose
+prompts do not have the section.
 
 1. Open `agents/<name>/system-prompt.md` on the `factorial` branch.
 2. Copy the section `## A person may type into your session` from
@@ -1005,6 +1027,12 @@ do not have the section.
 
 Through the MCP server, files under `agents/` are dashboard-only: show the person the diff, and
 stop. A ticket in flight keeps the prompts it was admitted with. The next ticket gets the change.
+The same holds for a file created in the editor: it reaches new tickets and a ticket restarted
+onto the latest version, and never a running or paused one (design.md §2 item 8).
+
+To go back to an earlier config, press **History** on the Process config page and **Restore**
+on a synced commit. The dashboard commits the whole `.factorial/` folder back to that commit's,
+as a new commit, and syncs it (tech-stack decision 93).
 
 ### Why each line is there — [Reference]
 

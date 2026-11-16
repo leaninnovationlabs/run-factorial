@@ -54,6 +54,7 @@ import {
   showFlag,
   TextArea,
   TextField,
+  useDismissible,
 } from "../ui";
 import {
   buildVerdict,
@@ -717,8 +718,12 @@ function DeviceCode({
   state: RuntimeLoginState;
   detail: string | null;
 }) {
+  // Each Connect starts a new login, so the next one's Connected shows again.
+  const [connected, dismiss] = useDismissible(state === "complete" ? login : null);
   if (state === "complete") {
-    return <SectionMessage appearance="success" title="Connected" />;
+    return connected ? (
+      <SectionMessage appearance="success" title="Connected" onDismiss={dismiss} />
+    ) : null;
   }
   if (state === "failed") {
     return (

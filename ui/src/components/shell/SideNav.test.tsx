@@ -150,37 +150,28 @@ describe("SideNav", () => {
     expect(root.querySelector("[title]")).toBeNull();
   });
 
-  it("keeps the organization, help and the account at its foot, in that order, each named by its label when compact", async () => {
+  it("keeps help and the account at its foot, in that order, each named by its label when compact", async () => {
     const root = await nav("/overview", "compact");
     const menus = [...root.querySelectorAll('[aria-haspopup="menu"]')];
-    expect(menus.map((menu) => menu.getAttribute("aria-label"))).toEqual([
-      "Switch organization: Northwind",
-      "Help",
-      "Account",
-    ]);
+    expect(menus.map((menu) => menu.getAttribute("aria-label"))).toEqual(["Help", "Account"]);
     expect(menus.every((menu) => menu.textContent === "")).toBe(true);
   });
 
-  it("names the organization first at its foot, and moves to another with a full load", async () => {
-    const assign = vi.fn();
-    vi.stubGlobal("location", { ...window.location, assign });
-    const root = await nav("/overview", "full");
-    const menus = [...root.querySelectorAll<HTMLElement>('[aria-haspopup="menu"]')];
-    const switcher = menus[0];
-    expect(switcher?.hasAttribute("data-org-switcher")).toBe(true);
-    expect(switcher?.textContent).toBe("Northwind");
-
-    await click(switcher);
-    expect(menuItems().map((item) => item.textContent)).toEqual([
-      expect.stringContaining("Acme"),
-      expect.stringContaining("Northwind"),
-    ]);
-    await click(menuItems().find((item) => item.textContent?.startsWith("Northwind")));
-    expect(assign).not.toHaveBeenCalled();
-    await click(switcher);
-    await click(menuItems().find((item) => item.textContent?.startsWith("Acme")));
-    expect(assign).toHaveBeenCalledWith("/factorial/orgs/acme/overview");
-    vi.unstubAllGlobals();
+  it("leaves the organization and the project to the top bar", async () => {
+    for (const mode of ["full", "compact"] as const) {
+      const root = await nav(
+        `/projects/${PROJECT_ID}/tickets`,
+        mode,
+        undefined,
+        undefined,
+        inProject(),
+      );
+      expect(root.querySelector("[data-org-switcher]"), mode).toBeNull();
+      expect(root.querySelector("[data-project-switcher]"), mode).toBeNull();
+      expect(root.querySelector("[data-project-band]"), mode).toBeNull();
+      await view?.unmount();
+      view = null;
+    }
   });
 
   it("signs out from the account menu, which says who is signed in", async () => {
@@ -329,20 +320,17 @@ describe("SideNav inside a project", () => {
     expect(root.textContent).not.toContain("Runtimes");
   });
 
-  it("names the project first, on a filled band across the navigation, as the button that switches it", async () => {
-    const root = await nav(
-      `/projects/${PROJECT_ID}/tickets`,
-      "full",
-      undefined,
-      undefined,
-      inProject(),
-    );
-    const buttons = [...root.querySelectorAll<HTMLElement>("#side-nav a, #side-nav button")];
-    const first = buttons[0];
-    expect(first?.hasAttribute("data-project-switcher")).toBe(true);
-    expect(first?.textContent).toBe("Harbor invoices");
-    expect(first?.getAttribute("aria-label")).toBe("Switch project: Harbor invoices");
-    const band = first?.closest("[data-project-band]");
+  it("over the page, where it covers the top bar, names the organization and then the project on a filled band", async () => {
+    await nav(`/projects/${PROJECT_ID}/tickets`, "overlay", undefined, undefined, inProject());
+    const panel = document.getElementById("side-nav") as HTMLElement;
+    const switchers = [
+      ...panel.querySelectorAll<HTMLElement>("[data-org-switcher], [data-project-switcher]"),
+    ];
+    expect(switchers.map((each) => each.getAttribute("aria-label"))).toEqual([
+      "Switch organization: Northwind",
+      "Switch project: Harbor invoices",
+    ]);
+    const band = switchers[1]?.closest("[data-project-band]");
     expect(band?.className).toContain("bg-neutral ");
     // Out past the navigation's padding, and outside the region the items scroll in.
     expect(band?.className).toContain("-mx-2");
@@ -387,23 +375,32 @@ describe("SideNav inside a project", () => {
     expect(links(root).some((link) => link.getAttribute("href") === "/assistant")).toBe(false);
   });
 
-  it("switches to another active project's same page, and offers the list for the rest", async () => {
-    const root = await nav(
-      `/projects/${PROJECT_ID}/tickets`,
-      "full",
-      undefined,
-      undefined,
-      inProject(),
-    );
-    await click(root.querySelector("[data-project-switcher]"));
-    expect(menuItems().map((item) => item.textContent)).toEqual([
-      expect.stringContaining("Anchor ledgers"),
-      expect.stringContaining("Harbor invoices"),
-      expect.stringContaining("All projects"),
-    ]);
-    expect(document.body.textContent).not.toContain("Paused toy");
+  it("over the page, closes itself once another project or Create organization is chosen", async () => {
+    const onClose = vi.fn();
+    await nav(`/projects/${PROJECT_ID}/tickets`, "overlay", onClose, undefined, (qc) => {
+      inProject()(qc);
+      qc.setQueryData(keys.authProviders, { google: false, oidc: false, multi_org: true });
+    });
+    await click(document.body.querySelector("[data-project-switcher]"));
     await click(menuItems().find((item) => item.textContent?.startsWith("Anchor ledgers")));
     expect(where()).toBe("/projects/2/tickets");
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    await click(document.body.querySelector("[data-org-switcher]"));
+    await click(menuItems().find((item) => item.textContent === "Create organization"));
+    expect(where()).toBe("/organizations/new");
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("over the page, closes itself when the project's or the organization's name is followed home", async () => {
+    const onClose = vi.fn();
+    await nav(`/projects/${PROJECT_ID}/tickets`, "overlay", onClose, undefined, inProject());
+    await click(document.body.querySelector("[data-project-home]"));
+    expect(where()).toBe(`/projects/${PROJECT_ID}`);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await click(document.body.querySelector("[data-org-name]"));
+    expect(where()).toBe("/overview");
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it("folds the configuration pages away, keeping Configuration current for the page it hides", async () => {
@@ -447,9 +444,6 @@ describe("SideNav inside a project", () => {
     expect(labels(root)).toEqual(["Dashboard", "Tickets", "Settings"]);
     expect(root.querySelector('[aria-current="page"]')?.getAttribute("aria-label")).toBe(
       "Settings",
-    );
-    expect(root.querySelector("[data-project-switcher]")?.getAttribute("aria-label")).toBe(
-      "Switch project: Harbor invoices",
     );
     expect(root.querySelector('[aria-controls="nav-configuration-pages"]')).toBeNull();
   });
@@ -553,6 +547,5 @@ describe("SideNav inside a project", () => {
     });
     expect(byText(root, "a", "Tickets")?.getAttribute("aria-current")).toBe("page");
     expect(byText(root, "a", "Dashboard")?.getAttribute("href")).toBe(`/projects/${PROJECT_ID}`);
-    expect(root.querySelector("[data-project-switcher]")?.textContent).toBe("Harbor invoices");
   });
 });

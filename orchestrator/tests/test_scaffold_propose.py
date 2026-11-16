@@ -237,31 +237,21 @@ def _template_lanes(key: str) -> dict[str, str]:
     return {lane.key: lane.text for lane in template.lanes}
 
 
-_GH_COMMAND = re.compile(r"\bgh ")
-
-
 @pytest.mark.parametrize("lane", ["primary", "simple"])
-def test_gitlab_forge_gets_gitlab_bodies(lane: str):
-    files = _propose(_template_lanes("simple-gitlab")[lane], forge="gitlab").files
-    instructions = [f for path, f in files.items() if path.endswith("/instructions.md")]
-    assert instructions
-    for file in instructions:
-        assert "glab" in file.body, file.path
-        assert not [line for line in file.body.splitlines() if _GH_COMMAND.search(line)], file.path
-    assert "merge request" in files[".factorial/skills/project-constitution/SKILL.md"].body
-
-
-@pytest.mark.parametrize("lane", ["primary", "simple"])
-def test_github_forge_never_gets_gitlab_bodies(lane: str):
-    proposal = _propose(_template_lanes("simple")[lane])
-    assert not [path for path, f in proposal.files.items() if "glab" in f.body]
-    variants = [v.variant for c in proposal.components for v in c.variants]
-    assert not [v for v in variants if v == "gitlab" or v.endswith("-gitlab")]
+def test_both_forges_get_the_same_prompts_and_they_name_both_clis(lane: str):
+    text = _template_lanes("simple")[lane]
+    github, gitlab = _propose(text).files, _propose(text, forge="gitlab").files
+    assert {path: f.body for path, f in github.items()} == {
+        path: f.body for path, f in gitlab.items()
+    }
+    for name in ("plan-agent", "build-agent"):
+        body = github[f".factorial/agents/{name}/instructions.md"].body
+        assert "gh pr create" in body and "glab mr create" in body, name
 
 
 def test_gitlab_stacked_lane_gets_stubs_not_github_prompts():
-    """GitLab ships base-target prompts only: a stacked GitLab lane must fall to the stub, never
-    to the GitHub `stacked` prompts, which open pull requests with `gh`."""
+    """Only the base-target prompts serve both forges: a stacked GitLab lane must fall to the
+    stub, never to the `stacked` prompts, which open pull requests with `gh` alone."""
     config = parse_process(STACKED, origin="t")
     proposal = propose(config, forge="gitlab")
     assert not [

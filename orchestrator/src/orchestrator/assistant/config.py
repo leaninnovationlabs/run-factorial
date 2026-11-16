@@ -28,7 +28,7 @@ class AssistantSettings(BaseModel):
     daily_budget_usd: Decimal = Field(default=Decimal("20.00"), gt=0, le=1000)
     #: Everyone's spend together on one UTC day. None, the default, sets no cap.
     organization_daily_budget_usd: Decimal | None = Field(default=None, gt=0, le=10000)
-    #: Bedrock Runtime region when `backend` is `codex_cli` and `auth_mode` is `bedrock`.
+    #: Bedrock Runtime region when `auth_mode` is `bedrock`.
     bedrock_region: str = DEFAULT_REGION
 
     @field_validator("model")

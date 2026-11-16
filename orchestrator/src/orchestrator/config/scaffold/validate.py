@@ -23,7 +23,8 @@ A commit that edits files the target repo already has is validated against the r
 passes every path in the config branch's folder as `base_files` — the text of each file the loader
 parses, and an empty stand-in for the rest, whose existence is all it checks — and the bundle is
 written over it, so the loader reads the tree the commit will produce. Without it, an edited
-manifest would name prompts that exist nowhere in front of the loader.
+manifest would name prompts that exist nowhere in front of the loader. A file the commit deletes
+is left out of that tree, so a manifest that still names it fails here.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from orchestrator.config.loader import (
     SKILL_FILE,
     SKILLS_DIR,
     AdlcConfig,
+    ConfigError,
     load_config_folder,
     load_processes,
 )
@@ -85,63 +87,71 @@ def validate_bundle(
     """Raise `ConfigError` if the orchestrator would refuse this bundle at sync; otherwise return
     the folder as the loader read it."""
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        for path, content in (base_files or {}).items():
-            if not path.startswith(f"{CONFIG_DIR}/"):
-                continue
-            target = root / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
-        for path, content in bundle.files.items():
-            if path in bundle.stub_paths:
-                continue
-            target = root / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
+        try:
+            return _load(Path(tmp), bundle, base_files)
+        except ConfigError as exc:
+            # The loader names the temp copy it read; the operator knows the repository's path.
+            raise ConfigError(str(exc.path).removeprefix(f"{tmp}/"), exc.detail) from exc
 
-        config_root = root / CONFIG_DIR
-        # Read the processes with the same loader the folder check below uses, so the stand-in
-        # loop and the real check cannot disagree about which processes the tree contains.
-        agents = {
-            step.agent
-            for process in load_processes(config_root).values()
-            for step in process.steps
-            if isinstance(step, AgentStep)
-        }
-        for agent in sorted(agents):
-            manifest = config_root / AGENTS_DIR / agent / AGENT_FILE
-            if manifest.is_file():
-                continue
-            # Against the branch every agent a lane names already has its real manifest, so a
-            # missing one is a defect in an edited lane, not a gap to stand in for.
-            if base_files is not None and f"{CONFIG_DIR}/{AGENTS_DIR}/{agent}/{AGENT_FILE}" not in (
-                bundle.stub_paths
-            ):
-                continue
-            folder = config_root / AGENTS_DIR / agent
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / AGENT_FILE).write_text(_PLACEHOLDER_MANIFEST.format(name=agent))
-            for prompt in _STUB_PROMPTS:
-                (folder / prompt).write_text("")
 
-        # Named explicitly, never inferred from what the manifests declare: a stand-in for every
-        # undeclared-and-absent skill would also absorb a manifest naming a skill nothing
-        # provides, which is a real defect and must still fail here.
-        for name in sorted(bundle.present_skills):
-            skill = config_root / SKILLS_DIR / name / SKILL_FILE
-            if skill.is_file():
-                continue
-            skill.parent.mkdir(parents=True, exist_ok=True)
-            skill.write_text("")
+def _load(root: Path, bundle: ScaffoldBundle, base_files: Mapping[str, str] | None) -> AdlcConfig:
+    for path, content in (base_files or {}).items():
+        if not path.startswith(f"{CONFIG_DIR}/") or path in bundle.deleted:
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    for path, content in bundle.files.items():
+        if path in bundle.stub_paths:
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
 
-        # Same reasoning as the skill loop above, and for the same defect this guards against:
-        # a stand-in for every undeclared-and-absent server would also absorb a manifest naming
-        # a server nothing provides, which must still fail here.
-        for name in sorted(bundle.present_mcp):
-            server = config_root / MCP_DIR / f"{name}.yaml"
-            if server.is_file():
-                continue
-            server.parent.mkdir(parents=True, exist_ok=True)
-            server.write_text(_PLACEHOLDER_MCP.format(name=name))
+    config_root = root / CONFIG_DIR
+    # Read the processes with the same loader the folder check below uses, so the stand-in
+    # loop and the real check cannot disagree about which processes the tree contains.
+    agents = {
+        step.agent
+        for process in load_processes(config_root).values()
+        for step in process.steps
+        if isinstance(step, AgentStep)
+    }
+    for agent in sorted(agents):
+        manifest = config_root / AGENTS_DIR / agent / AGENT_FILE
+        if manifest.is_file():
+            continue
+        # Against the branch every agent a lane names already has its real manifest, so a
+        # missing one is a defect in an edited lane, not a gap to stand in for.
+        if base_files is not None and f"{CONFIG_DIR}/{AGENTS_DIR}/{agent}/{AGENT_FILE}" not in (
+            bundle.stub_paths
+        ):
+            continue
+        folder = config_root / AGENTS_DIR / agent
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / AGENT_FILE).write_text(_PLACEHOLDER_MANIFEST.format(name=agent))
+        for prompt in _STUB_PROMPTS:
+            (folder / prompt).write_text("")
 
-        return load_config_folder(config_root)
+    # Named explicitly, never inferred from what the manifests declare: a stand-in for every
+    # undeclared-and-absent skill would also absorb a manifest naming a skill nothing
+    # provides, which is a real defect and must still fail here.
+    for name in sorted(bundle.present_skills):
+        skill = config_root / SKILLS_DIR / name / SKILL_FILE
+        # A skill the commit deletes is gone from the tree it produces, so nothing stands in.
+        if skill.is_file() or f"{CONFIG_DIR}/{SKILLS_DIR}/{name}/{SKILL_FILE}" in bundle.deleted:
+            continue
+        skill.parent.mkdir(parents=True, exist_ok=True)
+        skill.write_text("")
+
+    # Same reasoning as the skill loop above, and for the same defect this guards against:
+    # a stand-in for every undeclared-and-absent server would also absorb a manifest naming
+    # a server nothing provides, which must still fail here.
+    for name in sorted(bundle.present_mcp):
+        server = config_root / MCP_DIR / f"{name}.yaml"
+        if server.is_file() or f"{CONFIG_DIR}/{MCP_DIR}/{name}.yaml" in bundle.deleted:
+            continue
+        server.parent.mkdir(parents=True, exist_ok=True)
+        server.write_text(_PLACEHOLDER_MCP.format(name=name))
+
+    return load_config_folder(config_root)

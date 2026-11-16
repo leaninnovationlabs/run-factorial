@@ -74,13 +74,15 @@ async def get_assistant_ready(
     credential = AssistantCredentialOut.model_validate(
         await svc.credential_state(session, organization.id, current)
     )
+    refusal = await svc.assistant_not_ready(
+        session, organization.id, current, multi_org=settings.multi_org.enabled
+    )
     return AssistantReadyOut(
         enabled=current.enabled,
         credential_set=credential.set,
         credential_updated_at=credential.updated_at,
-        ready_to_send=await svc.assistant_ready_to_send(
-            session, organization.id, current, multi_org=settings.multi_org.enabled
-        ),
+        ready_to_send=refusal is None,
+        refusal=refusal,
     )
 
 
@@ -119,7 +121,7 @@ async def get_assistant(
         ready_to_send=await svc.assistant_ready_to_send(
             session, organization.id, current, multi_org=settings.multi_org.enabled
         ),
-        status=health,
+        status=None if health is None else svc.backend_status(health, current.backend),
     )
 
 

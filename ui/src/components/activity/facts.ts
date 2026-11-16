@@ -113,6 +113,17 @@ export function currentRows(entries: readonly TimelineEntry[]): (entry: Timeline
   return (entry) => !parks(entry) || entry.id === newestPark;
 }
 
+const QUIET: ReadonlySet<ConditionTone> = new Set(["neutral", "active", "success"]);
+
+/**
+ * A row the activity's Focused switch leaves out: bookkeeping (`significant: false`) in a quiet
+ * tone. A routine row that warns or fails, such as a preview that failed, stays, so Focused never
+ * hides trouble.
+ */
+export function isRoutine(facts: Pick<EventFacts, "significant" | "tone">): boolean {
+  return !facts.significant && QUIET.has(facts.tone);
+}
+
 /**
  * `current` marks the one block the ticket is stopped at (`heldAt`). Only an event that is still
  * true of the ticket may tell the reader to go and do something: the same `gate_waiting` read as
@@ -743,7 +754,7 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
     }
 
     // Not significant: a URL arriving says nothing about whether the step worked, and the
-    // Output button on the block header is the way to it.
+    // Preview button on the block header is the way to it.
     case "preview_url_updated": {
       const urls: unknown[] = Array.isArray(d.urls) ? d.urls : [];
       const first = urls.find(
@@ -801,7 +812,7 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
       };
     }
 
-    // Not significant, like the page: the Output button is the way to the files. Without this case
+    // Not significant, like the page: the Files button is the way to them. Without this case
     // the default would print the files array.
     case "run_outputs_observed": {
       const status = str(d.status);
@@ -900,6 +911,19 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
         primary: by && `by ${by}`,
         long: failed.length ? { title: "Expected results not met", body: failed.join("\n") } : null,
         tone: "attention",
+        significant: true,
+      };
+    }
+
+    case "step_approved": {
+      const by = str(d.approved_by);
+      const head = str(d.head_sha);
+      return {
+        label,
+        primary:
+          [by && `by ${by}`, head && `at ${shortSha(head)}`].filter(Boolean).join(" ") || null,
+        long: null,
+        tone: "success",
         significant: true,
       };
     }

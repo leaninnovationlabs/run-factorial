@@ -11,20 +11,25 @@ pinned as codes rather than left to the default handler.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import select
+from githubkit.exception import RequestError, RequestTimeout
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.deps import runtime_adapter_dependency
+from orchestrator.adapters.state import BranchState, IssueState, SnapshotState, StateSource
+from orchestrator.api.deps import RunObserver, run_observer_dependency, runtime_adapter_dependency
 from orchestrator.api.services import controls
 from orchestrator.api.services.actor import Actor
-from orchestrator.api.services.errors import Conflict, Forbidden
+from orchestrator.api.services.errors import Conflict, Forbidden, UpstreamFailed
+from orchestrator.api.services.results import RequestResult
+from orchestrator.api.sessions import SESSION_COOKIE, mint_session
 from orchestrator.db.models import (
     Event,
     ProcessVersion,
@@ -35,11 +40,21 @@ from orchestrator.db.models import (
     TicketStatus,
 )
 from orchestrator.events import EventType, append
+from orchestrator.events.approvals import latest_approval
 from orchestrator.events.types import RequestedVia
+from orchestrator.gitlab.client import GitLabError
 from orchestrator.settings import AuthSettings, Settings
 from runtime.adapters.claude_cli.transcript import Transcript
 from runtime.contract import AdapterUnavailable, UnknownRunError
-from tests.api_harness import build_app, client_for, make_settings, seed_project, seed_ticket
+from tests.api_harness import (
+    TOKEN,
+    build_app,
+    client_for,
+    make_settings,
+    seed_project,
+    seed_ticket,
+)
+from tests.members import ensure_member
 from tests.reconcile_world import _process
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
@@ -1240,3 +1255,363 @@ async def test_force_complete_on_a_newer_attempt_while_a_check_is_pending_is_ref
 
     assert response.status_code == 409
     assert await _events(async_session, second, EventType.COMPLETION_REQUESTED) == []
+
+
+# ------------------------------------------------------------------------------- approve
+
+REVIEWER = "reviewer@example.com"
+HEAD = "c" * 40
+RETENTION = timedelta(days=7)
+
+
+async def _awaiting_review(
+    session: AsyncSession,
+    *,
+    status: str = StepRunStatus.IDLE,
+    ticket_status: str = TicketStatus.RUNNING,
+    reviewed: bool = True,
+) -> StepRun:
+    """Attempt 1 of `plan`, whose postconditions call `request_approval()` when `reviewed`, on
+    issue 12, so its branch is `spec/12-*`."""
+    project = await seed_project(session)
+    ticket = await seed_ticket(
+        session, project, step="plan", status=ticket_status, external_key="12"
+    )
+    version = await session.get(ProcessVersion, ticket.process_version_id)
+    assert version is not None
+    content = _process("proc").model_dump(mode="json", by_alias=True)
+    if reviewed:
+        content["steps"][0]["postconditions"] = {
+            "all": ['branch_exists("spec/{ticket}-*")', "request_approval()"]
+        }
+    version.content = content
+    run = StepRun(
+        ticket_id=ticket.id,
+        step_name="plan",
+        kind=StepKind.AGENT,
+        attempt=1,
+        status=status,
+        runtime_run_id="run-1",
+    )
+    session.add(run)
+    await session.flush()
+    return run
+
+
+def _observing(*branches: BranchState) -> RunObserver:
+    """The repo as the forge shows it: `spec/12-widget` at `HEAD` unless `branches` are given."""
+    held = branches or (BranchState(name="spec/12-widget", sha=HEAD),)
+
+    async def observe() -> StateSource | None:
+        return SnapshotState(
+            repo="acme/widgets",
+            issue_state=IssueState(
+                number=12,
+                title="Add a widget",
+                body="",
+                state="open",
+                labels=frozenset(),
+                assignees=(),
+            ),
+            branch_states=held,
+        )
+
+    return observe
+
+
+def _review_app(session: AsyncSession, observed: RunObserver) -> FastAPI:
+    app = _app(session, _Adapter())
+    app.dependency_overrides[run_observer_dependency] = lambda: observed
+    return app
+
+
+async def _press_approve(
+    session: AsyncSession, run: StepRun, *, signed_in: bool = True, bearer: bool = False
+) -> httpx.Response:
+    headers = {"Sec-Fetch-Site": "same-origin"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    async with client_for(_review_app(session, _observing())) as client:
+        if signed_in:
+            await ensure_member(session, REVIEWER)
+            client.cookies.set(
+                SESSION_COOKIE,
+                mint_session(
+                    REVIEWER, verified=True, api_token=TOKEN, now=datetime.now(UTC), max_age=600
+                ),
+            )
+        return await client.post(
+            f"/api/step-runs/{run.id}/approve", json={"head_sha": HEAD}, headers=headers
+        )
+
+
+async def _approve(
+    session: AsyncSession, run: StepRun, *, head_sha: str = HEAD, actor: Actor | None = None
+) -> RequestResult:
+    return await controls.request_approval(
+        session,
+        run,
+        actor or Actor.dashboard(REVIEWER),
+        head_sha=head_sha,
+        observed=_observing(),
+        retention=RETENTION,
+    )
+
+
+async def _approval_refused(session: AsyncSession, run: StepRun, **kwargs: Any) -> Conflict:
+    with pytest.raises(Conflict) as refusal:
+        await _approve(session, run, **kwargs)
+    assert await _events(session, run, EventType.STEP_APPROVED) == []
+    return refusal.value
+
+
+async def test_an_approval_records_who_approved_which_commit_as_the_predicate_reads_it(
+    async_session: AsyncSession,
+) -> None:
+    run = await _awaiting_review(async_session)
+
+    response = await _press_approve(async_session, run)
+
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "requested"
+    (approved,) = await _events(async_session, run, EventType.STEP_APPROVED)
+    assert approved.details == {
+        "step": "plan",
+        "attempt": 1,
+        "head_sha": HEAD,
+        "branch": "spec/12-widget",
+        "approved_by": REVIEWER,
+        "requested_via": "dashboard",
+    }
+    approval = await latest_approval(async_session, run.ticket_id, run.id)
+    assert approval is not None
+    assert (approval.head_sha, approval.approved_by) == (HEAD, REVIEWER)
+
+
+async def test_the_shared_bearer_alone_cannot_approve(async_session: AsyncSession) -> None:
+    """It names no one, and an approval is a person vouching for a commit."""
+    run = await _awaiting_review(async_session)
+
+    response = await _press_approve(async_session, run, signed_in=False, bearer=True)
+
+    assert response.status_code == 403
+    assert await _events(async_session, run, EventType.STEP_APPROVED) == []
+
+
+@pytest.mark.parametrize("via", [RequestedVia.MCP, RequestedVia.CHAT])
+async def test_approve_is_dashboard_only(async_session: AsyncSession, via: RequestedVia) -> None:
+    run = await _awaiting_review(async_session)
+    with pytest.raises(Forbidden):
+        await _approve(async_session, run, actor=Actor(by=REVIEWER, via=via))
+    assert await _events(async_session, run, EventType.STEP_APPROVED) == []
+
+
+async def test_an_approval_of_a_commit_the_branch_has_moved_past_is_refused(
+    async_session: AsyncSession,
+) -> None:
+    run = await _awaiting_review(async_session)
+    assert (await _approval_refused(async_session, run, head_sha="d" * 40)).code == "head_moved"
+
+
+async def test_an_approval_while_the_agent_works_is_refused(async_session: AsyncSession) -> None:
+    run = await _awaiting_review(async_session, status=StepRunStatus.RUNNING)
+    assert (await _approval_refused(async_session, run)).code == "mid_turn"
+
+
+async def test_a_step_that_awaits_no_review_takes_no_approval(
+    async_session: AsyncSession,
+) -> None:
+    run = await _awaiting_review(async_session, reviewed=False)
+    assert (await _approval_refused(async_session, run)).code == "not_reviewed"
+
+
+@pytest.mark.parametrize(
+    ("parked", "refusal"),
+    [
+        (EventType.AGENT_PARKED, None),
+        (EventType.AGENT_INTERRUPTED, "not_waiting"),
+    ],
+)
+async def test_a_parked_run_is_approved_only_where_its_session_sat_at_its_prompt(
+    async_session: AsyncSession, parked: EventType, refusal: str | None
+) -> None:
+    """A person's stop is theirs to release: the re-check never accepts it, so an approval of it
+    would wait on nothing."""
+    run = await _awaiting_review(
+        async_session, status=StepRunStatus.INTERRUPTED, ticket_status=TicketStatus.BLOCKED
+    )
+    run.ended_at = datetime.now(UTC)
+    await _lifecycle(
+        async_session,
+        run,
+        parked,
+        **({"reason": "idle", "at_prompt": True} if parked == EventType.AGENT_PARKED else {}),
+    )
+    if refusal is None:
+        assert (await _approve(async_session, run)).status == "requested"
+    else:
+        assert (await _approval_refused(async_session, run)).code == refusal
+
+
+async def test_a_run_the_worker_parks_during_the_branch_read_is_approved(
+    async_session: AsyncSession,
+) -> None:
+    """The ticket is judged as it stands once the run is locked, not as it was read before the
+    forge answered."""
+    run = await _awaiting_review(async_session)
+    seen = _observing()
+
+    async def worker_parks_meanwhile() -> StateSource | None:
+        # Behind the session's back, as the worker's own commit would land.
+        stale = {"synchronize_session": False}
+        await async_session.execute(
+            update(StepRun)
+            .where(StepRun.id == run.id)
+            .values(status=StepRunStatus.INTERRUPTED, ended_at=datetime.now(UTC))
+            .execution_options(**stale)
+        )
+        await async_session.execute(
+            update(Ticket)
+            .where(Ticket.id == run.ticket_id)
+            .values(status=TicketStatus.BLOCKED)
+            .execution_options(**stale)
+        )
+        await _lifecycle(async_session, run, EventType.AGENT_PARKED, reason="idle", at_prompt=True)
+        return await seen()
+
+    result = await controls.request_approval(
+        async_session,
+        run,
+        Actor.dashboard(REVIEWER),
+        head_sha=HEAD,
+        observed=worker_parks_meanwhile,
+        retention=RETENTION,
+    )
+    assert result.status == "requested"
+
+
+async def test_a_second_press_by_the_same_person_records_nothing(
+    async_session: AsyncSession,
+) -> None:
+    run = await _awaiting_review(async_session)
+
+    first = await _approve(async_session, run)
+    again = await _approve(async_session, run)
+
+    assert (first.status, again.status) == ("requested", "pending")
+    assert len(await _events(async_session, run, EventType.STEP_APPROVED)) == 1
+
+
+async def test_the_review_of_a_running_run_says_why_it_cannot_be_approved_and_reads_no_forge(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    """The dashboard polls the review while Approve is mounted: a refusal already decided must
+    not list every branch of the repository on each poll."""
+
+    async def unread() -> StateSource | None:
+        raise AssertionError("the forge was read")
+
+    run = await _awaiting_review(async_session, status=StepRunStatus.RUNNING)
+
+    async with client_for(_review_app(async_session, unread)) as client:
+        response = await client.get(f"/api/step-runs/{run.id}/review", headers=auth)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "awaits_review": True,
+        "branch": None,
+        "head_sha": None,
+        "approval": None,
+        "offered": False,
+        "refusal": "The agent is still working. Approve when it stops.",
+        "pushed": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("at_spawn", "pushed"),
+    [
+        # Another step on the same branch left it here: this run has pushed nothing.
+        (HEAD, False),
+        ("b" * 40, True),
+        # The spawn recorded no head for the branch, as for a step that declares no files.
+        (None, True),
+    ],
+)
+async def test_the_review_says_whether_the_run_has_pushed(
+    async_session: AsyncSession, auth: dict[str, str], at_spawn: str | None, pushed: bool
+) -> None:
+    """On a lane whose steps share a branch, the branch has a head before the run pushes: read as
+    the run's work, the dashboard asks a person to approve a commit the agent never made."""
+    run = await _awaiting_review(async_session)
+    heads = [] if at_spawn is None else [{"name": "spec/12-widget", "sha": at_spawn}]
+    await _lifecycle(async_session, run, EventType.AGENT_SPAWNED, branch_heads=heads)
+
+    async with client_for(_review_app(async_session, _observing())) as client:
+        body = (await client.get(f"/api/step-runs/{run.id}/review", headers=auth)).json()
+
+    assert (body["pushed"], body["head_sha"], body["refusal"]) == (pushed, HEAD, None)
+
+
+def _unanswering(error: Exception) -> RunObserver:
+    """A forge that gives no answer: `branches()` raises `error`."""
+
+    class _Down(SnapshotState):
+        async def branches(self) -> Sequence[BranchState]:
+            raise error
+
+    async def observe() -> StateSource | None:
+        source = await _observing()()
+        assert isinstance(source, SnapshotState)
+        return _Down(repo=source.repo, issue_state=source.issue_state)
+
+    return observe
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RequestTimeout(httpx.ReadTimeout("timed out")),
+        RequestError(httpx.ConnectError("connection refused")),
+        # What the GitLab client makes of a refused connection, and a timeout it passes on.
+        GitLabError("cannot reach GitLab at https://gitlab.test", status_code=None),
+        httpx.ReadTimeout("timed out"),
+    ],
+    ids=["github-timeout", "github-connection", "gitlab-connection", "gitlab-timeout"],
+)
+async def test_a_forge_that_gives_no_answer_refuses_approve_as_unread(
+    async_session: AsyncSession, auth: dict[str, str], error: Exception
+) -> None:
+    """A 500 has no CORS headers, so the dashboard reports it as an unreachable API."""
+    run = await _awaiting_review(async_session)
+
+    with pytest.raises(UpstreamFailed) as refusal:
+        await controls.request_approval(
+            async_session,
+            run,
+            Actor.dashboard(REVIEWER),
+            head_sha=HEAD,
+            observed=_unanswering(error),
+            retention=RETENTION,
+        )
+    async with client_for(_review_app(async_session, _unanswering(error))) as client:
+        review = await client.get(f"/api/step-runs/{run.id}/review", headers=auth)
+
+    assert refusal.value.message == "Factorial couldn't read this step's branch."
+    assert review.status_code == 200, review.text
+    assert review.json()["refusal"] == controls._UNREAD
+    assert await _events(async_session, run, EventType.STEP_APPROVED) == []
+
+
+async def test_the_review_of_a_waiting_run_with_nothing_pushed_offers_a_refused_approve(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    """The dashboard draws Approve when it is offered and disables it with the refusal."""
+    run = await _awaiting_review(async_session)
+
+    observed = _observing(BranchState(name="main", sha=HEAD))
+
+    async with client_for(_review_app(async_session, observed)) as client:
+        body = (await client.get(f"/api/step-runs/{run.id}/review", headers=auth)).json()
+
+    assert (body["offered"], body["refusal"]) == (True, controls._NO_BRANCH)

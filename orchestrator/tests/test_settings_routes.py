@@ -363,6 +363,42 @@ async def test_get_reports_the_status_the_assistant_wrote(
     assert (await client.get(URL, headers=auth)).json()["status"] == {"ok": False, "reason": "auth"}
 
 
+async def test_get_reports_only_the_saved_backend_s_check(
+    client: AsyncClient, auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    """Codex failing its check on this host is not the assistant failing for an organization on
+    Claude: the page read the whole row's `ok` and said the assistant wasn't working."""
+    await svc.save_assistant_status(
+        async_session,
+        {
+            "ok": False,
+            "message": "codex_cli: codex-cli 0.162.1 is installed; verified against 0.164.0",
+            "version": "claude_sdk 1, codex_cli 2",
+            "at": "2026-11-14T19:00:00+00:00",
+            "backends": {
+                "claude_sdk": {"ok": True, "message": None},
+                "codex_cli": {"ok": False, "message": "codex-cli 0.162.1 is installed"},
+            },
+        },
+    )
+    await async_session.commit()
+    assert (await client.get(URL, headers=auth)).json()["settings"]["backend"] == "claude_sdk"
+    assert (await client.get(URL, headers=auth)).json()["status"] == {
+        "ok": True,
+        "message": None,
+        "version": "claude_sdk 1, codex_cli 2",
+        "at": "2026-11-14T19:00:00+00:00",
+    }
+
+    await client.put(
+        URL,
+        json={"backend": "codex_cli", "model": "gpt-5.5-codex"},
+        headers=auth | DASHBOARD,
+    )
+    status = (await client.get(URL, headers=auth)).json()["status"]
+    assert (status["ok"], status["message"]) == (False, "codex-cli 0.162.1 is installed")
+
+
 TEST = f"{URL}/test"
 
 
@@ -401,10 +437,12 @@ async def test_settings_test_creates_an_archived_conversation_and_queues_one_tur
     assert listed.json() == []
 
 
+@pytest.mark.parametrize("kind", ["codex_cli", "bedrock_responses"])
 async def test_get_ready_to_send_without_a_stored_credential_for_codex_bedrock(
     client: AsyncClient,
     auth: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     monkeypatch.setattr(
         "orchestrator.api.services.assistant_settings.mint_bearer",
@@ -414,7 +452,7 @@ async def test_get_ready_to_send_without_a_stored_credential_for_codex_bedrock(
         URL,
         json={
             "enabled": True,
-            "backend": "codex_cli",
+            "backend": kind,
             "auth_mode": "bedrock",
             "model": "us.xai.grok-4.6",
             "bedrock_region": "us-east-1",
@@ -426,8 +464,9 @@ async def test_get_ready_to_send_without_a_stored_credential_for_codex_bedrock(
     assert body["ready_to_send"] is True
 
 
+@pytest.mark.parametrize("kind", ["codex_cli", "bedrock_responses"])
 async def test_bedrock_readiness_mints_off_the_event_loop_and_caches_a_refusal(
-    client: AsyncClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     """With no AWS identity a mint waits out the instance-metadata timeout. On the event loop
     that stalls every tenant's requests, and the dashboard asks on every chat render."""
@@ -443,7 +482,7 @@ async def test_bedrock_readiness_mints_off_the_event_loop_and_caches_a_refusal(
         URL,
         json={
             "enabled": True,
-            "backend": "codex_cli",
+            "backend": kind,
             "auth_mode": "bedrock",
             "model": "us.xai.grok-4.6",
             "bedrock_region": "us-east-1",
@@ -456,11 +495,13 @@ async def test_bedrock_readiness_mints_off_the_event_loop_and_caches_a_refusal(
     assert calls[0] != loop_thread
 
 
+@pytest.mark.parametrize("kind", ["codex_cli", "bedrock_responses"])
 async def test_multi_org_refuses_the_host_s_bedrock_role_for_the_assistant(
     async_session: AsyncSession,
     maker: async_sessionmaker[AsyncSession],
     auth: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     """Any organization's owner could otherwise mint from the host's AWS role, and each ready
     check would read instance metadata to do it. A setting saved before the refusal mints
@@ -472,7 +513,7 @@ async def test_multi_org_refuses_the_host_s_bedrock_role_for_the_assistant(
     )
     bedrock = AssistantSettings(
         enabled=True,
-        backend="codex_cli",
+        backend=kind,
         auth_mode="bedrock",
         model="us.xai.grok-4.6",
         bedrock_region="us-east-1",
@@ -493,12 +534,14 @@ async def test_multi_org_refuses_the_host_s_bedrock_role_for_the_assistant(
     assert minted == []
 
 
+@pytest.mark.parametrize("kind", ["codex_cli", "bedrock_responses"])
 @pytest.mark.usefixtures("_wipe_chat")
 async def test_settings_test_queues_without_a_stored_credential_for_codex_bedrock(
     client: AsyncClient,
     auth: dict[str, str],
     maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     monkeypatch.setattr(
         "orchestrator.api.services.assistant_settings.mint_bearer",
@@ -508,7 +551,7 @@ async def test_settings_test_queues_without_a_stored_credential_for_codex_bedroc
         URL,
         json={
             "enabled": True,
-            "backend": "codex_cli",
+            "backend": kind,
             "auth_mode": "bedrock",
             "model": "us.xai.grok-4.6",
             "bedrock_region": "us-east-1",
@@ -527,7 +570,7 @@ async def test_settings_test_is_refused_as_a_send_is_and_leaves_nothing_behind(
     assert refused.status_code == 409
     assert refused.json() == {
         "code": "not_configured",
-        "detail": "Set up the assistant in Assistant settings.",
+        "detail": svc.ASSISTANT_OFF,
     }
 
     await client.put(URL, json={"enabled": True}, headers=auth | DASHBOARD)
@@ -656,8 +699,24 @@ async def test_multi_org_shows_no_bedrock_sign_in(
     )
     async with client_for(build_app(settings, async_session)) as client:
         body = (await client.get(URL, headers=auth)).json()
-    codex = next(each for each in body["backends"] if each["kind"] == "codex_cli")
-    assert "bedrock" not in codex["auth_modes"]
+    assert {each["kind"]: each["auth_modes"] for each in body["backends"]} == {
+        "claude_sdk": ["api_key", "subscription"],
+        "codex_cli": ["api_key", "subscription"],
+    }
+
+
+async def test_get_lists_the_bedrock_backend_where_it_is_offered(
+    client: AsyncClient, auth: dict[str, str]
+) -> None:
+    body = (await client.get(URL, headers=auth)).json()
+    [bedrock] = [each for each in body["backends"] if each["kind"] == "bedrock_responses"]
+    assert bedrock == {
+        "kind": "bedrock_responses",
+        "label": "Bedrock",
+        "auth_modes": ["bedrock"],
+        "default_models": {"bedrock": "us.xai.grok-4.6"},
+    }
+    assert "bedrock_responses:bedrock" in body["offered"]
 
 
 async def test_a_new_organization_stores_its_first_key_for_the_offered_sign_in(

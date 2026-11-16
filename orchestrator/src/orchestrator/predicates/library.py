@@ -12,6 +12,7 @@ parse time, and this module asserts at import that the two tables list the same 
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from orchestrator.config.conditions import PREDICATE_ARITY
 from orchestrator.github.projector import CHANGE_REQUEST_MARKER, LABEL_PREFIXES, step_from_label
 from orchestrator.github.state import CheckRunState, PullRequestState
-from orchestrator.predicates.globs import matches_path, matches_ref, resolve_refs
+from orchestrator.predicates.globs import matches_path, matches_ref, resolve_refs, sole_ref
 
 if TYPE_CHECKING:
     # Deferred: `evaluator.py` imports `PREDICATES` from here, so a top-level import would be
@@ -54,6 +55,40 @@ def _matching_prs(
     )
 
 
+#: A markdown task box on a bulleted or numbered item; group 1 is a space while it is open.
+_TASK_BOX: Final = re.compile(r"^\s*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\](?:\s|$)")
+#: A code fence line, at any indentation: group 1 the fence, group 2 the rest of the line.
+_FENCE: Final = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+#: The blockquote markers a line starts with.
+_QUOTE: Final = re.compile(r"^(?:[ \t]*>)+")
+
+
+def _ticked_boxes(text: str) -> Iterator[bool]:
+    """Whether each task box in `text` is ticked, skipping fenced code blocks: a plan that shows
+    an example checklist has not left those tasks open.
+
+    A line is judged without its leading blockquote markers. A fence may be indented any amount,
+    since a plan nests one in a list item. A backtick line with another backtick after its fence
+    is inline code, not a fence; a fence closes only on a bare line of its own character at least
+    as long as the opener; one never closed runs to the end."""
+    fence: str | None = None
+    for raw in text.splitlines():
+        line = _QUOTE.sub("", raw, count=1)
+        found = _FENCE.match(line)
+        if fence is not None:
+            if (
+                found is not None
+                and found[1][0] == fence[0]
+                and len(found[1]) >= len(fence)
+                and not found[2].strip(" \t")
+            ):
+                fence = None
+        elif found is not None and not (found[1][0] == "`" and "`" in found[2]):
+            fence = found[1]
+        elif box := _TASK_BOX.match(line):
+            yield box.group(1) != " "
+
+
 def _all_green(runs: Iterable[CheckRunState]) -> bool:
     # Zero check runs is not green: `all()` over an empty sequence is true, which would let
     # `ci_green` pass vacuously on a branch whose CI never ran. Keep the emptiness check.
@@ -81,6 +116,29 @@ async def file_exists(ctx: EvalContext, *args: str) -> bool:
         if any(matches_path(path, candidate) for candidate in await ctx.source.files(branch.name)):
             return True
     return False  # a ref glob that matches nothing proves nothing
+
+
+async def checklist_done(ctx: EvalContext, *args: str) -> bool:
+    """`checklist_done(path, ref)`: every path matching `path` on every branch matching `ref`
+    has at least one task box and none still open. A box is `[ ]` or `[x]` after a `-`, `*` or
+    `+` bullet or a `1.` or `1)` number and one or more spaces or tabs, in a blockquote or not.
+    Boxes inside fenced code blocks, at any indentation, do not count.
+
+    Universal like `ci_green`, and false when nothing matches: a file with no box, or whose
+    text could not be read, proves no task was done. The file's text is only scanned.
+    """
+    path, ref = args
+    matched = False
+    for branch in resolve_refs(await ctx.source.branches(), ref):
+        for candidate in await ctx.source.files(branch.name):
+            if not matches_path(path, candidate):
+                continue
+            text = await ctx.source.file_text(branch.name, candidate)
+            boxes = () if text is None else tuple(_ticked_boxes(text))
+            if not boxes or not all(boxes):
+                return False
+            matched = True
+    return matched
 
 
 async def pr_open(ctx: EvalContext, *args: str) -> bool:
@@ -262,6 +320,22 @@ async def pr_comment_contains(ctx: EvalContext, *args: str) -> bool:
     return False
 
 
+async def request_approval(ctx: EvalContext, *args: str) -> bool:
+    """`request_approval()`: a person approved this step's current run in the dashboard, at the
+    commit its branch ends on now.
+
+    The approval is read by acceptance, not here (`ctx.review`), so it is false wherever else it
+    is evaluated. A branch glob matching two branches leaves the approved one unnamed, so it is
+    false too.
+    """
+    del args  # takes none; arity is validated when the config is parsed
+    review = ctx.review
+    if review is None or review.approved_sha is None:
+        return False
+    head = sole_ref(await ctx.source.branches(), review.branch)
+    return head is not None and head.sha == review.approved_sha
+
+
 #: name -> implementation. The evaluator resolves calls through this table and nothing else.
 PREDICATES: Final[Mapping[str, Predicate]] = MappingProxyType(
     {
@@ -276,6 +350,8 @@ PREDICATES: Final[Mapping[str, Predicate]] = MappingProxyType(
         "ticket_has_assignee": ticket_has_assignee,
         "issue_comment_contains": issue_comment_contains,
         "pr_comment_contains": pr_comment_contains,
+        "request_approval": request_approval,
+        "checklist_done": checklist_done,
     }
 )
 

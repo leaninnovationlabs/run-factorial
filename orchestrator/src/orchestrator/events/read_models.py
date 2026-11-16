@@ -14,7 +14,7 @@ tuple would leak column order into every caller.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -69,6 +69,7 @@ __all__ = [
     "EventRow",
     "InFlightRun",
     "LargestRun",
+    "LatestPark",
     "LongestGate",
     "MostAttempts",
     "OpenGate",
@@ -105,10 +106,13 @@ __all__ = [
     "first_admission",
     "in_flight_runs",
     "is_one_of",
+    "latest_park",
     "latest_run",
     "latest_run_event",
     "open_gates",
     "open_ticket_count",
+    "park_reason",
+    "parked_at_prompt",
     "period_figures",
     "pipeline_board",
     "project_spend",
@@ -362,6 +366,62 @@ def _latest_run_status() -> Any:
     `_resume_parked` reads to tell a resume from an unblock, published for the UI.
     """
     return latest_run(StepRun.status).label("latest_run_status")
+
+
+#: Loop parks that may catch a session mid-turn.
+_PROMPT_OR_TURN: Final = frozenset({ParkReason.CEILING, ParkReason.ROLLOVER})
+
+
+def park_reason(event_type: str, details: Mapping[str, Any]) -> str:
+    """Why a parking event parked its run: `user` for a person's `agent_interrupted`, else the
+    `agent_parked`'s reason, `idle` when it names none."""
+    if event_type == EventType.AGENT_INTERRUPTED:
+        return ParkReason.USER.value
+    return str(details.get("reason") or ParkReason.IDLE.value)
+
+
+def parked_at_prompt(reason: str, at_prompt: bool) -> bool:
+    """Did the loop park the session at its prompt? Idle, or a ceiling or rollover that found it
+    there. Never a person's stop, nor a park taken mid-turn, where a PR can be open with CI green
+    and half the turn undone. The parks a re-check may accept and an approval may land on."""
+    return reason == ParkReason.IDLE or (reason in _PROMPT_OR_TURN and at_prompt)
+
+
+@dataclass(frozen=True, slots=True)
+class LatestPark:
+    """A run's latest parking event: a person's `agent_interrupted` or the loop's `agent_parked`."""
+
+    id: int
+    #: `park_reason`.
+    reason: str
+    #: The session sat at its prompt, not mid-turn, when the loop parked it.
+    at_prompt: bool
+    created_at: datetime
+
+
+async def latest_park(session: AsyncSession, ticket_id: int, run_id: int) -> LatestPark | None:
+    """What parked the run last, or None when nothing has."""
+    row = (
+        await session.execute(
+            latest_run_event(
+                ticket_id,
+                run_id,
+                (EventType.AGENT_INTERRUPTED, EventType.AGENT_PARKED),
+                Event.id,
+                Event.type,
+                Event.details,
+                Event.created_at,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return LatestPark(
+        id=row.id,
+        reason=park_reason(row.type, row.details),
+        at_prompt=row.details.get("at_prompt") is True,
+        created_at=row.created_at,
+    )
 
 
 def _park_reason() -> Any:

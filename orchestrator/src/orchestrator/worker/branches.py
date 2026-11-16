@@ -114,8 +114,8 @@ async def branch_heads(tick: _Tick, step: AgentStep) -> list[dict[str, str]]:
 
 
 async def recorded(tick: _Tick, run: StepRun, kind: EventType) -> bool:
-    """Whether `run` already has an event of `kind`: the output record is written once per
-    run."""
+    """Whether `run` already has an event of `kind`: outside a step that awaits review, the
+    output record is written once per run."""
     found = await tick.session.scalar(
         select(Event.id)
         .where(

@@ -13,6 +13,7 @@ with nothing on screen to explain that they have not synced a version yet.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Final, Literal
@@ -108,8 +109,10 @@ async def config_inventory(
     root = await source.resolve_dir(repo, pinned_sha)
     pinned = {entry.path: entry.sha for entry in await source.list_files(repo, pinned_sha)}
 
-    head_sha, head = await _head(source, repo, pinned_sha=pinned_sha, pinned=pinned)
-    warnings = await _manifest_warnings(source, repo, sha=pinned_sha, config=config)
+    (head_sha, head), warnings = await asyncio.gather(
+        _head(source, repo, pinned_sha=pinned_sha, pinned=pinned),
+        _manifest_warnings(source, repo, sha=pinned_sha, config=config),
+    )
 
     files: list[ConfigFile] = []
     for path in sorted(set(pinned) | set(head or {})):

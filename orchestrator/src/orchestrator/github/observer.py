@@ -4,10 +4,10 @@ One instance is one reconciliation tick's snapshot: every fetch is memoized, so 
 that mentions the same PR five times still costs one `GET /pulls`. Construct a fresh instance per
 tick; holding one across ticks stops the loop observing.
 
-Trees, check runs and review verdicts stay lazy (`state.py`). GitHub offers no batch review read,
-so resolving verdicts alongside the PR listing cost one review GET per PR the repo had ever had,
-every tick; `pr_review_verdict(number)` is the seam a gate or predicate calls for the one PR it
-selected.
+Trees, file texts, check runs and review verdicts stay lazy (`state.py`). GitHub offers no
+batch review read, so resolving verdicts alongside the PR listing cost one review GET per PR the
+repo had ever had, every tick; `pr_review_verdict(number)` is the seam a gate or predicate calls
+for the one PR it selected.
 
 Parsing rule: LIST endpoints that return arbitrary historical payloads are read as raw
 JSON, mapping only the fields this module needs — strict whole-model validation there holds a
@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mappin
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, Protocol, cast
+from urllib.parse import quote
 
 from githubkit import GitHub, TokenAuthStrategy
 from githubkit.exception import RequestFailed
@@ -40,6 +41,8 @@ from orchestrator.adapters.state import (
     ReviewState,
     ReviewVerdict,
     StateSource,
+    capped_text,
+    walks_a_dot_segment,
 )
 from orchestrator.events.types import aware_time
 from orchestrator.github.client import GitHubClient, split_repo
@@ -59,6 +62,9 @@ __all__ = [
 ]
 
 PER_PAGE = 100
+
+#: The contents API answers with the file's bytes, not base64 in JSON, and up to 100 MB.
+_RAW: Final = {"Accept": "application/vnd.github.raw+json"}
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +466,7 @@ class GitHubStateSource(StateSource):
             self._branches = shared.once("branches", client, repo, self._fetch_branches)
             self._pulls = shared.once("pulls", client, repo, self._fetch_pull_requests)
         self._files = AsyncKeyedMemo(self._fetch_files)
+        self._file_texts = AsyncKeyedMemo(self._fetch_file_text)
         self._checks = AsyncKeyedMemo(self._fetch_check_runs)
         self._issue_comments = AsyncOnce(self._fetch_issue_comments)
         self._pr_comments = AsyncKeyedMemo(self._fetch_pr_comments)
@@ -489,6 +496,9 @@ class GitHubStateSource(StateSource):
 
     async def files(self, ref: str) -> Sequence[str]:
         return await self._files.get(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return await self._file_texts.get((ref, path))
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         return await self._checks.get(sha)
@@ -723,6 +733,39 @@ class GitHubStateSource(StateSource):
                 "%s@%s: tree truncated by GitHub; later files read as absent", self._repo, ref
             )
         return tuple(item.path for item in tree.tree if item.type == "blob" and item.path)
+
+    async def _fetch_file_text(self, key: tuple[str, str]) -> str | None:
+        """Streamed, so a file past the cap is never read whole. A 404 is an absent file;
+        every other failure propagates.
+
+        githubkit puts `path` into the URL as given, so a `?` or `#` in a file's name would end
+        the path and read another file: it is escaped here, once.
+
+        The body is read inside the client's own context: outside it githubkit has closed the
+        per-request client, and with a proxy configured that closes the connection the body
+        streams on."""
+        ref, path = key
+        if walks_a_dot_segment(path):
+            return None
+        api = await self._api()
+        async with api:
+            try:
+                response = await api.rest.repos.async_get_content(
+                    self._owner,
+                    self._name,
+                    quote(path, safe="/"),
+                    ref=ref,
+                    headers=_RAW,
+                    stream=True,
+                )
+            except RequestFailed as exc:
+                if exc.response.status_code == 404:
+                    return None
+                raise
+            try:
+                return await capped_text(response.raw_response.aiter_bytes())
+            finally:
+                await response.raw_response.aclose()
 
     async def _fetch_check_runs(self, sha: str) -> tuple[CheckRunState, ...]:
         # Raw JSON, not `.parsed_data` (module docstring): the pinned CheckRun model's

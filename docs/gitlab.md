@@ -95,13 +95,12 @@ delivery wakes only the projects whose secret it matches. If no secret matches, 
 
 ## Agent prompts
 
-The sample at `docs/samples/factorial-simple/` talks to GitHub (`gh pr create`). For a
-GitLab project, the editor's **Simple template (GitLab)** is the process files of
-`docs/samples/factorial-gitlab/`: `primary` (no test step) and `simple`. Importing it
-writes those lanes, and the agents of `docs/samples/factorial-gitlab/` with them. The
-project's issue source selects the agents: a commit into a GitLab project writes GitLab
-agents from either template. These agents open merge requests with `glab` and never call
-`gh`.
+The editor's templates serve GitHub and GitLab from the same files. A process file names no
+forge. The agents' prompts give the `gh` command and the `glab` command for each step that
+calls the forge, and tell the agent to use `glab` on a GitLab run, which has `GITLAB_HOST` in
+its environment. The samples at `docs/samples/factorial-simple/` and
+`docs/samples/factorial-superpowers/` are those files. The stacked variants of the plan and
+build agents call `gh` only, so a stacked lane on a GitLab project gets a stub for each.
 
 An E2B Runtime needs a template that has `glab`. If yours has none, build a new template with
 `make e2b-template`, and set the Runtime to the newest build of that name. On E2B, `glab` sends

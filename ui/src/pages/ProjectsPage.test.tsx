@@ -109,8 +109,14 @@ describe("the list", () => {
 describe("the admission filter", () => {
   const MIXED = [project(1, null, true), project(2, null, false)];
 
-  it("hides paused projects by default", () => {
+  it("shows every project by default, paused ones too", () => {
     const html = render(MIXED);
+    expect(html).toContain("project 1");
+    expect(html).toContain("project 2");
+  });
+
+  it("shows only active projects under ?show=active", () => {
+    const html = render(MIXED, "/projects?show=active");
     expect(html).toContain("project 1");
     expect(html).not.toContain("project 2");
   });

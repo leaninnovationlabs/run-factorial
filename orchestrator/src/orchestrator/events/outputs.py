@@ -10,6 +10,10 @@ A pattern gives one entry per matching file still on the branch, sorted by path 
 `PATTERN_MAX_MATCHES`, each named by its path below the pattern's fixed folder. A file shows
 under one entry only: files named exactly claim theirs first, whatever the order, then each
 pattern in turn. A pattern whose every file another entry shows adds nothing.
+
+Where a run's branches stood at its spawn (`agent_spawned`'s `branch_heads`) is read here too:
+the worker starts a run's footprint there, and whether a run has pushed (`pushed`) is judged
+against it for the dashboard's review and the park comment.
 """
 
 from __future__ import annotations
@@ -24,11 +28,21 @@ from orchestrator.config import PreviewFile, expand
 from orchestrator.db.models import Event, StepRun
 from orchestrator.events.read_models import latest_run_event
 from orchestrator.events.types import EventType
+from orchestrator.github.state import BranchState
 from orchestrator.predicates.globs import fixed_folder, matches_file_pattern, matches_path
 from orchestrator.predicates.words import branch_phrase
 from runtime.contract import PATTERN_MAX_MATCHES
 
-__all__ = ["FileStatus", "SelectedFile", "files_on_branch", "outputs_observation", "select_files"]
+__all__ = [
+    "FileStatus",
+    "SelectedFile",
+    "files_on_branch",
+    "heads_by_name",
+    "outputs_observation",
+    "pushed",
+    "select_files",
+    "spawn_heads",
+]
 
 FileStatus = Literal["pending", "published", "missing", "ambiguous", "lookup_failed"]
 
@@ -62,6 +76,37 @@ async def outputs_observation(session: AsyncSession, run: StepRun) -> dict[str, 
             latest_run_event(run.ticket_id, run.id, [EventType.RUN_OUTPUTS_OBSERVED], Event.details)
         )
     ).scalar_one_or_none()
+
+
+async def spawn_heads(session: AsyncSession, run: StepRun) -> dict[str, str]:
+    """The `branch_heads` this run's spawn recorded, by name; empty for a spawn that recorded
+    none, as a step that declares no `preview.files` does."""
+    spawned = (
+        await session.execute(
+            latest_run_event(run.ticket_id, run.id, [EventType.AGENT_SPAWNED], Event.details)
+        )
+    ).scalar_one_or_none()
+    return heads_by_name((spawned or {}).get("branch_heads"))
+
+
+def heads_by_name(value: object) -> dict[str, str]:
+    """`branch_heads` as name -> sha: a list of `{name, sha}`, or the map events before it wrote."""
+    if isinstance(value, dict):
+        return {str(name): str(sha) for name, sha in value.items()}
+    if isinstance(value, list):
+        return {
+            str(item["name"]): str(item["sha"])
+            for item in value
+            if isinstance(item, dict) and "name" in item and "sha" in item
+        }
+    return {}
+
+
+def pushed(head: BranchState | None, heads: Mapping[str, str]) -> bool:
+    """Has the run moved `head`, its step's one branch, from where `heads` (`spawn_heads`) says
+    it stood at spawn? A branch with no head recorded counts once it exists. On a lane whose
+    steps share a branch, the earlier step's head is not this run's work."""
+    return head is not None and heads.get(head.name) != head.sha
 
 
 def files_on_branch(observed: Mapping[str, Any] | None) -> list[str]:

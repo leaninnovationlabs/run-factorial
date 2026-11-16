@@ -1,5 +1,5 @@
 # ADLC process: the factorial-simple sample. This file is the reference for the format.
-# Plan, spec review, build, test, code review, done. GitHub only (issues, pull requests and Actions).
+# Plan, spec review, build, test, code review, done. GitHub or GitLab: read a pull request below as a merge request on GitLab.
 #
 # One process per file, at `.factorial/processes/process-<name>.yaml` on the repo's `factorial`
 # branch, which sync reads by default. The stem minus its `process-` prefix IS the process name
@@ -48,7 +48,7 @@
 # never an agent or a container) rather than a substrate. A fourth, `kind: check`, completes
 # when its `conditions` hold on observed state (no agent, no action and no person;
 # it is built for waiting on CI). See docs/process-yaml.md. This sample uses neither: its
-# `test` step couples the CI wait with real test-running work, so the agent spans the wait.
+# `test` step runs the suite itself, and its optional CI check waits inside the same step.
 #
 # Runtime: `runtime: <slug>` selects the Runtime (a row on the Runtimes page) the agents run on.
 # Sync refuses a slug the page lacks. The agents declare no `runtime.kind`: the Runtime's type
@@ -68,7 +68,7 @@ name: simple
 policy:
   branchProtection: advisory
 runtime: claude-api
-description: Plan, spec review, build, test, code review, done (GitHub only)
+description: Plan, spec review, build, test, code review, done
 
 roles:
   spec_reviewers: ["{ticket_owner}"]
@@ -119,6 +119,9 @@ steps:
         - branch_exists("spec/{ticket}-*")
         - file_exists("specs/{ticket}-*/spec.md", "spec/{ticket}-*")
         - pr_open("spec/{ticket}-*", "main")
+        # Optional, and off here. Uncomment to make the run also wait for a person to press
+        # Approve in the dashboard, at the commit the spec ends on, before the gate below opens.
+        # - request_approval()
     onSuccess:
       ticketLabel: "factorial:spec-review"
       assign: ["{roles.spec_reviewers}"]
@@ -224,9 +227,10 @@ steps:
       comment: "Test agent starting (attempt {attempt}). It runs the suite against the implementation."
     postconditions:
       all:
-        # ci_green is the acceptance gate. The verdict comment proves the step ran; its PASS or
-        # FAIL text is not checked.
-        - ci_green("impl/{ticket}-*")
+        # The verdict comment is the acceptance gate: proof the test agent ran. Its PASS or FAIL
+        # text is not checked. Optional, and off here: uncomment the next line to require the
+        # repository's own CI too, for a repository that runs CI on pull requests.
+        # - ci_green("impl/{ticket}-*")
         - pr_comment_contains("impl/{ticket}-*", "## Test Verdict")
     onSuccess:
       ticketLabel: "factorial:code-review"

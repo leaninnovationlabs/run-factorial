@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config import ProcessConfig
 from orchestrator.db.models import StepRunStatus
 from orchestrator.events import EventType, append
+from orchestrator.events.outputs import heads_by_name
 from orchestrator.github import BranchState, TreeEntry
 from orchestrator.github.contents import COMPARE_FILES_MAX, ContentsNotFound
-from orchestrator.worker.outputs import FOOTPRINT_MAX, _capped, heads_by_name
+from orchestrator.worker.outputs import FOOTPRINT_MAX, _capped
 from runtime.contract import Artifact, ArtifactKind, RunStatus, ShownFile
 from tests.reconcile_world import _build_world, _process, event_rows, run_tick, step_runs
 
@@ -455,6 +456,7 @@ async def test_a_comparison_github_refuses_is_recorded_not_asked_again(
         "step": "plan",
         "attempt": 1,
         "status": "lookup_failed",
+        "commit": "s1",
         "reason": "acme cannot compare m0...s1",
     }
     assert len(world.github.compare_calls) == 1
@@ -476,6 +478,46 @@ async def test_a_rework_on_a_new_branch_carries_nothing_from_the_old_one(
     details = dict(await _outputs(world))[second.id]
     assert details["branch"] == "spec/12-gadget"
     assert details["files"] == [_file("specs/12-gadget/spec.md", "b7", True)]
+
+
+async def test_an_earlier_attempt_with_two_records_carries_only_its_latest(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A step that awaits review records a run at each idle spell and at its end. Read from every
+    record, a file the attempt wrote and then deleted stays in the next attempt's footprint."""
+    world = await _filed_world(maker)
+    await run_tick(world)
+    world.github.push_commit("spec/12-widget", "s1", {SPEC: "b1", NOTES: "b4"}, parent="m0")
+    await _end(world)
+    world.github.push_commit("spec/12-widget", "s2", {NOTES: None}, parent="s1")
+    first = (await step_runs(world))[0]
+    async with world.sessions() as session:
+        await append(
+            session,
+            type=EventType.RUN_OUTPUTS_OBSERVED,
+            project_id=world.project_id,
+            ticket_id=world.ticket_id,
+            step_run_id=first.id,
+            step="plan",
+            attempt=1,
+            status="observed",
+            branch="spec/12-widget",
+            commit="s2",
+            start="m0",
+            start_at_spawn=False,
+            slug="widget",
+            cut_off=False,
+            files=[_file(SPEC, "b1", True)],
+        )
+        await session.commit()
+    await _next_attempt(world)
+    world.github.push_commit("spec/12-widget", "s3", {TASKS: "b5"}, parent="s2")
+
+    await _end(world)
+
+    second = (await step_runs(world))[1]
+    details = dict(await _outputs(world))[second.id]
+    assert details["files"] == [_file(SPEC, "b1", False), _file(TASKS, "b5", True)]
 
 
 def test_a_full_record_keeps_a_patterns_matches_before_undeclared_files() -> None:

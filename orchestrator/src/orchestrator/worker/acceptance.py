@@ -1,11 +1,10 @@
 """Acceptance of an agent run's output: the postconditions decide, never the agent's
 report (design.md §2.4), and delivered artifacts are persisted verbatim as observed."""
 
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Final
 
@@ -13,7 +12,7 @@ from orchestrator.config import (
     AgentStep,
     expand,
 )
-from orchestrator.config.conditions import iter_calls
+from orchestrator.config.conditions import awaits_review, iter_calls
 from orchestrator.db.models import (
     Artifact,
     ArtifactDirection,
@@ -21,8 +20,9 @@ from orchestrator.db.models import (
     StepRunStatus,
 )
 from orchestrator.events import EventType
+from orchestrator.events.approvals import latest_approval
 from orchestrator.github.state import CheckRunState
-from orchestrator.predicates import Unmet, evaluate, failures, needs
+from orchestrator.predicates import EvalContext, ReviewFacts, Unmet, evaluate, failures, needs
 from orchestrator.predicates.globs import matches_ref
 from orchestrator.predicates.library import ci_check_runs
 from orchestrator.worker.failures import _fail_run
@@ -87,26 +87,40 @@ MISSING: Final = "Expected results missing: "
 
 
 async def acceptance_verdict(
-    tick: _Tick, step: AgentStep, attempt: int, *, every_leaf: bool = False
+    tick: _Tick, step: AgentStep, run: StepRun, *, every_leaf: bool = False
 ) -> Verdict:
-    """The step's postconditions now (`evaluate`'s `every_leaf`), and its rework's unmoved
+    """`run`'s step's postconditions now (`evaluate`'s `every_leaf`), and its rework's unmoved
     rejections. A step with none is met. An unreadable verdict raises `_EvaluationUnavailable`."""
     met, reasons, words = True, (), ()
     if step.postconditions is not None:
+        ctx = await _review_context(tick, step, run)
         result = await _observed(
-            evaluate(step.postconditions, tick.ctx, every_leaf=every_leaf),
-            what=f"step {step.name} attempt {attempt}: postconditions",
+            evaluate(step.postconditions, ctx, every_leaf=every_leaf),
+            what=f"step {step.name} attempt {run.attempt}: postconditions",
         )
         met, reasons, words = result.value, failures(result), needs(result)
-    return Verdict(met, reasons, await _unmoved_rejections(tick, step, attempt), needs=words)
+    return Verdict(met, reasons, await _unmoved_rejections(tick, step, run.attempt), needs=words)
 
 
-async def postconditions_met(tick: _Tick, step: AgentStep, attempt: int) -> tuple[bool, Unmet]:
-    """Whether the step's postconditions hold now, and what is unmet when they do not. A step
+async def _review_context(tick: _Tick, step: AgentStep, run: StepRun) -> EvalContext:
+    """The tick's context, plus `run`'s approval when the step awaits one. Keyed on the run, so a
+    retry, a redo or a restart never inherits an earlier run's."""
+    if not awaits_review(step.postconditions):
+        return tick.ctx
+    approval = await latest_approval(tick.session, tick.ticket.id, run.id)
+    review = ReviewFacts(
+        branch=_glob(step.workspace.branch, tick.values),
+        approved_sha=None if approval is None else approval.head_sha,
+    )
+    return replace(tick.ctx, review=review)
+
+
+async def postconditions_met(tick: _Tick, step: AgentStep, run: StepRun) -> tuple[bool, Unmet]:
+    """Whether `run`'s step's postconditions hold now, and what is unmet when they do not. A step
     with none is met, unless it is a rework that has not moved the pull request its gate rejected
     (`_unmoved_rejections`). An unreadable verdict raises `_EvaluationUnavailable`: neither
     answer."""
-    verdict = await acceptance_verdict(tick, step, attempt)
+    verdict = await acceptance_verdict(tick, step, run)
     # An unmoved rejection is already words, so it is in both.
     unmet = Unmet((*verdict.failures, *verdict.unmoved), (*verdict.needs, *verdict.unmoved))
     return verdict.met and not verdict.unmoved, unmet
@@ -181,7 +195,7 @@ async def _accept(tick: _Tick, step: AgentStep, run: StepRun) -> None:
     # AGENT_COMPLETED — exactly the writes the act-phase SAVEPOINT takes back. An unreadable
     # verdict is neither acceptance nor failure: the run keeps its status and the next tick
     # re-polls and asks again.
-    met, unmet = await postconditions_met(tick, step, run.attempt)
+    met, unmet = await postconditions_met(tick, step, run)
     if not met:
         await tick.emit(
             EventType.POSTCONDITION_FAILED,

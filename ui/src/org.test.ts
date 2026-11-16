@@ -61,10 +61,11 @@ describe("a router path outside the router", () => {
 });
 
 describe("the pages in no organization", () => {
-  it("leaves signup, onboarding and an invite's link where they are", () => {
+  it("leaves signup, onboarding, joining and an invite's link where they are", () => {
     for (const path of [
       "/factorial/signup",
       "/factorial/onboarding",
+      "/factorial/join",
       "/factorial/invite/abc_DEF-1",
     ]) {
       expect(enter(at(path), "acme")).toEqual({ org: null, redirect: null });

@@ -89,6 +89,18 @@ describe("AppShell", () => {
     expect(root.querySelector("main#main")).not.toBeNull();
   });
 
+  it("draws Create organization without the side navigation, which returns on the next page", async () => {
+    // Creating an organization is about none of the current one's places.
+    const root = await shell("/organizations/new");
+    expect(root.querySelector('nav[aria-label="Primary"]')).toBeNull();
+    expect(root.querySelector('header button[aria-controls="side-nav"]')).toBeNull();
+    await click(byText(root, "header a", "Factorial"));
+    await settle(400);
+    expect(where(root)).toBe("/overview");
+    expect(root.querySelector('nav[aria-label="Primary"]')).not.toBeNull();
+    expect(root.querySelector('header button[aria-controls="side-nav"]')).not.toBeNull();
+  });
+
   it("says so for an address the app does not have, instead of redirecting in silence", async () => {
     const root = await shell("/somewhere-else");
     expect(root.querySelector("h1")?.textContent).toBe("Page not found");

@@ -16,6 +16,7 @@ from orchestrator.factorial.bedrock_token import DEFAULT_MODEL as BEDROCK_DEFAUL
 __all__ = [
     "ALL_ASSISTANT_OFFERS",
     "BACKENDS",
+    "HOST_ROLE_MODE",
     "SLOT_PREFIX",
     "BackendVocab",
     "assistant_offer",
@@ -27,6 +28,8 @@ __all__ = [
 
 
 SLOT_PREFIX: Final = "assistant:"
+#: The auth mode with nothing stored: each turn's bearer is minted from the host's AWS role.
+HOST_ROLE_MODE: Final = "bedrock"
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,15 @@ BACKENDS: Final[Mapping[str, BackendVocab]] = {
             "subscription": "gpt-5.6-terra",
             "bedrock": BEDROCK_DEFAULT_MODEL,
         },
+    ),
+    # Bedrock Runtime's Responses API, called with no CLI between. A model Codex was not built
+    # for cannot call a tool through `codex_cli` on Bedrock (tech-stack decision 63).
+    "bedrock_responses": BackendVocab(
+        kind="bedrock_responses",
+        label="Bedrock",
+        family="bedrock",
+        credentials={HOST_ROLE_MODE: "AWS_BEARER_TOKEN_BEDROCK"},
+        default_models={HOST_ROLE_MODE: BEDROCK_DEFAULT_MODEL},
     ),
 }
 
@@ -113,4 +125,4 @@ def parse_credential_slot(name: str) -> tuple[str, str] | None:
 def stores_credential(kind: str, auth_mode: str) -> bool:
     """Bedrock's bearer is minted from the host's role for each turn, so nothing is stored."""
     vocab = BACKENDS.get(kind)
-    return vocab is not None and auth_mode in vocab.credentials and auth_mode != "bedrock"
+    return vocab is not None and auth_mode in vocab.credentials and auth_mode != HOST_ROLE_MODE

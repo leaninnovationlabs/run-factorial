@@ -26,6 +26,7 @@ describe("routeFor", () => {
 
   it("keeps a form narrow, and is not fooled by the entity page sharing its prefix", () => {
     expect(width("/projects/new")).toBe("narrow");
+    expect(width("/organizations/new")).toBe("narrow");
     // Wider: its cards sit beside a summary.
     expect(width("/runtimes/new")).toBe("default");
     expect(width("/runtimes/codex-team")).toBe("default");

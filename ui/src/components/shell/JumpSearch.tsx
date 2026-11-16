@@ -5,11 +5,11 @@
  * anywhere puts the focus here. A chord, not a single key like `/`: a one-character shortcut
  * fires on a speech user's dictated words and needs an off switch (WCAG 2.1.4).
  *
- * `collapsible` (a phone) draws it as an icon until it is wanted: pressing the icon or the chord
- * opens the field with the focus in it, and it folds back when the focus leaves an empty field,
- * when it goes somewhere, or on its own Close. A query typed and left stays open, so a reader who
- * taps away to look at the page does not lose it. Whether it is open is the top bar's
- * (`unfolded`), which gives the open field the room its title held.
+ * `collapsible` (below 1024px) draws it as an icon until it is wanted: pressing the icon or the
+ * chord opens the field with the focus in it, and it folds back when the focus leaves an empty
+ * field, when it goes somewhere, or on its own Close. A query typed and left stays open, so a
+ * reader who taps away to look at the page does not lose it. Whether it is open is the top bar's
+ * (`unfolded`), which gives the open field the room the names held.
  */
 
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";

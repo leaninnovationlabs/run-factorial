@@ -1,0 +1,207 @@
+# The Superpowers lane: brainstorm, plan, build, review, code review, done.
+# The method is the one the superpowers project teaches (github.com/obra/superpowers): agree a
+# design with a person, write a plan of small test-first tasks, build it task by task, then
+# review the whole branch with fresh eyes.
+#
+# Started from the factorial editor's Superpowers template.
+# https://www.runfactorial.com/docs/processes/ describes every field.
+#
+# `name:` names the lane, and must match the file: `processes/process-<name>.yaml`. An issue
+# enters the lane by carrying `factorial:process:<name>`, or no process label at all while the
+# project's default process is this lane. `entry.when` decides readiness only, never the lane.
+#
+# A person approves the design and the plan in the dashboard, with no pull request: open the
+# step's run on the ticket page, read the file beside it, and press Approve. `request_approval()`
+# holds once a person pressed Approve for the step's current run, at the commit the step's branch
+# ends on now. A push after the press makes it false again. A step that carries it always stops
+# at its prompt and waits for a person, and that wait does not count toward the step's `timeout`.
+#
+# `checklist_done(path, ref)` holds when every matching file has at least one task box and none
+# still open, so the build cannot pass with a task of the plan left unticked.
+#
+# One branch, `sp/{ticket}-{slug}`, carries the whole ticket. The brainstorm step creates it and
+# each later step continues it, so the design, the plan and the code merge together in the one
+# pull request the build step opens against `main` (on GitLab, a merge request). The build and
+# review steps need this repository's own CI on pull requests.
+
+specVersion: factorial/v1
+kind: Process
+name: superpowers
+
+policy:
+  branchProtection: advisory
+# Name the Runtime the agents run on: its type says which CLI runs them, and it supplies the
+# vendor key. A slug names a Runtime from the dashboard's Runtimes page, which sync requires to
+# exist. The editor's Runtime select writes the line under this example.
+# runtime: claude-api
+description: Brainstorm, plan, build, review, code review, done
+
+roles:
+  # Who answers the brainstorm's questions and reviews the design and the plan. A role decides
+  # whom the ticket is assigned to; it does not decide who may press Approve.
+  spec_reviewers: ["{ticket_owner}"]
+  code_reviewers: ["{ticket_owner}"] # one reviewer to start; point at a real team later
+
+defaults:
+  timeout: 1h # counts the time the session works, not the time it waits at its prompt
+  retry:
+    maxAttempts: 2
+    backoff: 10m
+  onFailure:
+    escalate:
+      ticketLabel: "factorial:blocked"
+      assign: ["{ticket_owner}"]
+      comment: |
+        Factorial stopped at {step} after {attempt} attempt(s): {failure_summary}.
+        Fix the cause, then remove `factorial:blocked` to retry.
+
+entry:
+  when:
+    all:
+      - ticket_label("factorial:new")
+      - ticket_has_assignee()
+  step: brainstorm
+
+steps:
+  # -------------------------------------------------------------- 1. brainstorm (agent)
+  - name: brainstorm
+    kind: agent
+    description: Agree a design with the ticket's owner, then wait for their approval
+    agent: sp-brainstorm-agent
+    next: plan
+    workspace:
+      repo: "{repo}"
+      base: main
+      branch: "sp/{ticket}-{slug}" # {slug} is chosen here and kept by every later step
+    preconditions:
+      all:
+        - ticket_has_assignee()
+    inputs:
+      - ticket_body
+      - ticket_comments
+    onStart:
+      assign: ["{roles.spec_reviewers}"]
+      comment: "Brainstorm agent starting (attempt {attempt}). It may ask questions in the run's terminal before it writes the design."
+    postconditions:
+      all:
+        - branch_exists("sp/{ticket}-*")
+        - file_exists("docs/superpowers/specs/{ticket}-*-design.md", "sp/{ticket}-*")
+        # The person's approval, at the commit the design ends on. Until then the run waits.
+        - request_approval()
+    # Shown beside each run, read from this step's branch: where the person reads the design
+    # before pressing Approve. Display only; `file_exists` above is what requires the file.
+    preview:
+      files:
+        - { path: "docs/superpowers/specs/{ticket}-{slug}-design.md", label: "Design" }
+
+  # -------------------------------------------------------------------- 2. plan (agent)
+  - name: plan
+    kind: agent
+    description: Write the plan as small test-first tasks, then wait for approval
+    agent: sp-planning-agent
+    next: build
+    workspace:
+      repo: "{repo}"
+      base: main
+      branch: "sp/{ticket}-{slug}"
+    inputs:
+      - ticket_body
+      - file: "docs/superpowers/specs/{ticket}-*-design.md"
+    onStart:
+      comment: "Planning agent starting (attempt {attempt}). It turns the approved design into a plan of tasks."
+    postconditions:
+      all:
+        - branch_exists("sp/{ticket}-*")
+        - file_exists("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
+        # A fresh approval for this run: the design's approval does not carry over.
+        - request_approval()
+    # A tab shows a file only if this step's own attempts changed it, so the design, which the
+    # brainstorm step wrote, would show here as missing. It stays on the brainstorm step's run.
+    preview:
+      files:
+        - { path: "docs/superpowers/plans/{ticket}-{slug}-plan.md", label: "Plan" }
+
+  # ------------------------------------------------------------------- 3. build (agent)
+  - name: build
+    kind: agent
+    description: Build the plan task by task, test first, and open the pull request
+    agent: sp-implement-agent
+    next: review
+    timeout: 2h # a whole plan of tasks; working time only, as the default
+    workspace:
+      repo: "{repo}"
+      base: main
+      branch: "sp/{ticket}-{slug}"
+    inputs:
+      - ticket_body
+      - file: "docs/superpowers/specs/{ticket}-*-design.md"
+      - file: "docs/superpowers/plans/{ticket}-*-plan.md"
+    onStart:
+      comment: "Implement agent starting (attempt {attempt}). It builds the approved plan one task at a time."
+    postconditions:
+      all:
+        - pr_open("sp/{ticket}-*", "main")
+        # Every task box in the plan ticked. The agent ticks a task's boxes in the commit that
+        # completes it, so the plan merged with the code says what was done.
+        - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
+        - ci_green("sp/{ticket}-*")
+
+  # ------------------------------------------------------------------ 4. review (agent)
+  - name: review
+    kind: agent
+    description: Review the whole pull request against the design and the plan, fix, post a verdict
+    agent: sp-review-agent
+    next: code_review_gate
+    workspace:
+      repo: "{repo}"
+      base: main
+      branch: "sp/{ticket}-{slug}"
+    preconditions:
+      all:
+        - pr_open("sp/{ticket}-*", "main")
+    inputs:
+      - file: "docs/superpowers/specs/{ticket}-*-design.md"
+      - file: "docs/superpowers/plans/{ticket}-*-plan.md"
+    onStart:
+      comment: "Review agent starting (attempt {attempt}). It reads the whole pull request with fresh eyes."
+    postconditions:
+      all:
+        # The verdict comment proves the review ran; its text is not checked. Its fixes must
+        # leave the plan done and CI green.
+        - pr_comment_contains("sp/{ticket}-*", "## Review Verdict")
+        - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
+        - ci_green("sp/{ticket}-*")
+    onSuccess:
+      ticketLabel: "factorial:code-review"
+      assign: ["{roles.code_reviewers}"]
+      comment: "Ready for review: {pr_url}"
+
+  # ------------------------------------------------------------- 5. code review (human)
+  - name: code_review_gate
+    kind: human_gate
+    description: Reviewer approves the pull request, which carries the design, the plan and the code
+    next: done
+    gate:
+      type: pr_approval
+      pr: { head: "sp/{ticket}-*", base: "main" }
+      approvers: ["{roles.code_reviewers}"]
+      approverPermission: write
+      waiting:
+        ticketLabel: "factorial:code-review"
+        assign: ["{roles.code_reviewers}"]
+      onApprove:
+        merge: true
+        ticketLabel: "factorial:done"
+        assign: ["{ticket_owner}"]
+      onReject:
+        rerunStep: build
+        inputs:
+          - pr_review_comments
+        ticketLabel: "factorial:build-rework"
+        assign: ["{ticket_owner}"]
+
+terminal:
+  step: done
+  actions:
+    closeTicket: true
+    comment: "Factorial finished. Merged to main."

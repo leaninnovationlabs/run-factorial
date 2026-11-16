@@ -37,7 +37,7 @@ from orchestrator.settings import ENV_PREFIX, Settings, get_settings
 from runtime.assistant.adapters import create_backend
 from runtime.assistant.contract import ChatBackend
 
-__all__ = ["drop_master_key", "main"]
+__all__ = ["backend_options", "drop_master_key", "main"]
 
 _MASTER_KEY = f"{ENV_PREFIX}MASTER_KEY"
 
@@ -59,14 +59,22 @@ def drop_master_key() -> None:
     load_keyring.cache_clear()
 
 
+def backend_options(kind: str, settings: Settings) -> dict[str, object]:
+    """What a backend is built with. The two that start a CLI get a working directory, and
+    Codex the bridge to this process's tools. `bedrock_responses` starts nothing."""
+    if kind == "bedrock_responses":
+        return {}
+    options: dict[str, object] = {"work_root": settings.assistant.work_root}
+    if kind == "codex_cli":
+        options["mcp_command"] = (sys.executable, "-m", "orchestrator.assistant.mcp_bridge")
+    return options
+
+
 async def _run(settings: Settings) -> None:
     @cache
     def backend_for(kind: str) -> ChatBackend:
         # One per kind: a backend keeps each live turn, which its `cancel` looks up.
-        options: dict[str, object] = {"work_root": settings.assistant.work_root}
-        if kind == "codex_cli":
-            options["mcp_command"] = (sys.executable, "-m", "orchestrator.assistant.mcp_bridge")
-        return create_backend(kind, **options)
+        return create_backend(kind, **backend_options(kind, settings))
 
     @cache
     def tools_for(token: ReadTokenCache) -> McpDeps:

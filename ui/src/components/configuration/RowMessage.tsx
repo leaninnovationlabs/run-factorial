@@ -17,6 +17,7 @@ import {
   SectionMessage,
   ServerText,
   showFlag,
+  useDismissible,
 } from "../ui";
 import { ROW_TITLES } from "./readiness";
 
@@ -98,6 +99,7 @@ export function RowMessage({
 export function PageMessages({ project, rows }: { project: ProjectDetail; rows: ReadinessItem[] }) {
   const create = useCreateLabels(project.id);
   const canManage = useCan("projects:manage");
+  const [created, dismissCreated] = useDismissible(create.data);
   const actionsFor = (row: ReadinessItem): MessageAction[] | undefined => {
     if (row.key === "app_access" && row.link) {
       return [{ text: "Open installation settings", href: row.link }];
@@ -123,11 +125,11 @@ export function PageMessages({ project, rows }: { project: ProjectDetail; rows: 
   return (
     <>
       <IssueBox issues={issues} />
-      {create.data && (
-        <SectionMessage appearance="success">
-          {create.data.created.length === 0
+      {created && (
+        <SectionMessage appearance="success" onDismiss={dismissCreated}>
+          {created.created.length === 0
             ? "The repository already defines every label."
-            : `Created ${create.data.created.length}: ${create.data.created.join(", ")}.`}
+            : `Created ${created.created.length}: ${created.created.join(", ")}.`}
         </SectionMessage>
       )}
       <ErrorMessage error={create.error} title="Couldn't create the labels" />

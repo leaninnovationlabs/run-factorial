@@ -2,14 +2,17 @@ import { useTicketIssue } from "../../api/queries";
 import type { TicketDetail } from "../../api/types";
 import { type ForgeHost, forgeName, issueHref, pullHref, pullNoun } from "../../forge";
 import type { TicketCondition } from "../../status";
-import { Code, SectionMessage } from "../ui";
+import { Code, cx, SectionMessage } from "../ui";
 
 /**
  * What the ticket's state asks of the reader, each as one message with its way forward: a
  * quarantined ticket and how to requeue it, a ticket whose passes are failing, an exited ticket
  * whose issue is closed, a gate waiting on a pull request, with its step's preview and Request
- * changes, a gate held because its pull request closed, with Close and exit, and a session
- * waiting on an answer.
+ * changes, a gate held because its pull request closed, with Close and exit, a session
+ * waiting on an answer, and a step waiting for a person's Approve, with the ways to its work.
+ *
+ * The first three are about the ticket; the rest are about the step it waits at, which the page
+ * draws in that step's block (`scope`).
  */
 export function TicketMessages({
   ticket,
@@ -24,6 +27,9 @@ export function TicketMessages({
   review,
   gateClosed = false,
   onCloseAndExit,
+  awaitingReview = null,
+  scope,
+  className,
 }: {
   ticket: TicketDetail;
   condition: TicketCondition | null;
@@ -48,12 +54,26 @@ export function TicketMessages({
   gateClosed?: boolean;
   /** Arms the header's Close and exit, so there is one confirmation. */
   onCloseAndExit?: () => void;
+  /** The current run waits at its prompt for a person's Approve, which its drawer holds, with a
+   *  commit this run pushed and a press that would be accepted. Without one, a parked run gets the Waiting for you message. */
+  awaitingReview?: {
+    step: string;
+    /** Opens the step's Files or Preview, when it has one. */
+    openWork?: { text: "Open files" | "Open preview"; onClick: () => void };
+    onOpenTerminal: () => void;
+  } | null;
+  /** Only the messages about the ticket, or only those about the step it waits at; absent, both. */
+  scope?: "ticket" | "step";
+  /** Layout only. */
+  className?: string;
 }) {
   const exited = condition === "exited";
   const host = forgeName(forge);
-  const issue = useTicketIssue(ticket.id, exited);
+  const ticketWide = scope !== "step";
+  const stepWide = scope !== "ticket";
+  const issue = useTicketIssue(ticket.id, exited && ticketWide);
   const messages = [];
-  if (condition === "quarantined") {
+  if (ticketWide && condition === "quarantined") {
     messages.push(
       <SectionMessage
         key="quarantined"
@@ -65,7 +85,7 @@ export function TicketMessages({
         Activity, fix it, then press Requeue ticket.
       </SectionMessage>,
     );
-  } else if (failing && condition !== "done") {
+  } else if (ticketWide && failing && condition !== "done") {
     messages.push(
       <SectionMessage key="failing" appearance="warning" title="Couldn't check the ticket">
         Factorial couldn't read this ticket's latest state. It keeps trying, and you don't need to
@@ -73,7 +93,7 @@ export function TicketMessages({
       </SectionMessage>,
     );
   }
-  if (exited && issue.data?.state === "closed") {
+  if (ticketWide && exited && issue.data?.state === "closed") {
     const { repo: issueRepo, number } = issue.data;
     messages.push(
       <SectionMessage
@@ -86,7 +106,7 @@ export function TicketMessages({
       </SectionMessage>,
     );
   }
-  if (condition === "waiting_gate") {
+  if (stepWide && condition === "waiting_gate") {
     const gateHref = gatePr ? gatePrHref || (repo ? pullHref(repo, gatePr, forge) : null) : null;
     const noun = pullNoun(forge) === "MR" ? "Merge request" : "Pull request";
     const view = gateHref
@@ -139,7 +159,23 @@ export function TicketMessages({
       );
     }
   }
-  if (condition === "waiting_human") {
+  if (stepWide && awaitingReview) {
+    const actions = [
+      ...(awaitingReview.openWork ? [awaitingReview.openWork] : []),
+      { text: "Open terminal", onClick: awaitingReview.onOpenTerminal },
+    ];
+    messages.push(
+      <SectionMessage
+        key="review"
+        appearance="warning"
+        title="Waiting for your review"
+        actions={actions}
+      >
+        The agent says the work of <Code>{awaitingReview.step}</Code> is ready. Read it, then press
+        Approve to move the ticket on, or answer the agent to ask for changes.
+      </SectionMessage>,
+    );
+  } else if (stepWide && condition === "waiting_human") {
     messages.push(
       <SectionMessage
         key="waiting"
@@ -154,5 +190,5 @@ export function TicketMessages({
     );
   }
   if (messages.length === 0) return null;
-  return <div className="space-y-2">{messages}</div>;
+  return <div className={cx("space-y-2", className)}>{messages}</div>;
 }

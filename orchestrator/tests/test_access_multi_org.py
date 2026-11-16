@@ -281,6 +281,7 @@ async def test_a_member_reads_project_config_but_no_other_settings(
         "credential_set",
         "credential_updated_at",
         "ready_to_send",
+        "refusal",
     }
     # Readiness and labels read GitHub, which this harness does not answer; 403 is what matters.
     assert all(code != 403 for code in admitted.values()), admitted
@@ -443,6 +444,7 @@ async def test_a_person_creates_an_organization_and_owns_it(
         created = await client.post("/api/orgs", json={"name": "New", "slug": slug})
         taken = await client.post("/api/orgs", json={"name": "New", "slug": slug})
         reserved = await client.post("/api/orgs", json={"name": "New", "slug": "signup"})
+        joining = await client.post("/api/orgs", json={"name": "New", "slug": "join"})
         listed = (await client.get("/api/orgs")).json()
     async with _operator(app) as client:
         operator = await client.post("/api/orgs", json={"name": "Op", "slug": f"op-{slug}"})
@@ -451,6 +453,7 @@ async def test_a_person_creates_an_organization_and_owns_it(
         assert created.json()["role"] == OWNER
         assert taken.status_code == 409
         assert reserved.status_code == 422
+        assert joining.status_code == 422
         assert [row["slug"] for row in listed] == [slug]
         assert operator.status_code == 403
     finally:

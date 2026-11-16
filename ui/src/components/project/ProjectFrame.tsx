@@ -2,8 +2,8 @@
  * What every page of a project shares: the project's own read, and the states before it lands —
  * a bad id, a project that is gone, a read in flight or failed. Each page draws its own header
  * once the project is there; before that, they all look the same, so a reader moving between a
- * project's pages sees one frame. Where the page sits is the side navigation's to say: the
- * project at its head and the organization at its foot, each with its switcher.
+ * project's pages sees one frame. Where the page sits is the top bar's to say: the organization
+ * and then the project, each with its switcher.
  */
 
 import type { UseQueryResult } from "@tanstack/react-query";

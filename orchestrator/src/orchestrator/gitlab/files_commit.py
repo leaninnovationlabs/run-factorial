@@ -22,11 +22,12 @@ async def commit_config_files(
     repo: str,
     branch: str,
     base_sha: str,
-    files: Mapping[str, str],
+    files: Mapping[str, str | None],
     message: str,
     record: Callable[[str], Awaitable[None]],
 ) -> str:
-    """One commit adding `files` on `base_sha`, onto `branch`. Returns its sha.
+    """One commit writing `files` on `base_sha`, onto `branch`. Returns its sha. A `None` body
+    deletes the path, when the branch has it.
 
     Raises `ConfigBranchMoved` when `branch` is no longer at `base_sha`.
     """
@@ -42,12 +43,9 @@ async def commit_config_files(
             "branch": branch,
             "commit_message": message,
             "actions": [
-                {
-                    "action": "update" if path in existing else "create",
-                    "file_path": path,
-                    "content": content,
-                }
+                _action(path, content, present=path in existing)
                 for path, content in sorted(files.items())
+                if content is not None or path in existing
             ],
         },
     )
@@ -59,6 +57,12 @@ async def commit_config_files(
         raise ConfigBranchMoved(f"`{branch}` on {repo} moved since {base_sha[:7]} was read")
     await record(sha)
     return sha
+
+
+def _action(path: str, content: str | None, *, present: bool) -> dict[str, str]:
+    if content is None:
+        return {"action": "delete", "file_path": path}
+    return {"action": "update" if present else "create", "file_path": path, "content": content}
 
 
 _EMPTY_README = (

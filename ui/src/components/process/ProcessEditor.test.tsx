@@ -12,6 +12,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,7 @@ import type {
   ConfigEdit,
   ConfigFile,
   ConfigPreview,
+  EditorDraftPayload,
   FileProposal,
   ProcessVersion,
   ProjectDetail,
@@ -29,11 +31,12 @@ import type {
   Runtime,
   SelectedFile,
 } from "../../api/types";
-import { byText, choose, click, mount, settle, type, typeAt } from "../../testDom";
+import { byText, choose, click, mount, pointerDown, settle, type, typeAt } from "../../testDom";
 import { clearFlags, FlagGroup } from "../ui/Flag";
 import { EditorMessages } from "./EditorMessages";
 import { readBundleDraft, writeBundleDraft } from "./explorer/bundleDraft";
 import { readCreatedFiles } from "./explorer/createdFiles";
+import { readDeletedFiles, writeDeletedFiles } from "./explorer/deletedFiles";
 import { readRepoEdits, writeRepoEdits } from "./explorer/repoEdits";
 import { ProcessEditorBody } from "./ProcessEditorBody";
 import { ProcessSection } from "./ProcessSection";
@@ -175,6 +178,68 @@ describe("ProcessSection", () => {
     ]) {
       expect(html).not.toContain(write);
     }
+  });
+
+  it("stays on the process it was opened on when the project's processes change under it", async () => {
+    stubEditorApi();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    holding(qc);
+    qc.setQueryData(keys.processTemplates, { templates: [SIMPLE_TEMPLATE] });
+    qc.setQueryData(keys.runtimes, RUNTIMES);
+    for (const id of [LATEST_ID, 31]) {
+      qc.setQueryData(keys.processVersion(PROJECT_ID, id), {
+        project_id: PROJECT_ID,
+        process_key: id === 31 ? "alpha" : PROCESS_KEY,
+        source_commit_sha: CURRENT_SHA,
+        content: CONFIG,
+      });
+      qc.setQueryData(keys.processVersionRaw(PROJECT_ID, id), {
+        content: `specVersion: adlc/v1\nname: ${id === 31 ? "alpha" : PROCESS_KEY}\n`,
+        source: "repo",
+      });
+    }
+    const alpha = {
+      process_key: "alpha",
+      is_default: false,
+      selection_label: "factorial:process:alpha",
+      latest: { ...snapshot(31, CURRENT_SHA, "factorial"), process_key: "alpha" },
+    };
+    const section = (project: ProjectDetail) => (
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ProcessSection project={project} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const settings = { runtime_allowlist: [] };
+    const both = {
+      ...PROJECT,
+      settings,
+      processes: [alpha, ...PROJECT.processes],
+    } as ProjectDetail;
+    const view = await mount(section(both));
+    await click(byText(document.body, "button", "Edit config"));
+    await settle();
+    const heading = () =>
+      [...document.querySelectorAll("h2")].find((h) => h.textContent?.startsWith("Edit config"));
+    expect(heading()?.textContent).toBe(`Edit config · ${PROCESS_KEY}`);
+    // The process it opened on is retired by a commit: the section's own pick moves to alpha.
+    await view.rerender(
+      section({
+        ...PROJECT,
+        settings,
+        processes: [alpha],
+        default_process: null,
+      } as ProjectDetail),
+    );
+    await settle();
+    expect(heading()?.textContent).toBe(`Edit config · ${PROCESS_KEY}`);
+    await view.unmount();
+  });
+
+  it("offers History to a manager and not to a reader", () => {
+    expect(render()).toMatch(/<button[^>]*>(<[^>]+>)*History/);
+    expect(render(PROJECT, undefined, MEMBER_PERMISSIONS)).not.toContain("History");
   });
 
   it("shows a reader no gallery when the branch is missing and nothing is synced", () => {
@@ -462,6 +527,18 @@ const SIMPLE_TEMPLATE = {
 
 const SECOND = ".factorial/agents/plan-agent/system-prompt.md";
 
+/** The shells the templates route serves, cut down to what the tests read. */
+const SHELLS = {
+  agent: {
+    "agent.yaml": "kind: Agent\nname: __NAME__\n",
+    "system-prompt.md": "You are `__NAME__`.\n",
+    "instructions.md": "Instructions for `__NAME__`.\n",
+  },
+  skill: { "SKILL.md": "---\nname: __NAME__\n---\n" },
+  mcp: { "server.yaml": "kind: McpServer\nname: __NAME__\n" },
+  process: { "process.yaml": "kind: Process\nname: __NAME__\n# runtime: your-runtime\n" },
+};
+
 function proposal(path: string, body: string, facts: Record<string, string> = {}): FileProposal {
   return {
     path,
@@ -486,6 +563,7 @@ function sectionTree({
   runtime = null,
   edited,
   proposals = [INSTRUCTIONS_PROPOSAL],
+  components = [],
   repoFiles = [],
   fileBodies = {},
   laneless = false,
@@ -495,8 +573,17 @@ function sectionTree({
   initialText,
   initialTitle,
   initialFile,
+  initialDraft,
+  onBack,
+  pinnedUnread = false,
 }: {
   stale: string[];
+  /** An assistant's draft the editor opens on. */
+  initialDraft?: EditorDraftPayload;
+  /** The editor's way back, when a test watches for the editor closing itself. */
+  onBack?: () => void;
+  /** The pinned file and the listing have not been read yet. */
+  pinnedUnread?: boolean;
   /** A gallery pick the editor starts on. */
   initialText?: string;
   initialTitle?: string;
@@ -510,6 +597,8 @@ function sectionTree({
   /** A text the test will type in, whose preview is seeded too so the explorer stays put. */
   edited?: string;
   proposals?: FileProposal[];
+  /** What the preview says about each agent, skill and server the config names. */
+  components?: ConfigPreview["components"];
   /** Files the pinned listing already has, after the two every version carries. */
   repoFiles?: ConfigFile[];
   /** What the repo holds at the pinned commit for each of those, by path. */
@@ -522,46 +611,49 @@ function sectionTree({
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   holding(qc);
   qc.setQueryData(keys.runtimes, runtimes);
-  qc.setQueryData(keys.processTemplates, { templates: [SIMPLE_TEMPLATE] });
+  qc.setQueryData(keys.processTemplates, { templates: [SIMPLE_TEMPLATE], shells: SHELLS });
   qc.setQueryData(keys.processVersion(PROJECT_ID, LATEST_ID), {
     project_id: PROJECT_ID,
     version: 3,
     content: { ...CONFIG, runtime },
   });
-  qc.setQueryData(keys.processVersionRaw(PROJECT_ID, LATEST_ID), {
-    content: RAW_TEXT,
-    source: "repo",
-  });
+  if (!pinnedUnread) {
+    qc.setQueryData(keys.processVersionRaw(PROJECT_ID, LATEST_ID), {
+      content: RAW_TEXT,
+      source: "repo",
+    });
+  }
 
-  const preview: ConfigPreview = { files: proposals, components: [] };
+  const preview: ConfigPreview = { files: proposals, components };
   qc.setQueryData(keys.configPreview(PROJECT_ID, ""), preview);
   // And under the text a mounted editor seeds itself with, so the preview is there the moment
   // the text validates, without a request of its own.
   qc.setQueryData(keys.configPreview(PROJECT_ID, RAW_TEXT), preview);
   if (edited) qc.setQueryData(keys.configPreview(PROJECT_ID, edited), preview);
 
-  qc.setQueryData(keys.configFiles(PROJECT_ID, LATEST_ID), {
-    config_dir: ".factorial",
-    pinned_sha: "c".repeat(40),
-    head_sha: "d".repeat(40),
-    files: [
-      {
-        path: ".factorial/process.yaml",
-        kind: "process",
-        drift: "same",
-        warning: null,
-        sha: "a".repeat(40),
-      },
-      {
-        path: ".factorial/agents/plan-agent/agent.yaml",
-        kind: "agent",
-        drift: "same",
-        warning: "plan-agent: empty document",
-        sha: "a".repeat(40),
-      },
-      ...repoFiles,
-    ],
-  });
+  if (!pinnedUnread)
+    qc.setQueryData(keys.configFiles(PROJECT_ID, LATEST_ID), {
+      config_dir: ".factorial",
+      pinned_sha: "c".repeat(40),
+      head_sha: "d".repeat(40),
+      files: [
+        {
+          path: ".factorial/process.yaml",
+          kind: "process",
+          drift: "same",
+          warning: null,
+          sha: "a".repeat(40),
+        },
+        {
+          path: ".factorial/agents/plan-agent/agent.yaml",
+          kind: "agent",
+          drift: "same",
+          warning: "plan-agent: empty document",
+          sha: "a".repeat(40),
+        },
+        ...repoFiles,
+      ],
+    });
   for (const [path, content] of Object.entries(fileBodies)) {
     qc.setQueryData(keys.configFile(PROJECT_ID, LATEST_ID, path), { path, content });
   }
@@ -586,6 +678,8 @@ function sectionTree({
         initialText={initialText}
         initialTitle={initialTitle}
         initialFile={initialFile}
+        initialDraft={initialDraft}
+        heading={onBack ? { title: "Edit config", subtitle: "", onBack } : undefined}
       />
     </QueryClientProvider>
   );
@@ -608,17 +702,24 @@ function jsonResponse(body: unknown, status = 200): Response {
 function stubEditorApi({
   preview,
   commit,
+  check,
+  parsed = CONFIG,
 }: {
+  /** What the server reads the text as, when a test needs a name other than the fixture's. */
+  parsed?: Record<string, unknown>;
   preview?: () => Promise<Response>;
   commit?: () => Response | Promise<Response>;
+  /** Answers config-checks, given the draft it was sent. */
+  check?: (draft: unknown) => Response;
 } = {}) {
   const commits: Array<{ content: string; files: SelectedFile[]; edits?: ConfigEdit[] }> = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/process-versions/validate"))
-        return jsonResponse({ valid: true, errors: [], warnings: [], content: CONFIG });
+        return jsonResponse({ valid: true, errors: [], warnings: [], content: parsed });
       if (url.endsWith("/config-preview") && preview) return preview();
+      if (url.endsWith("/config-checks") && check) return check(JSON.parse(String(init?.body)));
       if (url.endsWith("/config-commits") && commit) {
         commits.push(JSON.parse(String(init?.body)));
         return await commit();
@@ -703,6 +804,9 @@ function commitButton(): { button: HTMLElement | null; reason: string | null } {
 afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
+  // A delete that drops unsaved text raises a flag with Undo; one left over would be the first
+  // "Undo" the next test finds.
+  clearFlags();
 });
 
 describe("ProcessEditorBody", () => {
@@ -773,6 +877,24 @@ describe("ProcessEditorBody", () => {
     typeAt(area, 3, "X");
     expect(area.value).toBe("newX template body");
     expect(area.selectionStart).toBe(4);
+    await view.unmount();
+  });
+});
+
+describe("ProcessEditorBody, while the pinned config is being read", () => {
+  it("draws a loading state, not an empty editor that asks for a template", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    const view = await mount(sectionTree({ stale: [], pinnedUnread: true }));
+    await settle();
+    expect(document.body.textContent).toContain("Loading the config");
+    expect(textareaFor("process.yaml")).toBeNull();
+    expect(
+      document.querySelector('[role="status"][aria-label="Loading the files"]'),
+    ).not.toBeNull();
+    expect(commitButton().reason).toBe("Loading the config…");
     await view.unmount();
   });
 });
@@ -1125,6 +1247,631 @@ describe("ProcessEditorBody, editing files the repo already has", () => {
     await view.unmount();
   });
 
+  const menuItem = (label: string) =>
+    [...document.querySelectorAll('[role="menuitem"]')].find((element) =>
+      element.textContent?.startsWith(label),
+    ) ?? null;
+  const OTHER_PROCESS = ".factorial/processes/process-other.yaml";
+  const deletedIn = (commit: unknown) => (commit as { deleted?: unknown }).deleted;
+
+  it("stages a delete, sends it with the blob it started from, and keeps nothing staged after the commit", async () => {
+    const commits = stubEditorApi({
+      commit: () => jsonResponse({ ...committedResult([PROCESS_FILE]), deleted: [PROMPT] }, 201),
+    });
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({ [PROMPT]: BLOB });
+    expect(document.body.textContent).toContain("The next commit deletes 1 file");
+    expect(document.querySelector('[aria-label="Restore prompt-notes.md"]')).not.toBeNull();
+    expect(commitButton().reason).toBeNull();
+
+    await click(commitButton().button);
+    await settle();
+    expect(deletedIn(commits[0])).toEqual([{ path: PROMPT, base_sha: BLOB }]);
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await view.unmount();
+  });
+
+  it("puts a staged delete back from its row", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    await click(document.querySelector('[aria-label="Restore prompt-notes.md"]'));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    expect(commitButton().reason).toBe("No changes to commit");
+    await view.unmount();
+  });
+
+  it("drops a held edit when its file is deleted, and closes its tab", async () => {
+    stubEditorApi();
+    writeRepoEdits(PROJECT_ID, PROCESS_KEY, { [PROMPT]: { body: "mine\n", base: BLOB } });
+    const view = await mountWith({ proposals: [] });
+    await click(await treeFile("prompt-notes.md"));
+    expect(fileTab("prompt-notes.md")).not.toBeNull();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    expect(readRepoEdits(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    expect(fileTab("prompt-notes.md")).toBeNull();
+    await view.unmount();
+  });
+
+  it("deletes every file in a folder from the folder's menu, and restores them from it", async () => {
+    stubEditorApi();
+    const view = await mountWith({
+      proposals: [],
+      repoFiles: [inRepo(), inRepo({ path: OTHER })],
+    });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Actions for plan-agent"]'));
+    await click(menuItem("Delete folder"));
+    expect(Object.keys(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).sort()).toEqual(
+      [".factorial/agents/plan-agent/agent.yaml", OTHER, PROMPT].sort(),
+    );
+    expect(document.body.textContent).toContain("The next commit deletes 3 files");
+    await click(document.querySelector('[aria-label="Actions for plan-agent"]'));
+    await click(menuItem("Restore folder"));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await view.unmount();
+  });
+
+  it("puts a staged delete back with Discard edits' Undo", async () => {
+    stubEditorApi();
+    const view = await mount(
+      <>
+        {sectionTree({
+          stale: [],
+          proposals: [],
+          repoFiles: [inRepo()],
+          fileBodies: { [PROMPT]: "my prompt\n" },
+        })}
+        <FlagGroup />
+      </>,
+    );
+    await settle(700);
+    await settle();
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    await click(byText(document.body, "button", "Discard edits"));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await click(byText(document.body, "button", "Undo"));
+    await settle();
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({ [PROMPT]: BLOB });
+    await view.unmount();
+    clearFlags();
+  });
+
+  it("asks before a commit that deletes a process file, naming the process", async () => {
+    const commits = stubEditorApi({
+      commit: () =>
+        jsonResponse({ ...committedResult([PROCESS_FILE]), deleted: [OTHER_PROCESS] }, 201),
+    });
+    const view = await mountWith({
+      proposals: [],
+      repoFiles: [inRepo({ path: OTHER_PROCESS, kind: "process" })],
+    });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete process-other.yaml"]'));
+    await click(commitButton().button);
+    await settle();
+    expect(commits).toHaveLength(0);
+    expect(document.body.textContent).toContain("Delete the other process?");
+    expect(document.body.textContent).toContain("Tickets already on it keep running.");
+
+    await click(byText(document.body, "button", "Commit and delete"));
+    await settle();
+    expect(deletedIn(commits[0])).toEqual([{ path: OTHER_PROCESS, base_sha: BLOB }]);
+    await view.unmount();
+  });
+
+  it("deletes the process on screen: says so on its tab and sends no files for it", async () => {
+    const commits = stubEditorApi({
+      preview: async () => jsonResponse({ files: [INSTRUCTIONS_PROPOSAL], components: [] }),
+      commit: () => jsonResponse({ ...committedResult([]), deleted: [PROCESS_FILE] }, 201),
+    });
+    const view = await mountWith({
+      repoFiles: [
+        inRepo({ path: PROCESS_FILE, kind: "process" }),
+        inRepo({ path: OTHER_PROCESS, kind: "process" }),
+      ],
+    });
+    await expandTree();
+    await click(document.querySelector(`[aria-label="Delete process-${PROCESS_KEY}.yaml"]`));
+    expect(document.body.textContent).toContain("This process is deleted in the next commit");
+    expect(textareaFor("process.yaml")?.readOnly).toBe(true);
+
+    await click(commitButton().button);
+    await settle();
+    expect(document.body.textContent).toContain(`Delete the ${PROCESS_KEY} process?`);
+    await click(byText(document.body, "button", "Commit and delete"));
+    await settle();
+    expect(commits[0]?.files).toEqual([]);
+    expect(deletedIn(commits[0])).toEqual([{ path: PROCESS_FILE, base_sha: BLOB }]);
+    await view.unmount();
+  });
+
+  it("holds the commit while a staged delete is stale", async () => {
+    stubEditorApi();
+    // Staged against an older blob than the listing now gives the file.
+    writeDeletedFiles(PROJECT_ID, PROCESS_KEY, { [PROMPT]: "c".repeat(40) });
+    const view = await mountWith({ proposals: [] });
+    expect(commitButton().reason).toMatch(/1 file changed since you edited it/);
+    await view.unmount();
+  });
+
+  const VALID_CHECK = {
+    valid: true,
+    problems: [],
+    warnings: [],
+    would_write: [PROCESS_FILE, ".factorial/notes/runbook.md"],
+    would_delete: [PROMPT],
+  };
+
+  it("validates the whole draft without committing, and says what a commit would do", async () => {
+    const checked: unknown[] = [];
+    const commits = stubEditorApi({
+      check: (draft) => {
+        checked.push(draft);
+        return jsonResponse(VALID_CHECK);
+      },
+      commit: () => jsonResponse(committedResult([PROCESS_FILE]), 201),
+    });
+    const view = await mountWith({ proposals: [] });
+    await createEntry("file", "notes/runbook.md");
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    await click(byText(document.body, "button", "Validate"));
+    await settle();
+    expect(checked).toEqual([
+      {
+        content: RAW_TEXT,
+        files: [],
+        edits: [],
+        created: [{ path: ".factorial/notes/runbook.md", body: "" }],
+        deleted: [{ path: PROMPT, base_sha: BLOB }],
+      },
+    ]);
+    expect(commits).toHaveLength(0);
+    expect(document.body.textContent).toContain("The whole config is valid");
+    expect(document.body.textContent).toContain("A commit would write 2 files and delete 1.");
+    await view.unmount();
+  });
+
+  it("names each problem's file with a button that opens it", async () => {
+    stubEditorApi({
+      check: () =>
+        jsonResponse({
+          ...VALID_CHECK,
+          valid: false,
+          problems: [
+            { path: OTHER, message: "The file is empty or holds only comments.", hint: null },
+            { path: null, message: "The factorial branch moved.", hint: "Sync config first." },
+          ],
+        }),
+    });
+    const view = await mountWith({
+      proposals: [],
+      repoFiles: [inRepo(), inRepo({ path: OTHER })],
+      fileBodies: { [PROMPT]: "my prompt\n", [OTHER]: "" },
+    });
+    await click(byText(document.body, "button", "Validate"));
+    await settle();
+    expect(document.body.textContent).toContain("The config has 2 problems");
+    expect(document.body.textContent).toContain("The file is empty or holds only comments.");
+    expect(document.body.textContent).toContain("Sync config first.");
+    await click(byText(document.body, "button", OTHER));
+    expect(fileTab("other-notes.md")?.getAttribute("aria-selected")).toBe("true");
+    await view.unmount();
+  });
+
+  it("drops the verdict when the draft changes after it", async () => {
+    stubEditorApi({ check: () => jsonResponse(VALID_CHECK) });
+    const view = await mountWith({ proposals: [] });
+    await click(byText(document.body, "button", "Validate"));
+    await settle();
+    expect(document.body.textContent).toContain("The whole config is valid");
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    // The mutation tells its observers on the next tick.
+    await settle();
+    expect(document.body.textContent).not.toContain("The whole config is valid");
+    await view.unmount();
+  });
+
+  it("offers to open the file a refused commit names", async () => {
+    stubEditorApi({
+      commit: () =>
+        jsonResponse(
+          { detail: `${OTHER}: The file is empty or holds only comments.`, path: OTHER },
+          422,
+        ),
+    });
+    const view = await mountWith({
+      proposals: [],
+      repoFiles: [inRepo(), inRepo({ path: OTHER })],
+      fileBodies: { [PROMPT]: "my prompt\n", [OTHER]: "" },
+    });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    await click(commitButton().button);
+    await settle();
+    expect(document.body.textContent).toContain("The file is empty or holds only comments.");
+    await click(byText(document.body, "button", "Open other-notes.md"));
+    expect(fileTab("other-notes.md")?.getAttribute("aria-selected")).toBe("true");
+    await view.unmount();
+  });
+
+  const MANIFEST = ".factorial/agents/plan-agent/agent.yaml";
+  const menuLabels = () =>
+    [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+  const folderRow = (name: string) =>
+    document.querySelector(`[aria-label="Collapse ${name}"]`)?.parentElement ?? null;
+  async function rightClick(element: Element | null) {
+    if (!element) throw new Error("nothing to right-click");
+    await act(async () => {
+      element.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 30,
+          clientY: 50,
+        }),
+      );
+    });
+    await settle();
+  }
+  /** The explorer's prompt for a construct, with `name` typed and submitted. */
+  async function nameConstruct(label: string, name: string, submit: string) {
+    const id = byText(document.body, "label", label)?.getAttribute("for");
+    await type(id ? document.getElementById(id) : null, name);
+    await click(byText(document.body, "button", submit));
+  }
+  const createdIn = (commit: unknown) => (commit as { created?: SelectedFile[] }).created ?? [];
+
+  it("right-clicking the config folder offers the four constructs, then a file and a folder", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await rightClick(folderRow(".factorial"));
+    expect(document.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe(
+      "Actions for .factorial",
+    );
+    // No Delete folder: the config folder itself is never one to delete.
+    expect(menuLabels()).toEqual(["Agent", "MCP server", "Process", "Skill", "File", "Folder"]);
+    const groups = [...document.querySelectorAll('[role="menu"] [role="group"]')];
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Add new"]);
+    expect(
+      [...document.querySelectorAll('[role="menuitem"] svg')].map((icon) =>
+        icon.getAttribute("data-glyph"),
+      ),
+    ).toEqual(["agent", "plug", "lane", "file-markdown", "file-yaml", "folder"]);
+    await view.unmount();
+  });
+
+  it("offers the same entries from the folder row's menu button, for a keyboard or a touch", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Actions for plan-agent"]'));
+    expect(menuLabels()).toEqual(["MCP server", "Skill", "File", "Folder", "Delete folder"]);
+    expect(
+      [...document.querySelectorAll('[role="menu"] [role="group"]')].map((group) =>
+        group.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Add new", "This folder"]);
+    await view.unmount();
+  });
+
+  it("offers the four constructs from the explorer's header", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await click(
+      document.querySelector('[aria-label="Add an agent, MCP server, process or skill"]'),
+    );
+    expect(menuLabels()).toEqual(["Agent", "MCP server", "Process", "Skill"]);
+    await view.unmount();
+  });
+
+  it("asks for the name in the explorer's prompt, then creates the agent's three files and opens its manifest", async () => {
+    const commits = stubEditorApi({
+      commit: () => jsonResponse(committedResult([PROCESS_FILE]), 201),
+    });
+    const view = await mountWith({ proposals: [] });
+    await rightClick(folderRow(".factorial"));
+    await click(menuItem("Agent"));
+    await nameConstruct("New agent in .factorial/agents/", "review-agent", "Create agent");
+    expect(fileTab("agent.yaml")?.getAttribute("aria-selected")).toBe("true");
+    expect(textareaFor(".factorial/agents/review-agent/agent.yaml")?.value).toBe(
+      "kind: Agent\nname: review-agent\n",
+    );
+
+    await click(commitButton().button);
+    await settle();
+    expect(createdIn(commits[0])).toEqual([
+      {
+        path: ".factorial/agents/review-agent/agent.yaml",
+        body: "kind: Agent\nname: review-agent\n",
+      },
+      {
+        path: ".factorial/agents/review-agent/instructions.md",
+        body: "Instructions for `review-agent`.\n",
+      },
+      {
+        path: ".factorial/agents/review-agent/system-prompt.md",
+        body: "You are `review-agent`.\n",
+      },
+    ]);
+    await view.unmount();
+  });
+
+  it("asks for the name in a prompt that floats where the menu was opened, and puts it away on a press elsewhere", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await rightClick(folderRow(".factorial"));
+    await click(menuItem("Agent"));
+    const prompt = () =>
+      document.querySelector<HTMLElement>('[role="dialog"][aria-label="New agent"]');
+    // Where the right-click was (30, 50), by the popup's own gap.
+    expect(prompt()?.style.left).toBe("30px");
+    expect(prompt()?.style.top).toBe("56px");
+    expect(
+      prompt()?.contains(byText(document.body, "label", "New agent in .factorial/agents/")),
+    ).toBe(true);
+    expect(prompt()?.contains(document.activeElement)).toBe(true);
+    await pointerDown(document.body);
+    expect(prompt()).toBeNull();
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await view.unmount();
+  });
+
+  it("floats the New file prompt too, from the header's button", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await click(document.querySelector('[aria-label="New file"]'));
+    const prompt = document.querySelector('[role="dialog"][aria-label="New file"]');
+    expect(prompt?.contains(byText(document.body, "label", "New file in .factorial/"))).toBe(true);
+    await view.unmount();
+  });
+
+  it("has a border to drag between the file panel and the editor", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    const border = document.querySelector('[role="separator"]');
+    expect(border?.getAttribute("aria-label")).toBe("Resize the file panel");
+    await view.unmount();
+  });
+
+  it("refuses a construct's name in the prompt, before any file exists", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await rightClick(folderRow(".factorial"));
+    await click(menuItem("Agent"));
+    await nameConstruct("New agent in .factorial/agents/", "plan-agent", "Create agent");
+    expect(document.body.textContent).toContain("An agent with that name is already here.");
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await view.unmount();
+  });
+
+  it("makes an agent's own skill inside that agent's folder", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await rightClick(folderRow("plan-agent"));
+    await click(menuItem("Skill"));
+    await nameConstruct(
+      "New skill for plan-agent in .factorial/agents/plan-agent/skills/",
+      "notes",
+      "Create skill",
+    );
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({
+      ".factorial/agents/plan-agent/skills/notes/SKILL.md": "---\nname: notes\n---\n",
+    });
+    await view.unmount();
+  });
+
+  it("gives a new process the runtime of the process on screen", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [], runtime: "claude-api" });
+    await rightClick(folderRow(".factorial"));
+    await click(menuItem("Process"));
+    await nameConstruct("New process in .factorial/processes/", "fast", "Create process");
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({
+      ".factorial/processes/process-fast.yaml":
+        "kind: Process\nname: fast\n# runtime: your-runtime\nruntime: claude-api\n",
+    });
+    await view.unmount();
+  });
+
+  it("starts a plain new file in the folder that was right-clicked", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await rightClick(folderRow("plan-agent"));
+    await click(menuItem("File"));
+    const id = byText(document.body, "label", "New file in .factorial/")?.getAttribute("for");
+    const field = id ? (document.getElementById(id) as HTMLInputElement | null) : null;
+    expect(field?.value).toBe("agents/plan-agent/");
+    await view.unmount();
+  });
+
+  it("offers to create an agent a step names when it has no files", async () => {
+    stubEditorApi();
+    const view = await mountWith({
+      proposals: [],
+      components: [
+        { name: "my-agent", kind: "agent", variants: [], present_in_repo: false, referenced: true },
+      ],
+    });
+    expect(document.body.textContent).toContain("my-agent has no files yet");
+    await click(byText(document.body, "button", "Create my-agent"));
+    expect(Object.keys(readCreatedFiles(PROJECT_ID, PROCESS_KEY))).toEqual([
+      ".factorial/agents/my-agent/agent.yaml",
+      ".factorial/agents/my-agent/instructions.md",
+      ".factorial/agents/my-agent/system-prompt.md",
+    ]);
+    expect(document.body.textContent).not.toContain("my-agent has no files yet");
+    await view.unmount();
+  });
+
+  it("fills an empty manifest on the branch from the shell and adds the prompts it lacks", async () => {
+    stubEditorApi();
+    const view = await mountWith({
+      proposals: [],
+      fileBodies: { [PROMPT]: "my prompt\n", [MANIFEST]: "# SCAFFOLDED, NOT FINISHED.\n" },
+    });
+    await click(await treeFile("agent.yaml"));
+    await click(byText(document.body, "button", "Fill in from the shell"));
+    expect(readRepoEdits(PROJECT_ID, PROCESS_KEY)).toEqual({
+      [MANIFEST]: { body: "kind: Agent\nname: plan-agent\n", base: "a".repeat(40) },
+    });
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({
+      ".factorial/agents/plan-agent/instructions.md": "Instructions for `plan-agent`.\n",
+      ".factorial/agents/plan-agent/system-prompt.md": "You are `plan-agent`.\n",
+    });
+    await view.unmount();
+  });
+
+  const withFlags = async (options: Partial<Parameters<typeof sectionTree>[0]> = {}) => {
+    const view = await mount(
+      <>
+        {sectionTree({
+          stale: [],
+          proposals: [],
+          repoFiles: [inRepo()],
+          fileBodies: { [PROMPT]: "my prompt\n" },
+          ...options,
+        })}
+        <FlagGroup />
+      </>,
+    );
+    await settle(700);
+    await settle();
+    return view;
+  };
+
+  it("does not call an assistant's draft out of date after its own commit", async () => {
+    const drafted = `${RAW_TEXT}# reviewed twice\n`;
+    const commits = stubEditorApi({
+      commit: () => jsonResponse(committedResult([PROCESS_FILE]), 201),
+    });
+    const view = await mountWith({
+      proposals: [],
+      edited: drafted,
+      initialDraft: {
+        project_id: PROJECT_ID,
+        process: PROCESS_KEY,
+        content: drafted,
+        files: [],
+        edits: [],
+        base_sha: CURRENT_SHA,
+        would_write: [],
+      },
+    });
+    expect(document.body.textContent).not.toContain("written against another commit");
+    await click(commitButton().button);
+    await settle();
+    expect(commits).toHaveLength(1);
+    // The commit moved what the editor is based on; the draft is no older than it was.
+    expect(document.body.textContent).not.toContain("written against another commit");
+    await view.unmount();
+  });
+
+  it("closes when a commit deletes the file of the process it opened on, whatever the text is named now", async () => {
+    const onBack = vi.fn();
+    const commits = stubEditorApi({
+      // The text was renamed, so the commit writes process-renamed.yaml and the old file is a
+      // row like any other.
+      parsed: { ...CONFIG, name: "renamed" },
+      commit: () => jsonResponse({ ...committedResult([]), deleted: [PROCESS_FILE] }, 201),
+    });
+    const view = await mountWith({
+      proposals: [],
+      onBack,
+      repoFiles: [inRepo({ path: PROCESS_FILE, kind: "process" })],
+    });
+    await expandTree();
+    await click(document.querySelector(`[aria-label="Delete process-${PROCESS_KEY}.yaml"]`));
+    await click(commitButton().button);
+    await settle();
+    await click(byText(document.body, "button", "Commit and delete"));
+    await settle();
+    expect(commits).toHaveLength(1);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("drops a staged delete whose file has left the branch, and does not hold the commit", async () => {
+    stubEditorApi();
+    writeDeletedFiles(PROJECT_ID, PROCESS_KEY, { ".factorial/notes/gone.md": BLOB });
+    const view = await mountWith({ proposals: [] });
+    await settle();
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    expect(commitButton().reason).toBe("No changes to commit");
+    await view.unmount();
+  });
+
+  it("opens a file staged for deletion read-only, with the way to restore it", async () => {
+    stubEditorApi();
+    const view = await mountWith({ proposals: [] });
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    await click(await treeFile("prompt-notes.md"));
+    expect(document.body.textContent).toContain("Deleted in the next commit.");
+    expect(textareaFor(PROMPT)?.readOnly).toBe(true);
+    await click(byText(document.body, "button", "Restore the file"));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    expect(textareaFor(PROMPT)?.readOnly).toBe(false);
+    await view.unmount();
+  });
+
+  it("re-stages a stale delete at the blob the branch holds now", async () => {
+    stubEditorApi();
+    writeDeletedFiles(PROJECT_ID, PROCESS_KEY, { [PROMPT]: "c".repeat(40) });
+    const view = await mountWith({ proposals: [] });
+    expect(commitButton().reason).toMatch(/1 file changed since you edited it/);
+    await expandTree();
+    await click(byText(document.body, "button", "Review"));
+    expect(document.body.textContent).toContain(
+      "This file changed on the factorial branch since you deleted it",
+    );
+    await click(byText(document.body, "button", "Delete it anyway"));
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({ [PROMPT]: BLOB });
+    expect(commitButton().reason).toBeNull();
+    await view.unmount();
+  });
+
+  it("puts back what a delete dropped: a new file's text", async () => {
+    stubEditorApi();
+    const view = await withFlags();
+    await createEntry("file", "notes/runbook.md");
+    await type(textareaFor(".factorial/notes/runbook.md"), "# runbook\n");
+    await click(document.querySelector('[aria-label="Delete runbook.md"]'));
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await click(byText(document.body, "button", "Undo"));
+    await settle();
+    expect(readCreatedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({
+      ".factorial/notes/runbook.md": "# runbook\n",
+    });
+    await view.unmount();
+    clearFlags();
+  });
+
+  it("puts back what a delete dropped: an edit held for the deleted file", async () => {
+    stubEditorApi();
+    writeRepoEdits(PROJECT_ID, PROCESS_KEY, { [PROMPT]: { body: "mine\n", base: BLOB } });
+    const view = await withFlags();
+    await expandTree();
+    await click(document.querySelector('[aria-label="Delete prompt-notes.md"]'));
+    expect(readRepoEdits(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await click(byText(document.body, "button", "Undo"));
+    await settle();
+    expect(readRepoEdits(PROJECT_ID, PROCESS_KEY)).toEqual({
+      [PROMPT]: { body: "mine\n", base: BLOB },
+    });
+    expect(readDeletedFiles(PROJECT_ID, PROCESS_KEY)).toEqual({});
+    await view.unmount();
+    clearFlags();
+  });
+
   it("sends a repo file, a new file and the process text in one commit", async () => {
     const commits = stubEditorApi({
       preview: async () => jsonResponse({ files: [INSTRUCTIONS_PROPOSAL], components: [] }),
@@ -1347,6 +2094,31 @@ describe("EditorMessages", () => {
     );
     expect(html).toContain("Some edits are missing from the commit");
     expect(html).toContain("prompt-notes.md");
+  });
+
+  it("says after a synced commit that running tickets keep their version", () => {
+    const committed = {
+      sha: "e".repeat(40),
+      url: "u",
+      branch: "factorial",
+      components: [],
+      written: [],
+      sync: null,
+      sync_error: null,
+    };
+    const note =
+      "New tickets run it. Tickets already running keep the version they were admitted on.";
+    for (const made of [true, false]) {
+      const html = renderToString(
+        <EditorMessages
+          committed={{ ...committed, committed: made }}
+          sent={[]}
+          requestError={null}
+          verdict={undefined}
+        />,
+      );
+      expect(html).toContain(note);
+    }
   });
 
   it("calls a commit the branch already held nothing to commit, and names no gap", () => {

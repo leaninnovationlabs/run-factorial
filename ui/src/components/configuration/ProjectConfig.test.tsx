@@ -72,8 +72,8 @@ describe("the secrets section", () => {
       }),
     );
     expect(html).toContain("GH_TOKEN");
-    expect(html).toContain("Created automatically for each run");
-    expect(html).toContain("Provided by runtime");
+    expect(html).toContain("Factorial mints it for each run");
+    expect(html).toContain("Set on the runtime");
     expect(html).toContain('href="/runtimes/codex-team"');
     expect(html).toContain("PRODUCT_DOCS_TOKEN");
     expect(count(html, 'data-secret-state="ok"')).toBe(3);
@@ -97,15 +97,16 @@ describe("the secrets section", () => {
       }),
     );
     expect(html).toContain("GITLAB_TOKEN");
-    expect(html).toContain("Stored on this project.");
+    expect(html).toContain("The ticket source, on the");
     // Removing it would cut the project off from GitLab, so it is changed on its own page.
     expect(html).not.toContain('data-remove="GITLAB_TOKEN"');
+    expect(html).not.toContain('data-edit="GITLAB_TOKEN"');
     expect(html).toContain(`href="/projects/${PROJECT_ID}/configuration/ticket-source"`);
     expect(html).not.toContain("GH_TOKEN");
-    expect(html).not.toContain("Created automatically for each run");
+    expect(html).not.toContain("Factorial mints it for each run");
   });
 
-  it("marks a runtime that holds no key, and never offers a project form for it", () => {
+  it("marks a runtime that holds no key, and never offers to set it here", () => {
     const html = render(
       project({
         declared_secrets: ["ANTHROPIC_API_KEY"],
@@ -122,20 +123,25 @@ describe("the secrets section", () => {
     expect(html).toContain("The runtime holds no key yet");
     expect(html).toContain('href="/runtimes/claude-vm"');
     expect(count(html, 'data-secret-state="missing"')).toBe(1);
-    expect(html).not.toContain('data-store-for="ANTHROPIC_API_KEY"');
+    expect(html).not.toContain('data-set-value="ANTHROPIC_API_KEY"');
+    expect(html).not.toContain('data-edit="ANTHROPIC_API_KEY"');
   });
 
-  it("offers the store form beneath a project key that is missing, and not beneath one that is stored", () => {
+  it("offers Set value on a project key that is missing, and Edit on one that is stored", () => {
     const html = render(
       project({
         declared_secrets: ["PRODUCT_DOCS_TOKEN", "SLACK_TOKEN"],
         secret_names: ["SLACK_TOKEN"],
       }),
     );
-    expect(html).toContain('data-store-for="PRODUCT_DOCS_TOKEN"');
-    expect(html).not.toContain('data-store-for="SLACK_TOKEN"');
+    expect(html).toContain('data-set-value="PRODUCT_DOCS_TOKEN"');
+    expect(html).not.toContain('data-edit="PRODUCT_DOCS_TOKEN"');
+    expect(html).toContain('data-edit="SLACK_TOKEN"');
+    expect(html).not.toContain('data-set-value="SLACK_TOKEN"');
     expect(count(html, 'data-secret-state="missing"')).toBe(1);
     expect(count(html, 'data-secret-state="ok"')).toBe(1);
+    expect(html).toContain("2 secrets, ");
+    expect(html).toContain("1 missing.");
   });
 
   it("says a project-stored copy of a runtime-provided key is superseded, and offers to remove it", () => {
@@ -153,7 +159,7 @@ describe("the secrets section", () => {
         secret_names: ["OPENAI_API_KEY"],
       }),
     );
-    expect(html).toContain("superseded by runtime");
+    expect(html).toContain("superseded by the runtime");
     expect(html).toContain("No process that names the runtime reads it.");
     expect(html).not.toContain("open ticket");
     expect(html).toContain('data-remove="OPENAI_API_KEY"');
@@ -200,7 +206,7 @@ describe("the secrets section", () => {
         ],
       }),
     );
-    expect(html).toContain("Header");
+    expect(html).toContain('data-supplied-as="header"');
     expect(html).toContain("project-access-token");
     expect(html).toContain("api.example.com");
     expect(count(html, 'data-secret-state="ok"')).toBe(1);
@@ -214,25 +220,54 @@ describe("the secrets section", () => {
         secret_deliveries: [{ name: "DB_PASSWORD", mode: "env", host: null, header: null }],
       }),
     );
-    expect(html).toContain("Environment variable");
-    expect(html).not.toContain('data-secret-state="warn"');
+    expect(html).toContain('data-supplied-as="env"');
+    expect(html).not.toContain('data-supplied-as="header"');
   });
 
-  it("keeps a form for a name the manifests do not declare yet", () => {
+  it("offers to add a key the manifests do not declare yet", () => {
     const html = render(project({}));
-    expect(html).toContain("Save secret");
+    expect(html).toContain("No secrets yet.");
+    expect(html).toContain("Add secret");
+  });
+
+  it("says the difference between an environment variable and a header", () => {
+    const html = render(project({ settings: { egress_allowlist: ["api.example.com"] } }));
+    expect(html).toContain("data-delivery-guide");
+    expect(html).toContain("The agent reads the real value from its environment");
+    expect(html).toContain("The agent never sees the value");
+  });
+});
+
+describe("the guide to the choice", () => {
+  it("is left out when an environment variable is the only option", () => {
+    const html = render(project({ settings: {}, secret_names: ["DB_PASSWORD"] }));
+    expect(html).not.toContain("data-delivery-guide");
+  });
+
+  it("stays while a saved header can still be moved back", () => {
+    const html = render(
+      project({
+        settings: {},
+        secret_names: ["LOGS_API_TOKEN"],
+        secret_deliveries: [
+          { name: "LOGS_API_TOKEN", mode: "header", host: "api.example.com", header: "x-token" },
+        ],
+      }),
+    );
+    expect(html).toContain("data-delivery-guide");
   });
 });
 
 describe("the connection secrets", () => {
-  it("shows the GitHub connection's stored secrets as managed, with no store form", () => {
+  it("shows the GitHub connection's stored secrets as managed, with nothing to change here", () => {
     const html = render(
       project({
         secret_names: ["GITHUB_CONNECTION_TOKEN"],
       }),
     );
     expect(html).toContain("GITHUB_CONNECTION_TOKEN");
-    expect(html).toContain("Managed with the GitHub connection");
-    expect(html).not.toContain('data-store-for="GITHUB_CONNECTION_TOKEN"');
+    expect(html).toContain("The GitHub connection, on the");
+    expect(html).not.toContain('data-edit="GITHUB_CONNECTION_TOKEN"');
+    expect(html).not.toContain('data-set-value="GITHUB_CONNECTION_TOKEN"');
   });
 });

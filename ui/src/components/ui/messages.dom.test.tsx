@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 /**
  * The error boxes say the plain message first, then the next step the API names, and fold the
- * technical text behind Details: an operator opens it, and nobody else reads a status line.
+ * technical text behind Details: an operator opens it, and nobody else reads a status line. An
+ * action's success can be closed once read, and the next one shows again.
  */
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiError, SERVER_FAILED } from "../../api/client";
 import { click, type Mounted, mount } from "../../testDom";
-import { ActionError, ErrorMessage } from "./messages";
+import { ActionError, ErrorMessage, SectionMessage, useDismissible } from "./messages";
 
 let view: Mounted | null = null;
 
@@ -54,5 +56,43 @@ describe.each([
     });
     view = await mount(draw(refusal));
     expect(document.body.textContent).toMatch(/No process yet\.\s*Sync one from the repository\./);
+  });
+});
+
+describe("a success that can be closed", () => {
+  const dismiss = () => document.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]');
+
+  it("draws no close button unless the message is given one", async () => {
+    view = await mount(<SectionMessage appearance="success" title="Synced" />);
+    expect(dismiss()).toBeNull();
+  });
+
+  /** A page that runs an action again and again, its outcome a new object each time. */
+  function Saving() {
+    const [result, setResult] = useState<{ n: number } | null>(null);
+    const [shown, close] = useDismissible(result);
+    return (
+      <>
+        <button type="button" onClick={() => setResult({ n: (result?.n ?? 0) + 1 })}>
+          Save
+        </button>
+        {shown && (
+          <SectionMessage appearance="success" title={`Saved ${shown.n}`} onDismiss={close} />
+        )}
+      </>
+    );
+  }
+
+  const save = () => document.querySelector<HTMLButtonElement>("button:not([aria-label])");
+
+  it("closes on its button, and shows again for the next outcome", async () => {
+    view = await mount(<Saving />);
+    await click(save());
+    expect(document.body.textContent).toContain("Saved 1");
+    await click(dismiss());
+    expect(document.body.textContent).not.toContain("Saved");
+    await click(save());
+    expect(document.body.textContent).toContain("Saved 2");
+    expect(dismiss()).not.toBeNull();
   });
 });

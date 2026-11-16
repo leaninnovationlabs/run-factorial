@@ -274,7 +274,7 @@ async def answer_completion(tick: _Tick, request: Event) -> bool:
         return False
 
     if isinstance(step, AgentStep):
-        verdict = await acceptance_verdict(tick, step, run.attempt, every_leaf=True)
+        verdict = await acceptance_verdict(tick, step, run, every_leaf=True)
     else:
         result = await _observed(
             evaluate(step.conditions, tick.ctx, every_leaf=True),

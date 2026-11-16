@@ -35,7 +35,12 @@ from orchestrator.api.deps import (
 )
 from orchestrator.api.services import adoption
 from orchestrator.api.services.actor import Actor
-from orchestrator.api.services.config import ConfigDraft, PlannedWrite, check_config
+from orchestrator.api.services.config import (
+    ConfigDraft,
+    PlannedWrite,
+    check_config,
+    sync_config,
+)
 from orchestrator.api.services.errors import Conflict, Forbidden
 from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.api.sessions import SESSION_COOKIE, mint_session
@@ -188,7 +193,7 @@ class FakeGitApi:
         self.contents = contents
         self.moved = moved
         self.sync_breaks = sync_breaks
-        self.trees: list[list[dict[str, str]]] = []
+        self.trees: list[list[dict[str, str | None]]] = []
         self.commits: list[dict[str, Any]] = []
         self.refs: list[tuple[str, str, bool]] = []
         self.order: list[str] = []
@@ -202,7 +207,15 @@ class FakeGitApi:
     @property
     def written(self) -> dict[str, str]:
         (tree,) = self.trees
-        return {entry["path"]: entry["content"] for entry in tree}
+        return {
+            str(entry["path"]): str(entry["content"]) for entry in tree if "content" in entry
+        }
+
+    @property
+    def removed(self) -> list[str]:
+        """Paths the tree deletes: an entry with a null sha and no content."""
+        (tree,) = self.trees
+        return [str(entry["path"]) for entry in tree if entry.get("sha", "") is None]
 
     async def _get_commit(self, owner: str, name: str, sha: str) -> Any:
         return SimpleNamespace(parsed_data=SimpleNamespace(tree=SimpleNamespace(sha="0" * 40)))
@@ -221,7 +234,12 @@ class FakeGitApi:
             raise _refused(422, "Update is not a fast forward")
         self.refs.append((ref, sha, force))
         if not self.sync_breaks:
-            self.contents.files[sha] = {**self.contents.files[BASE_SHA], **self.written}
+            kept = {
+                path: text
+                for path, text in self.contents.files[BASE_SHA].items()
+                if path not in self.removed
+            }
+            self.contents.files[sha] = {**kept, **self.written}
         self.contents.head = sha
         return SimpleNamespace(parsed_data=None)
 
@@ -237,7 +255,7 @@ def writer_for(api: FakeGitApi) -> ConfigCommitWriter:
         repo: str,
         branch: str,
         base_sha: str,
-        files: Mapping[str, str],
+        files: Mapping[str, str | None],
         message: str,
         record: Callable[[str], Awaitable[None]],
     ) -> str:
@@ -646,7 +664,7 @@ async def test_preview_and_commit_agree_on_gitlab_paths(async_session: AsyncSess
         )
     )
     await async_session.flush()
-    [lane] = [lane for lane in PROCESS_TEMPLATES[1].lanes if lane.key == "simple"]
+    [lane] = [lane for lane in PROCESS_TEMPLATES[0].lanes if lane.key == "simple"]
     content = lane.text.replace("# runtime: claude-api", f"runtime: {TEST_RUNTIME}")
     async with authed_client_for(app) as client:
         preview = await client.post(
@@ -662,8 +680,6 @@ async def test_preview_and_commit_agree_on_gitlab_paths(async_session: AsyncSess
         if offer["offered"] and offer["default_on"]
         for path in offer["paths"]
     )
-    assert "glab" in bodies[".factorial/agents/build-agent/instructions.md"]
-
     files = [{"path": path, "body": bodies[path]} for path in picked]
     response = await _post(app, project, {"content": content, "files": files})
     assert response.status_code == 201, response.text
@@ -1027,6 +1043,128 @@ async def test_a_created_file_outside_the_config_folder_writes_nothing(
     assert api.trees == []
 
 
+def with_deletes(body: dict[str, object], *deletes: dict[str, str]) -> dict[str, object]:
+    return {**body, "deleted": list(deletes)}
+
+
+OTHER_LANE = ".factorial/processes/process-other.yaml"
+
+
+async def test_a_deleted_file_is_removed_by_the_commit(async_session: AsyncSession) -> None:
+    app, api = app_with(async_session, extra={TRACKER: TRACKER_YAML})
+    project = await project_in(async_session)
+    response = await _post(
+        app, project, with_deletes(payload(), {"path": TRACKER, "base_sha": blob(TRACKER_YAML)})
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["deleted"] == [TRACKER]
+    assert api.removed == [TRACKER]
+    assert TRACKER not in api.written
+    assert TRACKER not in api.contents.files[NEW_SHA]
+
+
+async def test_deleting_another_process_file_retires_that_process_at_the_sync(
+    async_session: AsyncSession,
+) -> None:
+    other = lane("other")
+    app, api = app_with(async_session, extra={OTHER_LANE: other})
+    project = await project_in(async_session)
+    await sync_config(async_session, RepoConfigSource(api.contents), project)
+    response = await _post(
+        app, project, with_deletes(payload(), {"path": OTHER_LANE, "base_sha": blob(other)})
+    )
+    assert response.status_code == 201, response.text
+    outcomes = {row["process"]: row["outcome"] for row in response.json()["sync"]["results"]}
+    assert outcomes == {"other": "retired", "p": "created"}
+
+
+async def _on_two_processes(session: AsyncSession) -> tuple[FastAPI, FakeGitApi, Project]:
+    """`p` and `other` on the branch and synced, with the agents both name."""
+    files = {PROCESS_PATH: lane(), OTHER_LANE: lane("other")}
+    for path, proposed in _proposal_for(lane()).files.items():
+        files[path] = proposed.body
+    app, api = app_with(session, extra=files)
+    project = await project_in(session)
+    await sync_config(session, RepoConfigSource(api.contents), project)
+    return app, api, project
+
+
+async def test_deleting_the_process_on_screen_commits_its_removal_and_retires_it(
+    async_session: AsyncSession,
+) -> None:
+    app, api, project = await _on_two_processes(async_session)
+    body = {"content": lane(), "deleted": [{"path": PROCESS_PATH, "base_sha": blob(lane())}]}
+    response = await _post(app, project, body)
+    assert response.status_code == 201, response.text
+    assert response.json()["written"] == []
+    assert response.json()["deleted"] == [PROCESS_PATH]
+    assert api.written == {}
+    assert api.removed == [PROCESS_PATH]
+    assert api.commits[0]["message"] == "Delete the p process from the Factorial dashboard"
+    outcomes = {row["process"]: row["outcome"] for row in response.json()["sync"]["results"]}
+    assert outcomes == {"other": "created", "p": "retired"}
+
+
+async def test_a_retried_delete_of_the_process_on_screen_is_a_no_op(
+    async_session: AsyncSession,
+) -> None:
+    """The first response was lost and the person pressed again: the process stays deleted."""
+    app, api, project = await _on_two_processes(async_session)
+    body = {"content": lane(), "deleted": [{"path": PROCESS_PATH, "base_sha": blob(lane())}]}
+    assert (await _post(app, project, body)).status_code == 201
+    retry = await _post(app, project, body)
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["committed"] is False
+    assert len(api.trees) == 1
+    assert PROCESS_PATH not in api.contents.files[api.contents.head]
+
+
+async def test_deleting_the_only_process_is_a_422_in_plain_words(
+    async_session: AsyncSession,
+) -> None:
+    app, api = app_with(async_session, extra={PROCESS_PATH: lane()})
+    project = await project_in(async_session)
+    body = {"content": lane(), "deleted": [{"path": PROCESS_PATH, "base_sha": blob(lane())}]}
+    response = await _post(app, project, body)
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A project keeps at least one process. Add another process before you delete this one."
+    )
+    assert api.trees == []
+
+
+async def test_a_delete_of_a_file_that_moved_is_a_409_that_writes_nothing(
+    async_session: AsyncSession,
+) -> None:
+    app, api = app_with(async_session, extra={TRACKER: TRACKER_YAML})
+    project = await project_in(async_session)
+    response = await _post(
+        app, project, with_deletes(payload(), {"path": TRACKER, "base_sha": blob("older\n")})
+    )
+    assert response.status_code == 409
+    assert TRACKER in response.json()["detail"]
+    assert api.trees == []
+
+
+async def test_deleting_a_file_a_manifest_still_names_commits_nothing_and_names_the_manifest(
+    async_session: AsyncSession,
+) -> None:
+    app, api = app_with(async_session, present_skills=["project-constitution"])
+    project = await project_in(async_session)
+    response = await _post(
+        app,
+        project,
+        with_deletes(
+            payload(present_skills=["project-constitution"]),
+            {"path": SKILL, "base_sha": blob("# mine\n")},
+        ),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["path"].endswith("/agent.yaml")
+    assert "project-constitution" in response.json()["detail"]
+    assert api.trees == []
+
+
 async def test_an_edit_the_loader_rejects_commits_nothing(async_session: AsyncSession) -> None:
     app, api = app_with(async_session, extra={TRACKER: TRACKER_YAML})
     project = await project_in(async_session)
@@ -1038,9 +1176,8 @@ async def test_an_edit_the_loader_rejects_commits_nothing(async_session: AsyncSe
         ),
     )
     assert response.status_code == 422
-    assert response.json()["detail"].startswith(
-        "The file is not valid YAML: while parsing a flow node"
-    )
+    assert response.json()["path"] == TRACKER
+    assert response.json()["detail"].startswith(f"{TRACKER}: The file is not valid YAML at line ")
     assert api.trees == []
 
 
@@ -1176,8 +1313,71 @@ async def test_a_parsed_file_that_is_not_text_is_a_422_naming_it(
         ),
     )
     assert response.status_code == 422, response.text
-    assert TRACKER in response.json()["detail"]
+    assert response.json()["path"] == TRACKER
+    assert response.json()["detail"].startswith(f"{TRACKER}: ")
     assert api.trees == []
+
+
+# --- the whole-draft check ------------------------------------------------------------------------
+
+
+async def _check(app: FastAPI, project: Project, body: dict[str, object]) -> httpx.Response:
+    async with authed_client_for(app) as client:
+        return await client.post(f"/api/projects/{project.id}/config-checks", json=body)
+
+
+async def test_a_check_of_a_sound_draft_says_what_a_commit_would_do_and_writes_nothing(
+    async_session: AsyncSession,
+) -> None:
+    app, api = app_with(async_session, extra={TRACKER: TRACKER_YAML})
+    project = await project_in(async_session)
+    response = await _check(
+        app, project, with_deletes(payload(), {"path": TRACKER, "base_sha": blob(TRACKER_YAML)})
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is True
+    assert body["problems"] == []
+    assert PROCESS_PATH in body["would_write"]
+    assert body["would_delete"] == [TRACKER]
+    assert api.trees == []
+    assert await _versions(async_session, project) == []
+
+
+async def test_a_check_names_the_file_a_folder_problem_is_in(async_session: AsyncSession) -> None:
+    app, _ = app_with(async_session, extra={TRACKER: TRACKER_YAML})
+    project = await project_in(async_session)
+    response = await _check(
+        app,
+        project,
+        with_edits(
+            payload(), {"path": TRACKER, "body": "kind: [\n", "base_sha": blob(TRACKER_YAML)}
+        ),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    (problem,) = body["problems"]
+    assert body["valid"] is False
+    assert problem["path"] == TRACKER
+    assert problem["message"].startswith("The file is not valid YAML at line ")
+
+
+async def test_a_check_of_text_that_does_not_parse_reads_nothing_from_the_forge(
+    async_session: AsyncSession,
+) -> None:
+    app, api = app_with(async_session)
+    project = await project_in(async_session)
+
+    async def unread(repo: str, ref: str) -> str:
+        raise AssertionError("a draft that does not parse must not reach the forge")
+
+    api.contents.resolve_ref = unread  # type: ignore[method-assign]
+    response = await _check(app, project, {"content": "steps: [\n"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is False
+    assert body["problems"][0]["path"] is None
+    assert body["problems"][0]["message"].startswith("The file is not valid YAML")
 
 
 # --- the MCP surface (design.md §7.17) ----------------------------------------------------------

@@ -25,3 +25,4 @@ export {
 } from "./preview";
 export { type RedoOffer, RedoStep } from "./RedoStep";
 export { retryOffer } from "./retry";
+export { stepAwaitsReview, useReviewOffer } from "./review";

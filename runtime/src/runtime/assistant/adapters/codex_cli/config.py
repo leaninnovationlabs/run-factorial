@@ -45,8 +45,12 @@ def build_assistant_config(
     tool_socket: Path,
     auth_mode: str,
     bedrock_region: str | None,
+    bedrock_base_url: str | None = None,
 ) -> tuple[str, dict[str, str]]:
     """`config.toml` text and extra env for the Codex child.
+
+    `bedrock_base_url` is where Codex sends its model requests in place of Bedrock's own
+    address: the turn's relay (`relay.py`).
 
     The model gets the factorial MCP server and no tool of Codex's own that reaches the machine:
     no shell, no image reader, no sub-agents, no web search. The child runs as the assistant's
@@ -64,7 +68,7 @@ def build_assistant_config(
         bedrock = bedrock_provider_config(bedrock_region)
         lines += bedrock_provider_lines(
             provider=bedrock["provider"],
-            base_url=bedrock["base_url"],
+            base_url=bedrock_base_url or bedrock["base_url"],
             env_key=bedrock["env_key"],
             name=bedrock.get("name", "Bedrock Grok 4.6"),
         )

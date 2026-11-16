@@ -5,35 +5,32 @@
 # then appears in the operator's config — two prompt sets are two agents.
 #
 # A variant's `lane:` is the topology its prompts describe (absent: any lane), and its `forge:` the
-# host whose CLI they call (absent: github). A project gets only its own forge's variants, so a
-# GitLab project on a stacked lane gets the stub for any agent with no GitLab stacked variant.
+# one host whose CLI they call (absent: the prompts give both `gh` and `glab` and say how to
+# choose). A project never gets another forge's variant, so a GitLab project on a stacked lane
+# gets the stub for the stacked agents, which call `gh` only.
 #
 # The version identifies which shipped content a file came from. Bump it on any content change.
 agents:
   plan-agent:
-    version: 8
+    version: 9
     variants:
       stacked:
         lane: stacked
+        forge: github
         summary: >-
           The implementation pull request targets the spec branch; the spec branch reaches the
           base branch only at the last gate.
       base-target:
         lane: base-target
         summary: >-
-          Every pull request targets the base branch; the spec merges at the first gate and the
-          implementation branches from it.
-      base-target-gitlab:
-        lane: base-target
-        forge: gitlab
-        summary: >-
-          Every merge request targets the base branch and is opened with glab; the spec merges at
-          the first gate and the implementation branches from it.
+          Every pull request, or merge request on GitLab, targets the base branch; the spec
+          merges at the first gate and the implementation branches from it.
   build-agent:
-    version: 7
+    version: 8
     variants:
       stacked:
         lane: stacked
+        forge: github
         summary: >-
           Branches from the spec branch and opens its pull request against it, so the diff a
           reviewer sees is the implementation alone.
@@ -42,26 +39,48 @@ agents:
         summary: >-
           Branches from the base branch after the spec has merged, and opens its pull request
           against the base branch.
-      base-target-gitlab:
-        lane: base-target
-        forge: gitlab
-        summary: >-
-          Branches from the base branch after the spec has merged, and opens its merge request
-          against the base branch with glab.
   test-agent:
-    version: 5
+    version: 6
     variants:
       base-target:
         lane: base-target
         summary: >-
           Runs the repository's suite against the implementation pull request and posts a
           pass/fail verdict as a comment.
-      base-target-gitlab:
+  # The Superpowers template's four agents. One branch carries the whole ticket, so each names
+  # its step's own branch prefix and base branch and no lane-wide fact.
+  sp-brainstorm-agent:
+    version: 2
+    variants:
+      base-target:
         lane: base-target
-        forge: gitlab
         summary: >-
-          Runs the repository's suite against the implementation merge request and posts a
-          pass/fail verdict as an MR note with glab.
+          Agrees a design with the ticket's owner in the run's terminal, pushes it on a new
+          branch, and asks for a review in the dashboard.
+  sp-planning-agent:
+    version: 2
+    variants:
+      base-target:
+        lane: base-target
+        summary: >-
+          Turns the approved design into a plan of small test-first tasks on the ticket's
+          branch, and asks for a review in the dashboard.
+  sp-implement-agent:
+    version: 2
+    variants:
+      base-target:
+        lane: base-target
+        summary: >-
+          Builds the approved plan one task at a time, test first, and opens the pull request
+          against the base branch.
+  sp-review-agent:
+    version: 2
+    variants:
+      base-target:
+        lane: base-target
+        summary: >-
+          Reviews the whole pull request against its design and plan, fixes what must be fixed,
+          and posts a verdict as a comment.
 
 # Shared skills, at `.factorial/skills/<name>/SKILL.md`. Listed here for the same versioning reason,
 # but never scaffolded on their own: a skill ships because an agent taking its template declares
@@ -73,6 +92,7 @@ skills:
     variants:
       stacked:
         lane: stacked
+        forge: github
         summary: >-
           Names the spec and implementation branches by their stacked-lane prefixes in its
           naming table.
@@ -81,20 +101,23 @@ skills:
         summary: >-
           Names the spec and implementation branches by the step whose `workspace.branch` sets
           each prefix, since a base-target lane settles no lane-wide prefix.
-      base-target-gitlab:
-        lane: base-target
-        forge: gitlab
-        summary: >-
-          The base-target naming table, for a lane whose reviews happen on GitLab merge
-          requests.
   spec-page:
-    version: 5
-    variants:
-      github:
-        summary: Links the spec files on GitHub, and the spec pull request on a rework.
-      gitlab:
-        forge: gitlab
-        summary: Links the spec files on GitLab, and the spec merge request on a rework.
+    version: 6
+  # The Superpowers agents' skills, adapted from superpowers (github.com/obra/superpowers, MIT).
+  # Like `spec-page`, they name no lane fact and no one forge, so each is one folder with no
+  # variants.
+  brainstorming:
+    version: 1
+  writing-plans:
+    version: 1
+  executing-plans:
+    version: 1
+  test-driven-development:
+    version: 1
+  verification-before-completion:
+    version: 1
+  reviewing-a-branch:
+    version: 1
 
 # MCP servers. `offered_with` ships a file beside the named agents' files WITHOUT any agent
 # declaring it, for a feature the operator turns on by hand. An `example` ships as

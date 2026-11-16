@@ -123,14 +123,28 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-type Drawer = { latest?: StepRun | null; onSelectRun?: (stepRunId: number) => void };
+type Drawer = {
+  latest?: StepRun | null;
+  onSelectRun?: (stepRunId: number) => void;
+  /** The step awaits review, and its Approve is drawn in the terminal. */
+  review?: boolean;
+};
 
-function drawer(shown: StepRun, { latest = shown, onSelectRun = () => {} }: Drawer = {}) {
+function drawer(
+  shown: StepRun,
+  { latest = shown, onSelectRun = () => {}, review = false }: Drawer = {},
+) {
   return (
     <QueryClientProvider client={client}>
       <AuthProvider>
         <SignOut />
-        <TerminalTab run={shown} ticketId={1} latest={latest} onSelectRun={onSelectRun} />
+        <TerminalTab
+          run={shown}
+          ticketId={1}
+          latest={latest}
+          onSelectRun={onSelectRun}
+          approve={review ? "terminal" : null}
+        />
       </AuthProvider>
     </QueryClientProvider>
   );
@@ -203,10 +217,15 @@ const announced = (element: Element) =>
 /** Holds a minimum height whatever it holds. */
 const reservesHeight = (element: Element) => /(^|\s)min-h-\d/.test(element.className);
 
-/** The connection's status line, in the row just above the terminal box. */
+/** The connection's status line, in the toolbar just above the terminal box. */
 function statusLine(page: HTMLElement): HTMLElement {
-  const box = page.querySelector("[data-fake-xterm]")?.parentElement;
-  return box?.previousElementSibling?.querySelector('p[role="status"]') as HTMLElement;
+  return toolbar(page)?.querySelector("[data-connection-status]") as HTMLElement;
+}
+
+/** The one row over the terminal box: the connection, the viewers and the seat. */
+function toolbar(page: HTMLElement): HTMLElement {
+  return page.querySelector("[data-fake-xterm]")?.parentElement
+    ?.previousElementSibling as HTMLElement;
 }
 
 /** What a sighted reader sees of the connection's progress: the status line while it shows, the
@@ -275,24 +294,35 @@ describe("TerminalTab", () => {
 
   it("keeps the terminal box the same height after it attaches", async () => {
     const page = await show("operator@example.com");
-    const row = statusLine(page).parentElement as HTMLElement;
-    const header = row.previousElementSibling as HTMLElement;
-    expect(reservesHeight(header)).toBe(true);
+    const row = toolbar(page);
     expect(reservesHeight(row)).toBe(true);
+    expect(row.previousElementSibling?.matches(".empty\\:hidden:empty")).toBe(true);
     await attach();
     expect(announced(statusLine(page))).toBe(true);
     expect(statusLine(page).textContent).toBe("Loading the conversation…");
     await output(new Uint8Array([0x68, 0x69]));
     await parse();
-    expect(statusLine(page).parentElement).toBe(row);
-    expect(row.previousElementSibling).toBe(header);
-    expect(reservesHeight(header)).toBe(true);
+    // The same one row over the box, holding its height, with nothing gained above it.
+    expect(toolbar(page)).toBe(row);
     expect(reservesHeight(row)).toBe(true);
+    expect(row.previousElementSibling?.matches(".empty\\:hidden:empty")).toBe(true);
     expect(hiddenBy(row, ["sr-only", "invisible", "hidden"])).toBe(false);
     expect(getComputedStyle(row).display).not.toBe("none");
     expect(shown(statusLine(page))).toBe(false);
     expect(announced(statusLine(page))).toBe(true);
     expect(statusLine(page).textContent).toBe("Connected.");
+  });
+
+  it("runs the terminal box edge to edge under one toolbar", async () => {
+    const page = await show("operator@example.com");
+    await attach();
+    const box = page.querySelector("[data-fake-xterm]")?.parentElement as HTMLElement;
+    const classes = box.className.split(/\s+/);
+    expect(classes.filter((name) => /^(m[xy]?|rounded)(-|$)/.test(name))).toEqual([]);
+    expect(classes).not.toContain("border");
+    // Nothing under the box: the seat sits in the toolbar over it.
+    expect(box.nextElementSibling).toBeNull();
+    expect(toolbar(page).textContent).toContain("Ctrl+] leaves the terminal.");
   });
 
   it("counts down while it waits to reconnect", async () => {
@@ -680,6 +710,125 @@ describe("the Waiting banner", () => {
   });
 });
 
+describe("a step that awaits review", () => {
+  const approvable = () =>
+    vi.spyOn(api, "getReview").mockResolvedValue({
+      awaits_review: true,
+      branch: "build/12-billing",
+      head_sha: "4f1c2a9e0b7d",
+      pushed: true,
+      approval: null,
+      offered: true,
+      refusal: null,
+    });
+
+  it("offers Approve on an idle run whose terminal is not attachable yet", async () => {
+    approvable();
+    const idle = run(7, "build", 1, "idle") as StepRun;
+    const page = await show(
+      "operator@example.com",
+      idle,
+      terminal({ status: "idle", attachable: false, why_not: "the session is starting" }),
+      { review: true },
+    );
+    expect(page.textContent).toContain("Terminal not available");
+    expect(byText(page, "button", "Approve")).not.toBeNull();
+  });
+
+  it("keeps Approve, once, while an open session shows the parked run's workspace", async () => {
+    approvable();
+    const opened = terminal({
+      ...PARKED_IDLE,
+      kind: "inspect",
+      attachable: true,
+      why_not: null,
+      why_not_code: null,
+      inspect: { status: "open", reason: null, startable: false, unavailable: null },
+    });
+    const page = await show("operator@example.com", PARKED, opened, { review: true });
+    await attach({ target: "inspect" });
+    await settle();
+    expect(page.textContent).toContain("Read-only view of the agent's session as it ended.");
+    const approves = [...page.querySelectorAll("button")].filter(
+      (button) => button.textContent?.trim() === "Approve",
+    );
+    expect(approves).toHaveLength(1);
+  });
+
+  it("offers Approve on a parked run whose terminal route could not be read", async () => {
+    approvable();
+    const unread = () => {
+      throw new ApiError(409, "the terminal is switched off");
+    };
+    const page = await show("operator@example.com", PARKED, unread, { review: true });
+    expect(byText(page, "button", "Approve")).not.toBeNull();
+  });
+
+  it("asks for a review of a parked run once its branch has a commit to approve", async () => {
+    approvable();
+    const page = await show("operator@example.com", PARKED, PARKED_IDLE, { review: true });
+    expect(page.textContent).toContain("Waiting for your review");
+    expect(page.textContent).toContain("The agent's work is ready for your review.");
+  });
+
+  it("words a stop with nothing pushed as a wait for an answer, with Approve disabled", async () => {
+    vi.spyOn(api, "getReview").mockResolvedValue({
+      awaits_review: true,
+      branch: null,
+      head_sha: null,
+      pushed: false,
+      approval: null,
+      offered: true,
+      refusal: "Nothing is pushed yet.",
+    });
+    const page = await show("operator@example.com", PARKED, PARKED_IDLE, { review: true });
+    expect(page.textContent).toContain("Waiting for you");
+    expect(page.textContent).toContain("Nobody answered, so the session paused.");
+    expect(page.textContent).not.toContain("Waiting for your review");
+    expect(page.textContent).not.toContain("ready for your review");
+    expect(byText(page, "button", "Approve")?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("words a stop as a wait for an answer when the head is an earlier step's, Approve enabled", async () => {
+    vi.spyOn(api, "getReview").mockResolvedValue({
+      awaits_review: true,
+      branch: "build/12-billing",
+      head_sha: "4f1c2a9e0b7d",
+      pushed: false,
+      approval: null,
+      offered: true,
+      refusal: null,
+    });
+    const page = await show("operator@example.com", PARKED, PARKED_IDLE, { review: true });
+    expect(page.textContent).toContain("Nobody answered, so the session paused.");
+    expect(page.textContent).not.toContain("ready for your review");
+    expect(byText(page, "button", "Approve")?.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("claims no work is ready before the review is read", async () => {
+    vi.spyOn(api, "getReview").mockReturnValue(new Promise(() => {}));
+    const parksAt = new Date(Date.now() + 12.5 * 60_000).toISOString();
+    const idle = run(7, "build", 1, "idle") as StepRun;
+    const page = await show(
+      "operator@example.com",
+      idle,
+      terminal({
+        status: "idle",
+        idle: {
+          reason: "turn_end",
+          since: null,
+          question: null,
+          parks_at: parksAt,
+          at_deadline: "park",
+        },
+      }),
+      { review: true },
+    );
+    expect(page.textContent).toContain("The agent is waiting at its prompt.");
+    expect(page.textContent).not.toContain("ready for your review");
+  });
+});
+
 describe("without tickets:terminal", () => {
   it("never connects to a live session, and says why", async () => {
     permissions = MEMBER_PERMISSIONS;
@@ -985,8 +1134,9 @@ describe("the writer seat", () => {
     const page = await show("operator@example.com");
     await attach(held());
     expect(xterm.props?.typing).toBe("off");
-    expect(page.textContent).toContain(`${TEAMMATE} is typing`);
-    expect(page.textContent).toContain(`2 watching · ${TEAMMATE} typing`);
+    // Named once in the toolbar, by the seat line, not again beside the viewer count.
+    expect(toolbar(page).textContent).toContain(`${TEAMMATE} is typing`);
+    expect(toolbar(page).textContent).not.toContain(`· ${TEAMMATE} typing`);
     expect(byText(page, "button", "Take over")).not.toBeNull();
     await act(async () => xterm.props?.onData("x", true));
     expect(last().sent).toEqual([]);

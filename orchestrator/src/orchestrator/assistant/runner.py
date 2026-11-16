@@ -56,7 +56,7 @@ from orchestrator.assistant.prompt import system_prompt, turn_message
 from orchestrator.assistant.state_store import PostgresStateStore
 from orchestrator.assistant.toolbox import TurnToolbox
 from orchestrator.assistant.turns import NOT_SET_UP, RESTART_NOTICE, finish_turn, renew_lease
-from orchestrator.assistant.vocabulary import BACKENDS
+from orchestrator.assistant.vocabulary import BACKENDS, HOST_ROLE_MODE
 from orchestrator.db.base import JsonDict
 from orchestrator.db.models import (
     ChatConversation,
@@ -205,7 +205,7 @@ async def _turn_credential(
     wait under the conversation's lock."""
     if host_bedrock_refused(assistant, multi_org=deps.settings().multi_org.enabled):
         return None
-    if assistant.backend == "codex_cli" and assistant.auth_mode == "bedrock":
+    if assistant.auth_mode == HOST_ROLE_MODE:
         try:
             return SecretStr(await asyncio.to_thread(mint_bearer, region=assistant.bedrock_region))
         except BedrockMintError:
@@ -307,7 +307,7 @@ async def _prepare(turn_id: int, deps: RunnerDeps, owner: str) -> _Prepared | No
             history=await _history(session, turn),
             resume_session=(
                 conversation.backend_session_id
-                if conversation.backend_kind == assistant.backend
+                if backend.supports_resume and conversation.backend_kind == assistant.backend
                 else None
             ),
             limits=TurnLimits(
@@ -344,6 +344,7 @@ async def _fail_config(
     *,
     notice: str | None = NOT_SET_UP,
 ) -> None:
+    _log_failure(turn.id, TurnFailure.CONFIG, message)
     ended = await finish_turn(
         session,
         turn,
@@ -490,9 +491,17 @@ async def _run(turn_id: int, prepared: _Prepared, deps: RunnerDeps, owner: str) 
         await _end(turn_id, deps, owner, writer, outcome or _STREAM_ENDED)
 
 
+def _log_failure(turn_id: int, failure: TurnFailure, message: str | None) -> None:
+    """A backend that reports its own failure raises nothing, so no traceback says why: without
+    this line the reason is on the turn's row and nowhere a person watching the process looks."""
+    log.warning("assistant turn %s failed (%s): %s", turn_id, failure, message)
+
+
 async def _end(
     turn_id: int, deps: RunnerDeps, owner: str, writer: _Writer | None, outcome: _Outcome
 ) -> None:
+    if outcome.failure is not None:
+        _log_failure(turn_id, outcome.failure, outcome.message)
     if writer is not None:
         try:
             await writer.close()

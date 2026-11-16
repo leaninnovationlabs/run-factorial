@@ -16,9 +16,9 @@ import type {
   TicketStatus,
 } from "./types";
 
-/** `live` is the list page's: admission changes under it. The project switcher in the side
- *  navigation reads the same rows and needs no interval — a name changes about never, and it is
- *  mounted on every page of every project. */
+/** `live` is the list page's: admission changes under it. The project switcher in the top bar
+ *  reads the same rows and needs no interval — a name changes about never, and it is mounted on
+ *  every page of every project. */
 export function useProjects({ live = true }: { live?: boolean } = {}) {
   return useQuery({
     queryKey: keys.projects,

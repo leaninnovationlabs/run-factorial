@@ -18,20 +18,10 @@
 [![Website](https://img.shields.io/badge/website-runfactorial.com-E8703A?style=flat)](https://www.runfactorial.com)
 [![Docs](https://img.shields.io/badge/docs-runfactorial.com%2Fdocs-E8703A?style=flat)](https://www.runfactorial.com/docs)
 
-**The assembly line for AI software delivery.**
-
 [Website](https://www.runfactorial.com) ·
 [Docs](https://www.runfactorial.com/docs) ·
 [Quick setup](https://www.runfactorial.com/docs/run-the-public-image/) ·
 [Design](docs/design.md)
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lane-dark.webp">
-  <img alt="A ticket moves through a process: issue, plan, spec gate, build, test, code gate, security scan and deploy" src="docs/diagrams/lane-light.webp" width="100%">
-</picture>
-
-Each step waits for evidence that the orchestrator checks itself.
-[See it step by step](https://www.runfactorial.com/docs/process-lifecycle/#example-lane).
 
 </div>
 
@@ -41,57 +31,107 @@ Each step waits for evidence that the orchestrator checks itself.
 > [SECURITY.md](SECURITY.md). The documentation is at
 > [runfactorial.com/docs](https://www.runfactorial.com/docs).
 
-A person writes a request as a GitHub issue, adds the label `factorial:new`, and assigns an
-owner. The ADLC orchestrator admits the ticket and walks it through the process that the
-repository defines in `.factorial/processes/`. A repository can define more than one process,
-and an issue names which one it enters. Each step runs an agent or waits at a human gate. An
-agent writes its work on its own branch and opens its own pull request. A person approves at
-each gate, and only a human review merges agent code to `main`.
 
-The orchestrator runs a reconciliation loop for each active ticket: observe, evaluate,
-act, project. It polls GitHub for the true state. A webhook is only a wake-up signal that
-starts an immediate poll, so a lost webhook can never corrupt state. The state machine
-lives in Postgres. Issue labels (`factorial:<step>`, `factorial:blocked`, `factorial:interrupted`,
-`factorial:waiting`, `factorial:exit`, `factorial:done`) are a projection of that state, for
-human visibility.
-Postconditions gate each step: the orchestrator trusts predicates, never an agent's
-self-report. There is one exception. A person can move a step past its postconditions
-from the dashboard. The orchestrator records the name of that person, and the step does
-not count as a success.
 
-Three labels are different. Their removal does something. You stop a run from the
-dashboard, and the orchestrator parks the ticket with `factorial:interrupted`. You remove
-the label, and the agent continues its own session. Comments you leave in the meantime
-become its next instruction. An agent that waits too long for an answer parks
-with `factorial:waiting`, and its removal also continues the session. You send a ticket
-away from the dashboard, with the `factorial:exit` label, or by closing the issue, and the
-orchestrator parks it as exited. You reopen the issue if you closed it, remove the label,
-and the ticket gets a fresh try at the step it left. An interrupted run continues where it
-stopped instead.
+**The assembly line for AI software delivery.**
 
-Agents run through runtime adapters behind one contract. The `claude_cli` adapter
-runs the `claude` CLI, and the `codex_cli` adapter runs the `codex` CLI. Each runs an
-agent in a git worktree on the host, with no container.
-The `claude_e2b` and `codex_e2b` adapters run the same CLIs in an E2B sandbox, one for each run. The
-model credential and the GitHub token stay outside the sandbox. The one exception is a codex
-subscription login, which is a file (decision 25). A process names
-a runtime that an operator creates on the Runtimes page. That runtime holds the vendor
-key and selects the host or a cloud sandbox (decision 36). A cloud sandbox runtime also holds
-the key and the template of its E2B team, so each runtime can use a different E2B team.
+Factorial runs coding agents, such as Claude Code and Codex, through a process that you define
+in your repository. Agents do the work of each step.
+People approve at the gates. Leadership sees the cost, the agent runtime and the tokens of
+each ticket and each project.
+
+> [!TIP]
+> Check out our hosted version of Factorial at [www.runfactorial.com](https://www.runfactorial.com).
+
+## AI-powered assembly line for end to end delivery
+
+The recording below shows one ticket on the line. You can build your own process by defining
+the steps, gates, and retries.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/lane-dark.webp">
+  <img alt="A ticket moves through a process: issue, plan, spec gate, build, test, code gate, security scan and deploy" src="docs/diagrams/lane-light.webp" width="100%">
+</picture>
+
+## Nothing to migrate
+
+Factorial works with the tools you already have. Your issues, pull requests and CI stay as
+they are. Factorial sits on top of your issue tracker, your source repository and your CI/CD.
+It adds the process, the gates and the record.
+
+- **Your GitHub setup stays the same.** Factorial installs as a GitHub App with a narrow
+  permission set. It reads and writes issues, pull requests and branches. It never gets
+  permission to change your CI workflows.
+- **Your agents, your vendor accounts.** Runtimes wrap the `claude` and `codex` CLIs that
+  your developers already use. The vendor key is yours, and Factorial stores it encrypted.
+  One process can use both CLIs.
+- **Existing repositories are welcome.** Onboarding adds one folder in one pull request, and
+  nothing else changes. A legacy monolith with its own CI and branch rules joins the same way
+  as a new repository.
+
+## How it works
+
+**1. Onboard a repository.** Onboarding is one pull request to your own repository. It adds
+a `.factorial/` folder that holds the process, the agent manifests and the prompts. The folder
+lives in git with the code.
+
+```
+your-repo/
+├─ .github/workflows/ci.yml        unchanged
+├─ src/                            unchanged
+└─ .factorial/                     one pull request adds this
+   ├─ processes/process-fix.yaml   the process: steps, gates, retries
+   ├─ agents/build-agent/          manifest and prompt for each agent
+   └─ mcp/                         tools that the agents can ask for
+```
+
+Start from a ready-made process (plan, spec review, build, test, code review), or write your own
+in YAML. A repository can define more than one process, and an issue names the one it enters.
+Each step names a runtime that an operator creates on the Runtimes page. A runtime holds the
+vendor key and runs the CLI on the host or in a runtime environment, such as an E2B sandbox, one for each run.
+On the host, the agent runs in a git worktree, with no container.
+The repository asks for MCP tools, and the operator allows them, so a change in the repository
+cannot give itself new access. Each ticket keeps a snapshot of the process it entered with, so
+a config change never disturbs work in progress.
+
+**2. Deliver tickets.** A person writes a request as a GitHub issue. In the ready-made
+processes, the label `factorial:new` and an owner let the issue in. The process file sets this
+entry condition, and you can change it. From then on, the orchestrator drives. It starts the
+agent for the current step, watches GitHub for the result, checks the postconditions, and
+promotes or retries.
+
+- Each agent works in an isolated workspace with a one-hour token for one repository. The
+  orchestrator mints that token for that run alone.
+- Each agent step ends in a pull request or the required outcome. You set the rules
+  that each agent must follow, for example that an agent never merges its code to `main`.
+- A human gate parks the ticket, assigns the reviewers and waits. Only a person's approval
+  lets agent code merge to `main`.
+- The orchestrator trusts postconditions, never an agent's self-report. A step moves on only
+  when its predicates hold: a branch exists, a pull request is open, CI is green.
+- You can stop a run from the dashboard and leave a comment. Continue the run from the
+  dashboard, or remove the `factorial:interrupted` label from the issue. The agent continues its
+  own session, with your comment as its next instruction.
+
+The orchestrator runs a reconciliation loop for each active ticket: observe, evaluate, act,
+project. It polls GitHub for the true state. A webhook only starts an immediate poll, so a lost
+webhook can never corrupt state. The state machine lives in Postgres, and the `factorial:*`
+issue labels show that state to people.
+
+**3. Understand and optimize.** Every action is an event in an append-only log. The dashboard,
+the audit trail and the cost reports are all views of that one record, so they never disagree.
+Leadership sees the total cost, agent runtime and tokens of each project. Engineers drill down
+to the ticket and the step. Move a step from one agent to another, and measure the difference
+on real work.
 
 The architecture and its numbered decisions live in [`docs/design.md`](docs/design.md).
 
-## How an issue becomes merged code
 
-The recording at the top of this page shows one ticket on the line.
-The [Process lifecycle](https://www.runfactorial.com/docs/process-lifecycle/#example-lane)
-page shows the same line step by step.
 
 ---
 
 ## How to run Factorial
 
-Factorial runs in three ways. Start with the public image if you only want to try it.
+Factorial runs in three ways. Start with the public image to try out Factorial.
 
 | Way | You need | Use it to |
 |---|---|---|

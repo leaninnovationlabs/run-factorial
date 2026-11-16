@@ -3,7 +3,8 @@
  * when the step declares one, its Preview, side by side. A preview that holds the files the step
  * declares is called Files. Each collapses to a bar in its own place,
  * so the order never changes; a bar expands its section again. Full width shows one section alone.
- * The last one open stays open. A link that names the terminal opens it alone; otherwise both open.
+ * The last one open stays open. A link that names a section, as the block header's Terminal and
+ * Preview buttons do, opens it alone; `?output=`, which names neither, opens both.
  *
  * Every run has a Terminal section, even one that never had a terminal: it says so there, and its
  * Transcript switch shows the run's transcript in the terminal's place. The section opens on the
@@ -20,6 +21,10 @@
  * for a terminal's lines or a page. A link that names one opens that one, and expanding a bar
  * collapses the section that was open. A window that narrows to a phone shows only the first
  * section that was open.
+ *
+ * A step that awaits review offers Approve once in the drawer: in its footer, under Files and
+ * Preview, when the step has that section and no change request holds the footer, and in the
+ * terminal otherwise, beside Resume.
  *
  * Keyed on the step by its caller, not on the run: moving to another attempt keeps what the
  * reader had open, the Preview's tab too. An attempt that arrives as a live agent run opens its
@@ -50,7 +55,9 @@ import { useIsPhone } from "../ui/media";
 import type { ActivitySegment, LongContent, Spawn } from "./activity";
 import { EventRow } from "./EventRow";
 import { ChangeRequestForm, PreviewPane } from "./PreviewPane";
+import { ReviewApproval } from "./ReviewApproval";
 import { RunRuntime } from "./RunRuntime";
+import { useReviewOffer } from "./review";
 import { isLive } from "./runs";
 import { sessionReference, TranscriptBody, transcriptText } from "./Transcript";
 import { outcomeWords } from "./words";
@@ -79,6 +86,7 @@ export function OutputDrawer({
   forge,
   hasPreview,
   declaresFiles,
+  awaitsReview = false,
   named,
   reviewGate,
   reviewPr,
@@ -101,7 +109,9 @@ export function OutputDrawer({
   hasPreview: boolean;
   /** That preview declares files: the section is called Files. */
   declaresFiles: boolean;
-  /** `terminal` opens the terminal alone; otherwise every section opens. */
+  /** The step's pinned postconditions call `request_approval()` (`stepAwaitsReview`). */
+  awaitsReview?: boolean;
+  /** The section a link names, which opens alone; absent, every section opens. */
   named?: NamedSection;
   /** The gate that can send `run` back now (`reviewTarget`), or null. */
   reviewGate: string | null;
@@ -117,11 +127,7 @@ export function OutputDrawer({
   const sections = outputSections(hasPreview);
   const phone = useIsPhone();
   const [open, setOpen] = useState<NamedSection[]>(() =>
-    named === "terminal"
-      ? ["terminal"]
-      : phone
-        ? [named && sections.includes(named) ? named : "terminal"]
-        : sections,
+    named && sections.includes(named) ? [named] : phone ? ["terminal"] : sections,
   );
   const [mounted, setMounted] = useState<ReadonlySet<NamedSection>>(() => new Set(open));
   const [transcript, setTranscript] = useState(false);
@@ -156,6 +162,10 @@ export function OutputDrawer({
   const ids = useId();
   const idOf = (section: NamedSection) => `${ids}-${section}`;
   const drawer = useRef<DrawerHandle>(null);
+
+  // The gate's change request takes the footer first; Approve then stays in the terminal.
+  const approve = !awaitsReview ? null : hasPreview && !reviewGate ? "footer" : "terminal";
+  const { shown: approveShown } = useReviewOffer(run, approve === "footer");
 
   const runId = run.runtime_run_id;
   const activity = useRunActivity(run.id, Boolean(runId), isLive(run));
@@ -200,7 +210,7 @@ export function OutputDrawer({
       bare
       handle={drawer}
       footer={
-        reviewGate && (
+        reviewGate ? (
           <ChangeRequestForm
             key={changesOpen}
             ticketId={ticketId}
@@ -214,6 +224,8 @@ export function OutputDrawer({
               onSent(sent);
             }}
           />
+        ) : (
+          approveShown && <ReviewApproval run={run} ticketId={ticketId} />
         )
       }
       onClose={onClose}
@@ -264,6 +276,7 @@ export function OutputDrawer({
                       ticketId={ticketId}
                       latest={latest}
                       onSelectRun={onSelectRun}
+                      approve={approve}
                     />
                   ) : (
                     <div className="px-5 py-3">
@@ -401,6 +414,9 @@ function Section({
       {!expanded && (
         <Pressable
           ref={bar}
+          // Subtle: the slot's rule already divides it from its neighbour, and a default face
+          // would draw a rounded card inside it.
+          appearance="subtle"
           aria-expanded={false}
           aria-controls={id}
           onClick={moving(onToggle)}

@@ -49,6 +49,8 @@ export interface ProcessStepLike {
   gate?: GateLike;
   /** Read only for its predicate calls — see `conditionCalls`. */
   preconditions?: unknown;
+  /** Read for its predicate calls too, by `stepAwaitsReview`. */
+  postconditions?: unknown;
   /** Read only by `hasPreview`. */
   preview?: unknown;
 }

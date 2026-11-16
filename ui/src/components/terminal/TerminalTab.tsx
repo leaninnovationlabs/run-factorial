@@ -8,6 +8,12 @@
  * nothing to attach to — a parked session to Resume, or a kept run to Open session on. The
  * gateway stays the authority: a close it sends is read back through the same route.
  *
+ * A step that awaits review offers Approve under the Waiting banner, above Resume, and over an
+ * open session on a parked run, unless the drawer draws Approve in its footer (`approve`).
+ * Only once the review is `ready` (this run pushed, and a press would be accepted) does the banner
+ * ask for a review and Resume give up the primary look; before that the stop reads as a wait for
+ * an answer.
+ *
  * A Google session connects with its cookie. A reader signed in with the API token alone asks the
  * API for a one-use ticket before each attempt and offers it as a subprotocol, never in the URL;
  * the gateway records that reader's typing as `api-token`, since the token names no one. Signing
@@ -35,6 +41,8 @@ import { useRunTerminal, useTerminalRequests } from "../../api/queries";
 import type { StepRun, TerminalInfo, TerminalParked } from "../../api/types";
 import { useAuth } from "../../auth";
 import { formatAbsolute } from "../../format";
+import { ReviewApproval } from "../activity/ReviewApproval";
+import { useReviewOffer } from "../activity/review";
 import { isLive } from "../activity/runs";
 import { asSentence, viewClosed } from "../activity/words";
 import {
@@ -63,12 +71,16 @@ export function TerminalTab({
   ticketId,
   latest,
   onSelectRun,
+  approve = null,
 }: {
   run: StepRun;
   ticketId: number;
   /** The step's latest attempt: a rework may continue in this run's workspace. */
   latest: StepRun | null;
   onSelectRun: (stepRunId: number) => void;
+  /** Where the drawer draws Approve, for a step that waits at its prompt for a person's Approve
+   *  (`stepAwaitsReview`). */
+  approve?: "terminal" | "footer" | null;
 }) {
   const { sessionEmail } = useAuth();
   if (!sessionEmail) return null;
@@ -80,6 +92,7 @@ export function TerminalTab({
       me={sessionEmail}
       latest={latest}
       onSelectRun={onSelectRun}
+      approve={approve}
     />
   );
 }
@@ -218,12 +231,14 @@ function RunTerminal({
   me,
   latest,
   onSelectRun,
+  approve,
 }: {
   run: StepRun;
   ticketId: number;
   me: string;
   latest: StepRun | null;
   onSelectRun: (stepRunId: number) => void;
+  approve: "terminal" | "footer" | null;
 }) {
   // When the gateway last closed: the route may still say attachable until the loop's next pass.
   const [settling, setSettling] = useState<number | null>(null);
@@ -262,6 +277,13 @@ function RunTerminal({
   const onAsked = useCallback(() => setAsked(true), []);
   const onFocused = useCallback(() => setAsked(false), []);
   const waiting = Boolean(info?.idle && info.attachable);
+  // Until the review is `ready`, the stop is worded as a wait for an answer: the agent may only
+  // have asked a question.
+  const { ready, shown } = useReviewOffer(run, approve !== null);
+  // Placed in each branch that shows it, and drawn by at most one of them.
+  const approval = approve === "terminal" && shown && (
+    <ReviewApproval run={run} ticketId={ticketId} />
+  );
 
   if (!info) {
     // Unread, the gateway answers for itself: it refuses what this route would have.
@@ -273,10 +295,18 @@ function RunTerminal({
           onStopped={onStopped}
           onSeatNotice={onStopped}
           onRetrying={reread}
+          above={() => approval && <div className="px-3">{approval}</div>}
         />
       );
     }
-    if (terminal.isError) return <TerminalUnavailable why={NO_TERMINAL_PERMISSION} />;
+    if (terminal.isError) {
+      return (
+        <div className="space-y-3">
+          <TerminalUnavailable why={NO_TERMINAL_PERMISSION} />
+          {approval}
+        </div>
+      );
+    }
     return <Spinner label="Checking the terminal" />;
   }
   const idle = info.idle;
@@ -307,9 +337,15 @@ function RunTerminal({
           )}
           above={(seat) =>
             info.kind === "inspect" ? (
-              <OpenSessionNote keptUntil={info.kept_until} />
+              <>
+                <OpenSessionNote keptUntil={info.kept_until} />
+                {/* Opening the session to read the work does not take Approve away. */}
+                {approval && <div className="px-3">{approval}</div>}
+              </>
+            ) : idle ? (
+              <Waiting idle={idle} seat={seat} ready={ready} approve={approval} />
             ) : (
-              idle && <Waiting idle={idle} seat={seat} />
+              approval && <div className="px-3">{approval}</div>
             )
           }
         />
@@ -330,6 +366,8 @@ function RunTerminal({
                 ticketId={ticketId}
                 info={info}
                 parked={info.parked}
+                ready={ready}
+                approve={approval}
                 onAsked={onAsked}
                 onRefused={onFocused}
               />
@@ -338,7 +376,10 @@ function RunTerminal({
               )}
             </>
           ) : !canTerminal ? (
-            <TerminalUnavailable why={NO_TERMINAL_PERMISSION} />
+            <>
+              <TerminalUnavailable why={NO_TERMINAL_PERMISSION} />
+              {approval}
+            </>
           ) : info.enabled &&
             !isLive(run) &&
             (info.inspect.startable || info.inspect.status === "starting") ? (
@@ -350,7 +391,10 @@ function RunTerminal({
             </>
           ) : isLive(run) ? (
             // A live run is not attachable only for a moment, so the gateway's reason says why.
-            <TerminalUnavailable why={info.why_not} />
+            <>
+              <TerminalUnavailable why={info.why_not} />
+              {approval}
+            </>
           ) : (
             <>
               <TerminalUnavailable />
@@ -428,12 +472,32 @@ function answering(seat: SeatView): string | null {
 }
 
 /** An IDLE session: live, so the terminal stays below, and the way to answer is to type. */
-function Waiting({ idle, seat }: { idle: NonNullable<TerminalInfo["idle"]>; seat: SeatView }) {
+function Waiting({
+  idle,
+  seat,
+  ready,
+  approve,
+}: {
+  idle: NonNullable<TerminalInfo["idle"]>;
+  seat: SeatView;
+  /** The step awaits review and its branch has a commit to approve. */
+  ready: boolean;
+  approve: ReactNode;
+}) {
   const now = useNow(15_000, idle.parks_at !== null);
   return (
-    <div className="px-5">
-      <SectionMessage appearance="warning" title="Waiting for you">
-        {idle.question ? <Question text={idle.question} /> : "The agent is waiting at its prompt. "}
+    <div className="space-y-2 px-3">
+      <SectionMessage
+        appearance="warning"
+        title={ready ? "Waiting for your review" : "Waiting for you"}
+      >
+        {idle.question ? (
+          <Question text={idle.question} />
+        ) : ready ? (
+          "The agent's work is ready for your review. Approve it, or answer to ask for changes. "
+        ) : (
+          "The agent is waiting at its prompt. "
+        )}
         {answering(seat)}
         {idle.parks_at &&
           (idle.at_deadline !== "retry"
@@ -443,6 +507,7 @@ function Waiting({ idle, seat }: { idle: NonNullable<TerminalInfo["idle"]>; seat
               ? " If nobody types, the run ends once the step's CI settles (by the step timeout at the latest) and its step retries."
               : ` If nobody types, the run ends ${parksIn(idle.parks_at, now)} and its step retries.`)}
       </SectionMessage>
+      {approve}
     </div>
   );
 }
@@ -463,7 +528,12 @@ function stillMissing(parked: TerminalParked): string | null {
   return null;
 }
 
-function parkedLead(parked: TerminalParked, offered: boolean, whyNot: string | null): ReactNode {
+function parkedLead(
+  parked: TerminalParked,
+  offered: boolean,
+  whyNot: string | null,
+  ready: boolean,
+): ReactNode {
   const missing = stillMissing(parked);
   return (
     <>
@@ -475,13 +545,18 @@ function parkedLead(parked: TerminalParked, offered: boolean, whyNot: string | n
           </blockquote>
         </>
       )}
-      {parkedReason(parked, offered, whyNot)}
+      {parkedReason(parked, offered, whyNot, ready)}
       {missing && ` ${missing}`}
     </>
   );
 }
 
-function parkedReason(parked: TerminalParked, offered: boolean, whyNot: string | null): ReactNode {
+function parkedReason(
+  parked: TerminalParked,
+  offered: boolean,
+  whyNot: string | null,
+  ready: boolean,
+): ReactNode {
   const asked = parked.question ? <Question text={parked.question} /> : null;
   if (!offered) {
     // Neither Resume nor the label would continue it: say why instead of offering either.
@@ -491,6 +566,15 @@ function parkedReason(parked: TerminalParked, offered: boolean, whyNot: string |
         {whyNot
           ? asSentence(whyNot)
           : "This is an earlier attempt. Only the ticket's current attempt can be resumed."}
+      </>
+    );
+  }
+  if (ready) {
+    return (
+      <>
+        {asked}
+        The agent's work is ready for your review. Approve it, or answer here and press Resume
+        session to ask for changes.
       </>
     );
   }
@@ -550,6 +634,8 @@ function Parked({
   ticketId,
   info,
   parked,
+  ready,
+  approve,
   onAsked,
   onRefused,
 }: {
@@ -557,6 +643,9 @@ function Parked({
   ticketId: number;
   info: TerminalInfo;
   parked: TerminalParked;
+  /** The step awaits review and its branch has a commit to approve. */
+  ready: boolean;
+  approve: ReactNode;
   onAsked: () => void;
   /** The Resume asked for will bring no connection. */
   onRefused: () => void;
@@ -567,6 +656,7 @@ function Parked({
   const noteId = useId();
   const pending = info.resume_pending;
   const offered = info.resumable || pending;
+  const readyAtIdle = ready && parked.reason === "idle";
   // A Resume that stops waiting while the session is still parked here was refused.
   const wasPending = useRef(pending);
   useEffect(() => {
@@ -578,9 +668,22 @@ function Parked({
   }, [pending, onRefused]);
   return (
     <>
-      <SectionMessage appearance="warning" title={PARKED_TITLE[parked.reason] ?? "Session paused"}>
-        {parkedLead(parked, offered, info.why_not_code === CloseCode.PARKED ? null : info.why_not)}
+      <SectionMessage
+        appearance="warning"
+        title={
+          readyAtIdle
+            ? "Waiting for your review"
+            : (PARKED_TITLE[parked.reason] ?? "Session paused")
+        }
+      >
+        {parkedLead(
+          parked,
+          offered,
+          info.why_not_code === CloseCode.PARKED ? null : info.why_not,
+          readyAtIdle,
+        )}
       </SectionMessage>
+      {approve}
       {offered && (
         <Form
           aria-label="Resume the session"
@@ -618,7 +721,8 @@ function Parked({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="submit"
-              appearance="primary"
+              // Approve is the step's way on once there is work to approve; Resume asks for more.
+              appearance={ready ? "default" : "primary"}
               isLoading={resume.isPending}
               aria-disabled={pending || undefined}
               aria-describedby={pending || note ? noteId : undefined}
@@ -638,7 +742,7 @@ function Parked({
 /** An open session, above its terminal: what it is and how long its workspace stays. */
 function OpenSessionNote({ keptUntil }: { keptUntil: string | null }) {
   return (
-    <p className="px-5 text-body-sm text-subtle">
+    <p className="px-3 text-body-sm text-subtle">
       Read-only view of the agent's session as it ended. It closes when nobody has it open.
       {keptUntil && ` You can reopen it until ${formatAbsolute(keptUntil)}.`}
     </p>
@@ -808,6 +912,7 @@ function Connection({
   const socket = useRef<TerminalSocket | null>(null);
   const readOnlyNote = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
+  const seatControls = useRef<HTMLDivElement>(null);
   const retrying = useRef(onRetrying);
   useEffect(() => {
     retrying.current = onRetrying;
@@ -910,7 +1015,7 @@ function Connection({
   const onReady = useCallback(() => setReady(true), []);
   const onLeave = useCallback(() => {
     const to =
-      bar.current?.querySelector<HTMLElement>("button") ??
+      seatControls.current?.querySelector<HTMLElement>("button") ??
       readOnlyNote.current ??
       bar.current
         ?.closest('[role="dialog"]')
@@ -942,11 +1047,24 @@ function Connection({
   const drawing = loading && state.phase === "open";
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      {above?.(seat)}
-      {/* One line from the first fit: a second line gained on attach would shrink the box under
-          tmux's first draw. */}
-      <div className="flex min-h-8 items-center justify-between gap-x-4 px-5 pt-2">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Gone when there is nothing over the terminal, so it leaves no band. */}
+      <div className="space-y-2 py-2 empty:hidden">{above?.(seat)}</div>
+      {state.phase === "stopped" && (
+        <div className="py-2">
+          <StoppedMessage state={state} onRetry={() => socket.current?.retryNow()} />
+        </div>
+      )}
+      {/* One row for everything about the connection and the seat, and one line from the first
+          fit: a row that grew on attach would shrink the box under tmux's first draw. Kept for a
+          screen reader alone once nothing was ever drawn, when the box goes too. */}
+      <div
+        ref={bar}
+        className={cx(
+          "flex min-h-8 shrink-0 items-center gap-x-3 px-3 text-body-sm text-subtle",
+          blank && "sr-only",
+        )}
+      >
         <div
           ref={inspect ? readOnlyNote : undefined}
           tabIndex={inspect ? -1 : undefined}
@@ -957,55 +1075,66 @@ function Connection({
             <Watching
               viewers={counts.viewers}
               names={counts.names}
-              holder={counts.seat.holder}
+              // The seat line beside it names whoever else holds the seat.
+              holder={seat.kind === "held" || seat.kind === "elsewhere" ? null : counts.seat.holder}
               yours={counts.seat.yours}
             />
           )}
+          <SeatControls
+            ref={seatControls}
+            seat={seat}
+            onClaim={(force) => {
+              socket.current?.claim(force);
+              view.current?.focus();
+            }}
+          />
         </div>
-        {typing !== "off" && (
-          <span className="min-w-0 truncate whitespace-nowrap text-body-sm text-subtlest">
-            Ctrl+] leaves the terminal.
-          </span>
-        )}
-        {inspect && counts && closeControl?.(counts.viewers)}
-      </div>
-      {/* One live region for the whole life of the tab, so a change of phase is read out once,
-          as new text in a node that was already there. Once attached only a screen reader has
-          the text, and while retrying the eye gets the countdown, kept out of the region so it is
-          not read out every second. The row keeps its height while the connection can still
-          draw: a box that grew after the first draw would resize tmux's client under it. */}
-      <div
-        className={cx(
-          "flex items-center gap-x-3 px-5 text-body-sm text-subtle",
-          state.phase === "stopped" ? "sr-only" : "min-h-6",
-        )}
-      >
-        <p role="status" className={cx((state.phase === "open" || retry) && "sr-only")}>
-          {statusLine(state, drawing)}
-        </p>
-        {retry && (
-          <>
-            <span aria-hidden="true" data-countdown className="min-w-0 truncate whitespace-nowrap">
-              {retry.reason}{" "}
-              {secondsLeft > 0 ? `Reconnecting in ${secondsLeft} s.` : "Reconnecting."}
+        <div className="ml-auto flex min-w-0 items-center gap-x-3">
+          {/* One live region for the whole life of the tab, so a change of phase is read out once,
+              as new text in a node that was already there. Once attached, or stopped, only a
+              screen reader has the text; while retrying the eye gets the countdown, kept out of
+              the region so it is not read out every second. */}
+          <p
+            role="status"
+            data-connection-status
+            className={cx(
+              "truncate whitespace-nowrap",
+              (state.phase === "open" || state.phase === "stopped" || retry) && "sr-only",
+            )}
+          >
+            {statusLine(state, drawing)}
+          </p>
+          {retry && (
+            <>
+              <span
+                aria-hidden="true"
+                data-countdown
+                className="min-w-0 truncate whitespace-nowrap"
+              >
+                {retry.reason}{" "}
+                {secondsLeft > 0 ? `Reconnecting in ${secondsLeft} s.` : "Reconnecting."}
+              </span>
+              <Button
+                spacing="compact"
+                className="shrink-0"
+                onClick={() => socket.current?.retryNow()}
+              >
+                Reconnect now
+              </Button>
+            </>
+          )}
+          {typing !== "off" && (
+            <span className="min-w-0 truncate whitespace-nowrap text-subtlest">
+              Ctrl+] leaves the terminal.
             </span>
-            <Button
-              spacing="compact"
-              className="shrink-0"
-              onClick={() => socket.current?.retryNow()}
-            >
-              Reconnect now
-            </Button>
-          </>
-        )}
+          )}
+          {inspect && counts && closeControl?.(counts.viewers)}
+        </div>
       </div>
-      {state.phase === "stopped" && (
-        <StoppedMessage state={state} onRetry={() => socket.current?.retryNow()} />
-      )}
+      {/* Edge to edge: the section is the terminal's frame. */}
       <div
         className={cx(
-          "relative mx-5 min-h-48 flex-1 overflow-hidden rounded-md border bg-surface-sunken p-2",
-          typing !== "off" && !focused ? "border-selected ring-1 ring-selected" : "border-default",
+          "relative min-h-48 flex-1 overflow-hidden border-t border-default bg-surface-sunken px-2 py-1",
           blank && "hidden",
         )}
       >
@@ -1030,49 +1159,41 @@ function Connection({
           </div>
         )}
         {typing !== "off" && !focused && (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute top-2 right-2 rounded-sm bg-surface-overlay px-2 py-0.5 text-body-sm text-subtle shadow-overlay"
-          >
-            Click to type
-          </span>
+          <>
+            <span
+              aria-hidden="true"
+              data-click-to-type
+              className="pointer-events-none absolute inset-0 border border-selected"
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute top-2 right-2 rounded-sm bg-surface-overlay px-2 py-0.5 text-body-sm text-subtle shadow-overlay"
+            >
+              Click to type
+            </span>
+          </>
         )}
       </div>
-      <SeatBar
-        ref={bar}
-        seat={seat}
-        hidden={blank}
-        onClaim={(force) => {
-          socket.current?.claim(force);
-          view.current?.focus();
-        }}
-      />
     </div>
   );
 }
 
-/** Who has the keyboard, under the terminal, and the way to take it. */
-function SeatBar({
+/** Who has the keyboard, and the way to take it. */
+function SeatControls({
   seat,
-  hidden,
   onClaim,
   ref,
 }: {
   seat: SeatView;
-  hidden: boolean;
   onClaim: (force: boolean) => void;
   ref: Ref<HTMLDivElement>;
 }) {
   return (
-    <div
-      ref={ref}
-      className={cx(
-        "flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 px-5 pb-4 text-body-sm text-subtle",
-        hidden && "hidden",
-      )}
-    >
+    <div ref={ref} className="flex min-w-0 items-center gap-x-3">
       {/* Mounted for the connection's whole life, so a change of hands is read out once. */}
-      <p role="status">{seatLine(seat)}</p>
+      <p role="status" className="min-w-0 truncate whitespace-nowrap">
+        {seatLine(seat)}
+      </p>
       {seat.kind === "held" && (
         <ConfirmPopup
           label="Take over"
@@ -1151,7 +1272,7 @@ export function StoppedMessage({
   const { title, tone } = STOPPED[state.kind];
   if (state.kind === "signed-out") {
     return (
-      <div className="px-5">
+      <div className="px-3">
         <SectionMessage
           appearance={tone}
           title={title}
@@ -1165,7 +1286,7 @@ export function StoppedMessage({
   // A park, an end or nothing to attach to is read back through `/terminal` as this draws, and
   // what the run offers then — Resume, Open session — takes this message's place.
   return (
-    <div className="px-5">
+    <div className="px-3">
       <SectionMessage
         appearance={tone}
         title={title}

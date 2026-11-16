@@ -25,6 +25,8 @@ from githubkit.exception import RequestFailed
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
+from orchestrator.adapters.bindings import Bindings
+from orchestrator.adapters.registry import host_registries, resolve_bindings
 from orchestrator.api.runtimes_probe import TIMEOUT_SECONDS as PROBE_TIMEOUT_SECONDS
 from orchestrator.api.services.github_connection import github_repos
 from orchestrator.db.models import (
@@ -63,7 +65,7 @@ from orchestrator.github.read_token import read_token_for
 from orchestrator.gitlab.client import GitLabClient, tls_verify
 from orchestrator.mail import Mailer, mailer
 from orchestrator.settings import GitLabSettings, Settings, get_settings
-from orchestrator.worker.context import adapter_options
+from orchestrator.worker.context import ProjectGitHub, adapter_options
 from orchestrator.worker.runtime_adapters import (
     RuntimeAdapters,
     RuntimeRefused,
@@ -115,6 +117,8 @@ __all__ = [
     "ReadTokenMinterDep",
     "RepoReader",
     "RepoReaderDep",
+    "RunObserver",
+    "RunObserverDep",
     "RuntimeAdapterDep",
     "SessionDep",
     "SettingsDep",
@@ -152,8 +156,10 @@ __all__ = [
     "project_gitlab",
     "project_issue_writer",
     "protection_reader_dependency",
+    "read_bindings",
     "read_token_minter_dependency",
     "repo_reader_dependency",
+    "run_observer_dependency",
     "runtime_adapter_dependency",
     "settings_dependency",
     "workflows_reader_dependency",
@@ -643,11 +649,13 @@ LabelWriterDep = Annotated[LabelWriter | None, Depends(label_writer_dependency)]
 
 #: `(repo, branch, base_sha, files, message, record) -> the new commit's sha`, fast-forwarded onto
 #: `branch`; `record` is awaited with the sha before the ref moves. Raises `ConfigBranchMoved`.
-#: Paths arrive from the operator, so containment is the route's job: every submitted path must
-#: be a member of the proposal `assemble()` recomputes in the same request (tech-stack decision
-#: 33, design.md §7.7).
+#: A `None` body deletes the path. Containment is the caller's job, and there are two callers: a
+#: config commit, whose every path `assemble()` proves in the same request (tech-stack decision
+#: 33, design.md §7.7), and a restore, whose every path comes from the two listings the server
+#: reads (decision 93).
 ConfigCommitWriter = Callable[
-    [str, str, str, Mapping[str, str], str, Callable[[str], Awaitable[None]]], Awaitable[str]
+    [str, str, str, Mapping[str, str | None], str, Callable[[str], Awaitable[None]]],
+    Awaitable[str],
 ]
 
 
@@ -855,6 +863,53 @@ async def repo_reader_dependency(
 
 
 RepoReaderDep = Annotated[RepoReader, Depends(repo_reader_dependency)]
+
+async def read_bindings(
+    session: AsyncSession, project: Project, github_for: GitHubFor
+) -> Bindings | None:
+    """The project's tracker and forge over the API's GitHub reads, for reading only; None when
+    either is not connected."""
+
+    async def github(_session: AsyncSession, found: Project) -> ProjectGitHub | None:
+        api = await github_for(found)
+        if api is None:
+            return None
+        return ProjectGitHub.over(api.client, api.contents, bot_login=api.bot_login)
+
+    trackers, forges = host_registries(github)
+    return await resolve_bindings(session, project, trackers=trackers, forges=forges)
+
+
+#: `() -> what a worker tick observes of a run's ticket`, through its project's own tracker and
+#: forge, GitHub or GitLab; None when either is not connected. Built on the first call, so a
+#: read that needs no forge reaches none.
+RunObserver = Callable[[], Awaitable[StateSource | None]]
+
+
+def run_observer_dependency(
+    step_run_id: Annotated[int, PathParam()], session: SessionDep, github_for: GitHubForDep
+) -> RunObserver:
+    async def observe() -> StateSource | None:
+        row = (
+            await session.execute(
+                select(Ticket, Project)
+                .join(Project, Project.id == Ticket.project_id)
+                .join(StepRun, StepRun.ticket_id == Ticket.id)
+                .where(StepRun.id == step_run_id)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        ticket, project = row
+        bindings = await read_bindings(session, project, github_for)
+        if bindings is None:
+            return None
+        return bindings.snapshot(project.github_repo, ticket.external_key)
+
+    return observe
+
+
+RunObserverDep = Annotated[RunObserver, Depends(run_observer_dependency)]
 
 
 @lru_cache(maxsize=1)

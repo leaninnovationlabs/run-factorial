@@ -95,6 +95,13 @@ const GLYPHS = {
       <path d="M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
     </>
   ),
+  "eye-off": (
+    <>
+      <path d="M1.5 8S4 3.25 8 3.25 14.5 8 14.5 8 12 12.75 8 12.75 1.5 8 1.5 8Z" />
+      <path d="M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+      <path d="m2.5 2.5 11 11" />
+    </>
+  ),
   search: (
     <>
       <circle cx="7" cy="7" r="4.5" />
@@ -270,6 +277,7 @@ const GLYPHS = {
       <path d="M2.75 2.5v2.75H5.5M8 5.25V8l2 1.5" />
     </>
   ),
+  chart: <path d="M2 13.75h12M4.5 11.25V8.5M8 11.25V3.75m3.5 7.5V6.25" />,
 } satisfies Record<string, ReactNode>;
 
 export type Glyph = keyof typeof GLYPHS;

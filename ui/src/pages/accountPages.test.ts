@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { afterSignup, inviteToken, signupHref, signupInvite, slugFor } from "./accountPages";
+import { slugFor } from "../components/account/OrganizationFields";
+import { afterSignup, inviteToken, signupHref, signupInvite } from "./accountPages";
 
 describe("the address a new organization's name suggests", () => {
   it("is lowercase letters, digits and single dashes", () => {

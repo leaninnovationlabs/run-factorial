@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { type ComponentProps, useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { isNotFound } from "../api/client";
 import {
@@ -33,7 +33,9 @@ import {
   segmentsFrom,
   sortSegments,
   spawnsFrom,
+  stepAwaitsReview,
   totalsFrom,
+  useReviewOffer,
 } from "../components/activity";
 import {
   attemptBadges,
@@ -52,18 +54,26 @@ import {
   type ConfirmPopupHandle,
   EmptyState,
   ErrorMessage,
+  IconButton,
   LinkButton,
   PageHeader,
   Panel,
-  SegmentedControl,
   Spinner,
   staleSince,
   TextDrawer,
+  Toggle,
   useActionFeedback,
   usePageTitle,
 } from "../components/ui";
 import { forgeHost } from "../forge";
 import { conditionOf, latestRunAt, latestRunStatusAt } from "../status";
+import { usePersistentState } from "../storage";
+
+/** The activity's Focused switch, remembered by this browser. On until someone switches it off:
+ *  the audit trail is the first thing a reader wants, and the routine rows are one press away. */
+export const FOCUSED_STORAGE_KEY = "sf-ui:activity-focused";
+const parseFocused = (stored: string | null) => stored !== "0";
+const serializeFocused = (on: boolean) => (on ? "1" : "0");
 
 export function TicketPage() {
   const ticketId = Number(useParams().ticketId);
@@ -78,9 +88,9 @@ export function TicketPage() {
   // what the graph's selected node is bound to, in both directions.
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [text, setText] = useState<{ content: LongContent; subtitle: string } | null>(null);
-  // The Output drawer is bound to one run, named in the URL so it can be linked to: `?output=`,
-  // or `?terminal=` and `?preview=`, which expand that section — the idle park's comment links
-  // `?terminal=` (decision 26).
+  // The Output drawer is bound to one run, named in the URL so it can be linked to: `?terminal=`
+  // and `?preview=` open that section alone, and `?output=` opens both — the idle park's comment
+  // links `?terminal=` (decision 26).
   const [searchParams, setSearchParams] = useSearchParams();
   const named = NAMED_SECTIONS.find((section) => searchParams.has(section));
   const outputRunId = Number(searchParams.get(named ?? "output")) || null;
@@ -90,6 +100,11 @@ export function TicketPage() {
   // Newest first: someone opens this page because a ticket is stuck or a run is live, and the
   // event that answers either question is the last one written.
   const [order, setOrder] = useState<ActivityOrder>("newest");
+  const [focused, setFocused] = usePersistentState(
+    FOCUSED_STORAGE_KEY,
+    parseFocused,
+    serializeFocused,
+  );
   /** Non-zero while the drawer was opened by Request changes: its form opens at once. */
   const [changesOpen, setChangesOpen] = useState(0);
   /** The Force complete whose dialog is open, kept after the ticket moves on (`ForceCompleteProps`). */
@@ -151,6 +166,17 @@ export function TicketPage() {
     return isProcessConfigLike(pinned) ? pinned : null;
   }, [snapshot.data]);
 
+  // The latest attempt at the ticket's step: the only parked run whose terminal holds Resume.
+  const latestRun = ticket ? latestRunAt(currentRuns, ticket.current_step) : null;
+  // This page owns the review's poll; the drawer's Approve reads the same cache. A stop where
+  // this run pushed nothing, such as a question on a branch an earlier step made, is not yet a
+  // review, nor is one Approve would refuse.
+  const latestReview = useReviewOffer(
+    latestRun,
+    latestRun !== null && stepAwaitsReview(pinnedConfig, latestRun.step_name),
+    { parkReason: ticket?.park_reason ?? null, poll: true },
+  );
+
   const openOutput = useCallback(
     (stepRunId: number, section?: NamedSection) => {
       setSearchParams((current) => {
@@ -165,12 +191,22 @@ export function TicketPage() {
     setChangesOpen(0);
     setSearchParams(withoutOutput);
   }, [setSearchParams]);
-  // A run with a transcript or a preview; a run has a transcript once it spawned.
+  // A run has a terminal once it spawned, and a preview when its step's pinned config declares one.
   const outputOpener = useCallback(
-    (segment: ActivitySegment) =>
-      segment.run?.runtime_run_id || hasPreview(pinnedConfig, segment.step)
-        ? (run: StepRun) => openOutput(run.id)
-        : undefined,
+    (segment: ActivitySegment) => {
+      const terminal = segment.run?.runtime_run_id
+        ? (run: StepRun) => openOutput(run.id, "terminal")
+        : undefined;
+      const preview = hasPreview(pinnedConfig, segment.step)
+        ? {
+            label: declaresFiles(pinnedConfig, segment.step)
+              ? ("Files" as const)
+              : ("Preview" as const),
+            open: (run: StepRun) => openOutput(run.id, "preview"),
+          }
+        : undefined;
+      return terminal || preview ? { terminal, preview } : undefined;
+    },
     [pinnedConfig, openOutput],
   );
 
@@ -310,9 +346,8 @@ export function TicketPage() {
   const outputDeclaresFiles = outputRun ? declaresFiles(pinnedConfig, outputRun.step_name) : false;
   const review = gateReview(pinnedConfig, ticket, currentRuns);
   const refreshed = refreshNote(refresh, refreshFeedback.slow);
-  // The latest attempt at the ticket's step: the only parked run whose terminal holds Resume.
-  const latestRun = latestRunAt(currentRuns, ticket.current_step);
   const parkedRun = condition === "waiting_human" ? latestRun : null;
+  const reviewRun = latestReview.ready ? latestRun : null;
   const retry = retryOffer(ticket, currentRuns, entries);
   // The held offer first: its dialog stays on its own run while an accept moves the ticket on.
   const forcing = forceHeld ?? forceOffer(ticket, condition, latestRun);
@@ -328,6 +363,57 @@ export function TicketPage() {
           projectId: ticket.project_id,
         }
       : undefined;
+
+  // What the ticket's state asks of the reader. A message about the step it waits at goes in that
+  // step's latest block, under its header, once the log draws that block; until then it stays at
+  // the top, with the messages about the whole ticket.
+  const messageProps = {
+    ticket,
+    condition,
+    failing,
+    gatePr,
+    gatePrHref,
+    repo,
+    forge,
+    onRequeue: () => requeueControl.current?.arm(),
+    onOpenTerminal: parkedRun ? () => openOutput(parkedRun.id, "terminal") : undefined,
+    gateClosed,
+    onCloseAndExit: () => closeAndExitControl.current?.arm(),
+    awaitingReview: reviewRun
+      ? {
+          step: reviewRun.step_name,
+          openWork: hasPreview(pinnedConfig, reviewRun.step_name)
+            ? {
+                text: declaresFiles(pinnedConfig, reviewRun.step_name)
+                  ? "Open files"
+                  : "Open preview",
+                onClick: () => openOutput(reviewRun.id, "preview"),
+              }
+            : undefined,
+          onOpenTerminal: () => openOutput(reviewRun.id, "terminal"),
+        }
+      : null,
+    review: review
+      ? {
+          onOpenPreview: hasPreview(pinnedConfig, review.run.step_name)
+            ? () => openOutput(review.run.id, "preview")
+            : undefined,
+          onRequestChanges: () => {
+            openOutput(
+              review.run.id,
+              hasPreview(pinnedConfig, review.run.step_name) ? "preview" : undefined,
+            );
+            setChangesOpen((count) => count + 1);
+          },
+          ...(redoTarget ? { redoStep: redoTarget, onRedo: () => redoControl.current?.arm() } : {}),
+        }
+      : null,
+  } satisfies ComponentProps<typeof TicketMessages>;
+  const messageKey = latestRun ? `${ticket.current_step}#${latestRun.attempt}` : null;
+  const anchored =
+    messageKey !== null &&
+    timeline.data !== undefined &&
+    segments.some((segment) => segment.key === messageKey);
 
   // A fill page (`routes.tsx`): exactly the window's height, and the activity panel takes what
   // the header and the graph leave, down to a floor worth reading — below that, the page scrolls.
@@ -380,38 +466,7 @@ export function TicketPage() {
         staleSince={staleSince(ticketQuery)}
       />
 
-      <TicketMessages
-        ticket={ticket}
-        condition={condition}
-        failing={failing}
-        gatePr={gatePr}
-        gatePrHref={gatePrHref}
-        repo={repo}
-        forge={forge}
-        onRequeue={() => requeueControl.current?.arm()}
-        onOpenTerminal={parkedRun ? () => openOutput(parkedRun.id, "terminal") : undefined}
-        gateClosed={gateClosed}
-        onCloseAndExit={() => closeAndExitControl.current?.arm()}
-        review={
-          review
-            ? {
-                onOpenPreview: hasPreview(pinnedConfig, review.run.step_name)
-                  ? () => openOutput(review.run.id, "preview")
-                  : undefined,
-                onRequestChanges: () => {
-                  openOutput(
-                    review.run.id,
-                    hasPreview(pinnedConfig, review.run.step_name) ? "preview" : undefined,
-                  );
-                  setChangesOpen((count) => count + 1);
-                },
-                ...(redoTarget
-                  ? { redoStep: redoTarget, onRedo: () => redoControl.current?.arm() }
-                  : {}),
-              }
-            : null
-        }
-      />
+      <TicketMessages {...messageProps} scope={anchored ? "ticket" : undefined} />
 
       {/* Sticky, so the graph is still there to relate a row to whatever the page does around it.
           It sits on the page's own ground, and draws the overflow shadow ADS gives a strip that
@@ -450,18 +505,21 @@ export function TicketPage() {
         // On a phone the page scrolls to the panel, and the panel then holds nearly the window,
         // so the log read inside it is not a slot.
         className="flex min-h-80 flex-1 flex-col max-md:min-h-[80dvh]"
+        titleAction={
+          // The glyph says the order the log is in; the label, like a table's sort, says what a
+          // press does.
+          <IconButton
+            icon={order === "newest" ? "sort-down" : "sort-up"}
+            label={order === "newest" ? "Show oldest first" : "Show newest first"}
+            spacing="compact"
+            onClick={() => setOrder(order === "newest" ? "oldest" : "newest")}
+          />
+        }
         actions={
           <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
-            <SegmentedControl
-              label="Order"
-              value={order}
-              onChange={setOrder}
-              options={[
-                { value: "newest", label: "Newest first" },
-                { value: "oldest", label: "Oldest first" },
-              ]}
-            />
+            {/* Facts, then what acts on the log: the order of a step's header. */}
             <TicketTotals totals={totals} />
+            <Toggle label="Focused" isChecked={focused} onChange={setFocused} />
           </div>
         }
       >
@@ -507,6 +565,17 @@ export function TicketPage() {
             }
             redo={redo}
             toLatest={requestLogged ? sentBack : null}
+            focused={focused}
+            message={
+              anchored && messageKey
+                ? {
+                    key: messageKey,
+                    content: (
+                      <TicketMessages {...messageProps} scope="step" className="px-4 pt-3 pb-1" />
+                    ),
+                  }
+                : undefined
+            }
           />
         )}
       </Panel>
@@ -534,6 +603,7 @@ export function TicketPage() {
           forge={forge}
           hasPreview={outputHasPreview}
           declaresFiles={outputDeclaresFiles}
+          awaitsReview={stepAwaitsReview(pinnedConfig, outputRun.step_name)}
           named={named}
           reviewGate={reviewTarget(review, outputRun)}
           reviewPr={gatePr}

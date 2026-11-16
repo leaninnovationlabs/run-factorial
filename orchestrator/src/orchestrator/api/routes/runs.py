@@ -22,6 +22,10 @@ requeue: it changes nothing the loop owns, so there is no pass to ask for it.
 What a run's terminal offers is read here (decision 57), by the rule the gateway admits by, and
 Open session is recorded here as a request for the inspect pass (`worker.inspect`), which is no
 ticket's: it wakes that pass, and the page polls for the answer.
+
+A person's Approve of a step that awaits review is recorded here as `step_approved`, which the
+loop's acceptance reads through `request_approval()` rather than answers. What it would approve,
+the head of the step's branch, is read live off the forge.
 """
 
 from __future__ import annotations
@@ -36,10 +40,11 @@ from sqlalchemy import select
 from orchestrator.access import Permission
 from orchestrator.api.access import needs
 from orchestrator.api.activity import parse_activity
-from orchestrator.api.auth import CallerDep, PrincipalDep
-from orchestrator.api.deps import RuntimeAdapterDep, SessionDep, SettingsDep
+from orchestrator.api.auth import CallerDep, PersonDep, PrincipalDep
+from orchestrator.api.deps import RunObserverDep, RuntimeAdapterDep, SessionDep, SettingsDep
 from orchestrator.api.schemas import (
     ActivityTurnOut,
+    ApproveIn,
     ChangedFileOut,
     ChangeRequestIn,
     ChangeRequestOut,
@@ -54,6 +59,7 @@ from orchestrator.api.schemas import (
     PreviewStartIn,
     RequestOut,
     ResumeSessionIn,
+    ReviewOut,
     RunActivityResponse,
     TerminalOut,
     TerminalTicketIn,
@@ -312,6 +318,52 @@ async def get_completion(step_run_id: int, request_id: int, session: SessionDep)
         )
     answer = await completion_outcome(session, request.ticket_id, request_id)
     return _completion_out("requested", answer.outcome != "pending", request_id, answer)
+
+
+@router.post(
+    "/step-runs/{step_run_id}/approve",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RequestOut,
+)
+@needs(Permission.TICKETS_OPERATE)
+async def request_approval(
+    step_run_id: int,
+    body: ApproveIn,
+    session: SessionDep,
+    settings: SettingsDep,
+    person: PersonDep,
+    observed: RunObserverDep,
+) -> RequestOut:
+    """Approve a run of a step that awaits review, at the commit the person looked at
+    (`api.services.controls.request_approval`). A signed-in person only: the shared bearer
+    names no one."""
+    if person is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Sign in to the dashboard to approve a step."
+        )
+    row = await _run(session, step_run_id)
+    result = await controls.request_approval(
+        session,
+        row,
+        Actor.dashboard(person),
+        head_sha=body.head_sha,
+        observed=observed,
+        retention=settings.workspace.retention,
+    )
+    return RequestOut(status=result.status, landed=result.landed)
+
+
+@router.get("/step-runs/{step_run_id}/review", response_model=ReviewOut)
+@needs(Permission.ORG_READ)
+async def get_review(
+    step_run_id: int, session: SessionDep, settings: SettingsDep, observed: RunObserverDep
+) -> ReviewOut:
+    """What Approve on this run would approve, read live off the forge, and why a press now
+    would be refused (`api.services.controls.review_state`)."""
+    row = await _run(session, step_run_id)
+    return await controls.review_state(
+        session, row, observed, retention=settings.workspace.retention
+    )
 
 
 def _completion_out(
@@ -828,7 +880,7 @@ async def _terminal_out(
         for key, value in (parked_view.details if parked_view is not None else {}).items()
         if key in _VIEW_CLOSED_PARAMS and isinstance(value, str | int)
     }
-    idle, parked = await session_waits(session, run, settings.terminal.idle_park_after)
+    idle, parked = await session_waits(session, ticket, run, settings.terminal.idle_park_after)
     pending = await pending_resume_request(session, ticket.id)
     resume_pending = pending is not None and pending.step_run_id == run.id
     attachable = admission.refusal is None

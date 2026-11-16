@@ -33,12 +33,14 @@ import type {
   ConfigAdoption,
   ConfigBranchResult,
   ConfigCommitResult,
+  ConfigDelete,
   ConfigEdit,
   ConfigFileContent,
   ConfigFiles,
   ConfigPreview,
   CredentialTest,
   DefaultBranchConfig,
+  DraftCheck,
   EditorDraftPayload,
   FleetRefreshResult,
   GatePullRequest,
@@ -75,6 +77,8 @@ import type {
   RefreshResult,
   RequestResult,
   RestartPreview,
+  RestorePreview,
+  Review,
   Role,
   RunActivityResponse,
   RunOutputs,
@@ -156,6 +160,8 @@ export class ApiError extends Error {
   readonly detail: string | null;
   /** The runtime slugs a sync named that do not exist, beside `code: "runtime_missing"`. */
   readonly missingRuntimes: string[] | null;
+  /** The config file a refusal is about, where the API names one. */
+  readonly path: string | null;
 
   constructor(
     status: number,
@@ -165,7 +171,13 @@ export class ApiError extends Error {
       hint = null,
       detail = null,
       missingRuntimes = null,
-    }: { hint?: string | null; detail?: string | null; missingRuntimes?: string[] | null } = {},
+      path = null,
+    }: {
+      hint?: string | null;
+      detail?: string | null;
+      missingRuntimes?: string[] | null;
+      path?: string | null;
+    } = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -174,6 +186,7 @@ export class ApiError extends Error {
     this.hint = hint;
     this.detail = detail;
     this.missingRuntimes = missingRuntimes;
+    this.path = path;
   }
 
   get unauthorized(): boolean {
@@ -245,7 +258,9 @@ async function refusal(response: Response): Promise<ApiError> {
   } catch {
     // Not JSON — the status line is all there is.
   }
-  const fields = body as { code?: unknown; hint?: unknown; missing_runtimes?: unknown } | undefined;
+  const fields = body as
+    | { code?: unknown; hint?: unknown; missing_runtimes?: unknown; path?: unknown }
+    | undefined;
   const slugs = fields?.missing_runtimes;
   const missingRuntimes =
     Array.isArray(slugs) && slugs.every((slug) => typeof slug === "string")
@@ -257,7 +272,8 @@ async function refusal(response: Response): Promise<ApiError> {
   if (response.status === 500 || (response.status > 500 && !explained(body))) {
     return new ApiError(response.status, SERVER_FAILED, code, { hint, detail: said });
   }
-  return new ApiError(response.status, said, code, { hint, missingRuntimes });
+  const path = typeof fields?.path === "string" && fields.path !== "" ? fields.path : null;
+  return new ApiError(response.status, said, code, { hint, missingRuntimes, path });
 }
 
 function explained(body: unknown): boolean {
@@ -499,19 +515,59 @@ export const api = {
    *  files the branch already has, each from the blob it started from; 409 when that blob moved,
    *  422 for a path that is not a file under the config folder on the branch, one sent twice, or
    *  the lane's own process file. `created` are new files: 422 for a path outside the config
-   *  folder, with an unsafe name, or with anything on the branch at, above or inside it. */
+   *  folder, with an unsafe name, or with anything on the branch at, above or inside it.
+   *  `deleted` are files the branch has, each at the blob it was listed at: 409 when that blob
+   *  moved, 422 for a path outside the config folder, one also written by this commit, or the
+   *  last process. One the branch no longer has is skipped. */
   commitConfig: (
     id: number,
     content: string,
     files: SelectedFile[],
     edits: ConfigEdit[],
     created: SelectedFile[] = [],
+    deleted: ConfigDelete[] = [],
   ) =>
     send<ConfigCommitResult>("POST", `/api/projects/${id}/config-commits`, {
       content,
       files,
       edits,
       created,
+      deleted,
+    }),
+
+  /** Every snapshot of every process, the current one first within each process. */
+  listProcessVersions: (id: number) =>
+    request<ProcessVersion[]>(`/api/projects/${id}/process-versions`),
+
+  /** What restoring the config folder to this version would write, delete and retire. Writes
+   *  nothing. 409 while the branch head is one no one vouches for. */
+  getRestorePreview: (id: number, versionId: number) =>
+    request<RestorePreview>(`/api/projects/${id}/process-versions/${versionId}/restore`),
+
+  /** Commits the config folder back to a synced version's, as a new commit on `factorial`, and
+   *  syncs it. 409 when the head is no longer `expectedHead`, the one the preview read. */
+  restoreConfig: (id: number, versionId: number, expectedHead: string) =>
+    send<ConfigCommitResult>("POST", `/api/projects/${id}/config-restores`, {
+      version_id: versionId,
+      expected_head: expectedHead,
+    }),
+
+  /** `commitConfig`'s own checks on the same draft, as a verdict. Writes nothing. A draft that
+   *  could be judged answers 200 either way; a forge that cannot be read is still an error. */
+  checkConfig: (
+    id: number,
+    content: string,
+    files: SelectedFile[],
+    edits: ConfigEdit[],
+    created: SelectedFile[] = [],
+    deleted: ConfigDelete[] = [],
+  ) =>
+    send<DraftCheck>("POST", `/api/projects/${id}/config-checks`, {
+      content,
+      files,
+      edits,
+      created,
+      deleted,
     }),
 
   /** One version WITH its stored parse — what a snapshot view draws its graph from.
@@ -542,7 +598,12 @@ export const api = {
   /** Every label the pinned process uses, with its role — and whether the repo defines it. */
   listProjectLabels: (id: number) => request<{ labels: LabelSpec[] }>(`/api/projects/${id}/labels`),
 
-  listProcessTemplates: () => request<{ templates: ProcessTemplate[] }>("/api/process-templates"),
+  /** `shells` is what a new agent, skill, MCP server or process starts from: kind to file to
+   *  body, with `__NAME__` where the typed name goes. */
+  listProcessTemplates: () =>
+    request<{ templates: ProcessTemplate[]; shells?: Record<string, Record<string, string>> }>(
+      "/api/process-templates",
+    ),
 
   /** Validate raw process.yaml text without storing anything. Always 200 with a verdict. */
   validateProcess: (id: number, content: string) =>
@@ -675,6 +736,14 @@ export const api = {
 
   getCompletion: (stepRunId: number, requestId: number) =>
     request<CompletionResult>(`/api/step-runs/${stepRunId}/completion/${requestId}`),
+
+  /** What Approve on the run would approve. Reads the forge on every call. */
+  getReview: (stepRunId: number) => request<Review>(`/api/step-runs/${stepRunId}/review`),
+
+  /** Approve the run at `headSha`, the commit the person looked at: 409 once the branch moved.
+   *  `pending` when the same person already approved that commit. */
+  approveStep: (stepRunId: number, headSha: string) =>
+    send<RequestResult>("POST", `/api/step-runs/${stepRunId}/approve`, { head_sha: headSha }),
 
   // --- runtimes: operator-owned, referenced by slug from a repo's process.yaml -------------------
 

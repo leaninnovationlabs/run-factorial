@@ -268,7 +268,7 @@ async def test_the_organization_budget_counts_only_today(
     assert (await send(client, auth, conversation))[0] == 202
 
 
-async def test_send_while_disabled_is_409_not_configured(
+async def test_send_while_not_ready_is_409_not_configured_naming_the_cause(
     client: AsyncClient,
     auth: dict[str, str],
     maker: async_sessionmaker[AsyncSession],
@@ -290,7 +290,11 @@ async def test_send_while_disabled_is_409_not_configured(
 
     for status, body in (never, no_credential, disabled):
         assert (status, body["code"]) == (409, "not_configured")
-        assert body["detail"] == "Set up the assistant in Assistant settings."
+    # A stored key with Enabled left off is named as off, never as a missing or faulty key.
+    assert never[1]["detail"] == svc.ASSISTANT_OFF
+    assert no_credential[1]["detail"] == svc.NO_CREDENTIAL
+    assert disabled[1]["detail"] == svc.ASSISTANT_OFF
+    assert "Enabled" in svc.ASSISTANT_OFF
     assert await turns_of(maker, conversation) == []
 
 

@@ -5,13 +5,17 @@
  *
  * Copy follows the ADS content standard: say what happened, then what to do next, in the "we"
  * voice — never a bare server string with no way forward.
+ *
+ * A success message that reports an action's outcome — a sync, a commit, a check — can be closed
+ * once read (`onDismiss`, kept by `useDismissible`). Nothing else on a page closes: a warning or an
+ * error is news the reader may still need, and an information message describes the page's state.
  */
 
 import { type ReactNode, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { errorDetails, errorHint, errorText } from "../../format";
 import { ROLE_ICON, type Role } from "../../status";
-import { Button, LinkButton } from "./Button";
+import { Button, IconButton, LinkButton } from "./Button";
 import { ServerText } from "./Code";
 import { cx } from "./cx";
 import { Icon } from "./icons";
@@ -101,6 +105,7 @@ export function SectionMessage({
   actions,
   actionsAs = "buttons",
   isAlert = false,
+  onDismiss,
   className,
   children,
 }: {
@@ -113,6 +118,8 @@ export function SectionMessage({
   /** Announce it as it appears: only for a failure the reader's own action caused. A message that
    *  loads with the page is read in its place, not shouted. */
   isAlert?: boolean;
+  /** Draws a close button: for a success message reporting an action's outcome, and only that. */
+  onDismiss?: () => void;
   /** Layout only: the margin that places it. */
   className?: string;
   children?: ReactNode;
@@ -146,8 +153,28 @@ export function SectionMessage({
           </div>
         )}
       </div>
+      {onDismiss && (
+        <IconButton
+          icon="close"
+          label="Dismiss"
+          spacing="compact"
+          className="-my-1 -mr-1 shrink-0"
+          onClick={onDismiss}
+        />
+      )}
     </section>
   );
+}
+
+/**
+ * An action's outcome until its message is closed: the result while it is shown, and the way to
+ * close it. The next result is a new object, so it shows again; the request's own state, which
+ * other controls read, is never touched.
+ */
+export function useDismissible<T>(result: T | null | undefined): [T | undefined, () => void] {
+  const [dismissed, setDismissed] = useState<T | null>(null);
+  const shown = result != null && result !== dismissed ? result : undefined;
+  return [shown, () => setDismissed(result ?? null)];
 }
 
 /** The technical text behind a plain error, folded: an operator opens it, and nobody else has to

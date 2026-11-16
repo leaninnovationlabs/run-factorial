@@ -752,6 +752,7 @@ source = { editable = "runtime" }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "e2b" },
+    { name = "httpx" },
     { name = "pydantic" },
 ]
 
@@ -759,6 +760,7 @@ dependencies = [
 requires-dist = [
     { name = "claude-agent-sdk", specifier = "==0.2.174" },
     { name = "e2b", specifier = ">=2.51,<3" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.10" },
 ]
 

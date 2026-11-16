@@ -9,8 +9,9 @@
  *
  * A bare path, from a bookmark or a link written before organizations, is moved under the last
  * organization this browser used, or `default`, before the router sees it. Some paths belong to no
- * organization: a step page's sign-in (`/sign-in`), the development reference pages, and, with
- * multi-org on, signup, onboarding and an invite's link (design.md §7.19).
+ * organization: a step page's sign-in (`/sign-in`), the development reference pages, and the
+ * account pages — signup, onboarding, joining by a pasted link and an invite's own link
+ * (design.md §7.19).
  */
 
 import { createContext, type ReactNode, useContext } from "react";
@@ -28,6 +29,7 @@ const ORGLESS: readonly string[] = [
   "/dev/sample",
   "/signup",
   "/onboarding",
+  "/join",
   "/verify-email",
   "/forgot-password",
   "/reset-password",

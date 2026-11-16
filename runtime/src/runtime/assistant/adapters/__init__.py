@@ -27,9 +27,16 @@ def _codex_cli(**options: Any) -> ChatBackend:
     return CodexCliBackend(**options)
 
 
+def _bedrock_responses(**options: Any) -> ChatBackend:
+    from runtime.assistant.adapters.bedrock_responses import BedrockResponsesBackend
+
+    return BedrockResponsesBackend(**options)
+
+
 _REGISTRY: dict[str, Callable[..., ChatBackend]] = {
     "claude_sdk": _claude_sdk,
     "codex_cli": _codex_cli,
+    "bedrock_responses": _bedrock_responses,
 }
 
 

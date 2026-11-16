@@ -9,13 +9,14 @@ import { Row, Section } from "./catalogue";
 import { DataTable } from "./DataTable";
 import { ConfirmDialog, Drawer, ModalDialog, TextDrawer } from "./dialog";
 import { showFlag } from "./Flag";
+import { HoverCard } from "./HoverCard";
 import { InlineEditText } from "./InlineEdit";
 import { Legend } from "./Legend";
 import { StatusLozenge } from "./Lozenge";
 import { Metric } from "./Metric";
 import { InlineMessage } from "./messages";
 import { Panel } from "./Panel";
-import { DropdownMenu } from "./Popup";
+import { ContextMenu, DropdownMenu, PopupAt } from "./Popup";
 import { RelativeTime } from "./RelativeTime";
 import { StackedBar } from "./StackedBar";
 import { StatTile } from "./StatTile";
@@ -144,6 +145,21 @@ export function CodeAndFigures() {
 
 export function Overlays() {
   const [open, setOpen] = useState<"drawer" | "modal" | "confirm" | "text" | null>(null);
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const [promptAt, setPromptAt] = useState<{ x: number; y: number } | null>(null);
+  const folderEntries = [
+    {
+      group: "Add new",
+      items: [
+        { label: "Agent", icon: "agent" as const, onClick: () => {} },
+        { label: "File", icon: "file-yaml" as const, onClick: () => {} },
+      ],
+    },
+    {
+      group: "This folder",
+      items: [{ label: "Delete folder", icon: "trash" as const, onClick: () => {} }],
+    },
+  ];
   return (
     <Section title="Overlays">
       <Row label="layers">
@@ -172,9 +188,52 @@ export function Overlays() {
             },
           ]}
         />
+        {/* A right-click menu always has a button beside it that opens the same entries. */}
+        <span
+          role="none"
+          className="inline-flex items-center gap-1 rounded-md border border-default px-2 py-1 text-body"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMenuAt({ x: event.clientX, y: event.clientY });
+          }}
+        >
+          Right-click this folder
+          <DropdownMenu
+            trigger={{
+              label: "Actions for this folder",
+              icon: "more",
+              iconOnly: true,
+              appearance: "ghost",
+              spacing: "compact",
+            }}
+            items={folderEntries}
+          />
+        </span>
+        <ContextMenu
+          at={menuAt}
+          label="Actions for this folder"
+          items={folderEntries}
+          onClose={() => setMenuAt(null)}
+        />
+        {/* A small dialog at the place of the press, for a question that belongs there. */}
+        <Button
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            setPromptAt({ x: box.left, y: box.bottom });
+          }}
+        >
+          Ask here
+        </Button>
+        <PopupAt at={promptAt} label="A question" onClose={() => setPromptAt(null)}>
+          <p className="p-3 text-body text-default">A popup at the place of the press.</p>
+        </PopupAt>
         <Tooltip content="A tooltip on hover and focus">
           <Button>Hover or focus me</Button>
         </Tooltip>
+        {/* Figures behind an icon: hover, focus, or a press, which is how a phone opens it. */}
+        <HoverCard label="Run metrics" icon="chart">
+          <p className="p-3">Duration 14m 13s · 41.2K in / 9.3K out</p>
+        </HoverCard>
         <ConfirmPopup
           label="Exit"
           name="Exit ticket"

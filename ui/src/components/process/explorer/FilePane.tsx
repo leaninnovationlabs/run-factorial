@@ -25,6 +25,8 @@ export function FilePane({
   lockReason,
   revertLabel = "Revert to template",
   isNew = false,
+  onFillShell,
+  deleted = false,
 }: {
   file: ExplorerFile;
   body: string;
@@ -43,6 +45,11 @@ export function FilePane({
   revertLabel?: string;
   /** Created in the editor: on no branch and in no proposal yet. */
   isNew?: boolean;
+  /** Present for an agent manifest that holds only comments: replaces it with the agent shell
+   *  and adds the prompt files it names. */
+  onFillShell?: () => void;
+  /** Staged for deletion: what went stale is the deletion, not an edit. */
+  deleted?: boolean;
 }) {
   const proposal = file.proposal;
   const markers = Object.keys(proposal?.facts ?? {});
@@ -65,37 +72,54 @@ export function FilePane({
         </div>
       )}
 
-      {(file.repo?.warning || stale) && (
+      {(file.repo?.warning || stale || onFillShell) && (
         <div className="shrink-0 space-y-2 border-b border-default p-3">
-          {file.repo?.warning && (
-            <SectionMessage appearance="warning">{file.repo.warning}</SectionMessage>
+          {(file.repo?.warning || onFillShell) && (
+            <SectionMessage
+              appearance="warning"
+              actions={
+                onFillShell ? [{ text: "Fill in from the shell", onClick: onFillShell }] : undefined
+              }
+            >
+              {file.repo?.warning ?? "This manifest is empty, so the agent cannot run."}
+            </SectionMessage>
           )}
           {stale && (
             <SectionMessage
               appearance="warning"
               title={
-                file.repo
-                  ? "This file changed on the factorial branch since you started editing it"
-                  : "The config changed since this was edited"
+                deleted
+                  ? "This file changed on the factorial branch since you deleted it"
+                  : file.repo
+                    ? "This file changed on the factorial branch since you started editing it"
+                    : "The config changed since this was edited"
               }
               actions={
                 onConfirm
                   ? [
                       {
-                        text: file.repo ? "Use my edit anyway" : "Use this version anyway",
+                        text: deleted
+                          ? "Delete it anyway"
+                          : file.repo
+                            ? "Use my edit anyway"
+                            : "Use this version anyway",
                         onClick: onConfirm,
                       },
                     ]
                   : undefined
               }
             >
-              {file.repo
+              {deleted
                 ? onConfirm
                   ? undefined
-                  : "Sync config, then keep your edit or revert it."
-                : markers.length > 0
-                  ? `This file reads ${markers.join(", ")}, and one of those values has moved.`
-                  : undefined}
+                  : "Sync config, then delete it again or restore it."
+                : file.repo
+                  ? onConfirm
+                    ? undefined
+                    : "Sync config, then keep your edit or revert it."
+                  : markers.length > 0
+                    ? `This file reads ${markers.join(", ")}, and one of those values has moved.`
+                    : undefined}
             </SectionMessage>
           )}
         </div>

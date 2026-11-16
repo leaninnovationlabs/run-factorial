@@ -11,7 +11,7 @@ name: primary
 policy:
   branchProtection: advisory
 runtime: claude-api
-description: Plan, spec review, build, code review, done (GitHub only)
+description: Plan, spec review, build, code review, done
 
 roles:
   spec_reviewers: ["{ticket_owner}"]
@@ -62,6 +62,9 @@ steps:
         - branch_exists("spec/{ticket}-*")
         - file_exists("specs/{ticket}-*/spec.md", "spec/{ticket}-*")
         - pr_open("spec/{ticket}-*", "main")
+        # Optional, and off here. Uncomment to make the run also wait for a person to press
+        # Approve in the dashboard, at the commit the spec ends on, before the gate below opens.
+        # - request_approval()
     onSuccess:
       ticketLabel: "factorial:spec-review"
       assign: ["{roles.spec_reviewers}"]

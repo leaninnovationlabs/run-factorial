@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import Counter
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -1200,3 +1201,109 @@ async def test_one_tick_lists_a_repo_s_branches_and_prs_once_for_all_its_tickets
     await reconcile(1)
     await reconcile(2)
     assert calls == {"comments": 2, "pulls": 6, "branches": 4}
+
+
+async def _chunks(body: bytes) -> AsyncIterator[bytes]:
+    for start in range(0, len(body), 65536):
+        yield body[start : start + 65536]
+
+
+async def test_file_text_reads_the_raw_file_and_none_when_absent_or_too_large(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = {"plan.md": b"- [x] done\n", "huge.md": b"x" * (1024 * 1024 + 1)}
+    asked: list[tuple[str, object, object]] = []
+    responses: list[httpx.Response] = []
+
+    class _Contents:
+        async def async_get_content(
+            self, owner: str, repo: str, path: str, *, ref: str, headers: object, stream: bool
+        ) -> SimpleNamespace:
+            asked.append((path, ref, headers))
+            if path not in bodies:
+                raise _failed(404)
+            # Streamed, as `stream=True` answers: a body given as bytes is closed on creation.
+            responses.append(httpx.Response(200, content=_chunks(bodies[path])))
+            return SimpleNamespace(raw_response=responses[-1])
+
+    class _Api:
+        rest = SimpleNamespace(repos=_Contents())
+
+        async def __aenter__(self) -> _Api:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    source = GitHubStateSource(GitHubClient(None), "acme/widgets", 42)
+
+    async def fake_api() -> _Api:
+        return _Api()
+
+    monkeypatch.setattr(source, "_api", fake_api)
+    assert await source.file_text("spec/42-x", "plan.md") == "- [x] done\n"
+    assert await source.file_text("spec/42-x", "gone.md") is None
+    assert await source.file_text("spec/42-x", "huge.md") is None
+    assert asked[0] == ("plan.md", "spec/42-x", {"Accept": "application/vnd.github.raw+json"})
+    assert all(response.is_closed for response in responses)
+
+
+async def test_file_text_reads_the_body_on_httpx_own_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a proxy configured the client gets no pooled transport, and closing githubkit's
+    per-request client closes the connection: a body read after that raises `ReadError`."""
+    from githubkit import GitHub
+
+    # Past one socket read, so part of the body is still to come when the client closes.
+    body = b"- [ ] one\n" * 60000
+
+    async def answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        while (await reader.readline()) not in (b"\r\n", b""):
+            pass
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(answer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    api = GitHub("t", base_url=f"http://127.0.0.1:{port}", auto_retry=False)
+    source = GitHubStateSource(GitHubClient(None), "acme/widgets", 42)
+
+    async def fake_api() -> GitHub[Any]:
+        return api
+
+    monkeypatch.setattr(source, "_api", fake_api)
+    try:
+        assert await source.file_text("main", "plan.md") == body.decode()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_file_text_escapes_the_path_once_and_refuses_a_dot_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """githubkit puts the path into the URL as given: unescaped, `?` and `#` end it, so the
+    read would answer for another file."""
+    from githubkit import GitHub
+
+    sent: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.raw_path)
+        return httpx.Response(200, content=b"- [x] done\n")
+
+    api = GitHub("t", async_transport=httpx.MockTransport(handler), auto_retry=False)
+    source = GitHubStateSource(GitHubClient(None), "acme/widgets", 42)
+
+    async def fake_api() -> GitHub[Any]:
+        return api
+
+    monkeypatch.setattr(source, "_api", fake_api)
+    assert await source.file_text("spec/42-x", "docs/plans/12 x?a=b#c%d.md") == "- [x] done\n"
+    assert await source.file_text("spec/42-x", "docs/../secrets.md") is None
+    assert await source.file_text("spec/42-x", "./plan.md") is None
+    assert sent == [
+        b"/repos/acme/widgets/contents/docs/plans/12%20x%3Fa%3Db%23c%25d.md?ref=spec%2F42-x"
+    ]

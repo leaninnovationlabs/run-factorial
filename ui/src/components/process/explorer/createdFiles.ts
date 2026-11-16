@@ -47,7 +47,10 @@ export function writeCreatedFiles(
 }
 
 /** `assemble.py`'s `_SAFE_NAME`: no `..`, no dot-folder, no space or slash. */
-const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export const UNSAFE_NAME =
+  "Each folder and file name starts with a letter or digit, then letters, digits, dots, dashes or underscores.";
 
 /**
  * Why `path` cannot be created as a `kind`, or null when it can. `taken` is every file path the
@@ -63,7 +66,7 @@ export function newPathProblem(
   const prefix = `${configDir}/`;
   const segments = path.startsWith(prefix) ? path.slice(prefix.length).split("/") : [];
   if (segments.length === 0 || segments.some((segment) => !SAFE_NAME.test(segment))) {
-    return "Each folder and file name starts with a letter or digit, then letters, digits, dots, dashes or underscores.";
+    return UNSAFE_NAME;
   }
   if (taken.includes(path)) return "A file with that name is already here.";
   const ancestors = segments

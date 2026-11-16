@@ -29,6 +29,7 @@ export {
 } from "./Flag";
 export { useFitsInRow } from "./fits";
 export { Field, Form, FormFooter, RequiredLegend } from "./form";
+export { HoverCard } from "./HoverCard";
 export { InlineEditText } from "./InlineEdit";
 export { type Glyph, Icon } from "./icons";
 export { JumpRail, type JumpRailItem } from "./JumpRail";
@@ -46,12 +47,19 @@ export {
   messageBox,
   SectionMessage,
   StaleNote,
+  useDismissible,
 } from "./messages";
 export { prefersReducedMotion } from "./motion";
-export { NavButtonItem, NavLinkItem } from "./NavItem";
+export {
+  NavButtonItem,
+  NavLinkItem,
+  NavPlace,
+  NavPlaceLink,
+  NavPlaceMenuButton,
+} from "./NavItem";
 export { PageHeader, pageTitle, usePageTitle } from "./PageHeader";
 export { Panel } from "./Panel";
-export { DropdownMenu, type MenuEntry, Popup } from "./Popup";
+export { ContextMenu, DropdownMenu, type MenuEntry, Popup, PopupAt } from "./Popup";
 export { Pressable } from "./Pressable";
 export { RelativeTime } from "./RelativeTime";
 export { StackedBar } from "./StackedBar";

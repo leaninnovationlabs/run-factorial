@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from githubkit.exception import RateLimitExceeded
 
 from orchestrator.access.accounts import HasherBusy
-from orchestrator.api.services.errors import ServiceError
+from orchestrator.api.services.errors import ServiceError, located
 from orchestrator.backoff import ConnectionBackoff
 from orchestrator.github.client import RateLimited
 
@@ -24,7 +24,9 @@ BACKOFF_RETRY_SECONDS: Final = 30
 
 
 async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
-    content: dict[str, str | list[str]] = {"detail": exc.message}
+    content: dict[str, str | list[str]] = {"detail": located(exc)}
+    if exc.path:
+        content["path"] = exc.path
     if exc.code is not None:
         content["code"] = exc.code
     if exc.hint:

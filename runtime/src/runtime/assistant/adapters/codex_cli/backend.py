@@ -2,7 +2,12 @@
 
 Mirrors agent `codex_bedrock` / `codex_api` containment: per-turn `CODEX_HOME`, workspace
 sandbox, web search off on Bedrock, and a single MCP server (`factorial`) bridged to the
-turn's in-process `ChatToolbox`.
+turn's in-process `ChatToolbox`. On Bedrock the child's model requests go through the turn's
+relay (`relay.py`), without which Codex runs no call of that server's tools.
+
+A turn keeps no session. Codex writes a thread's rollout under `CODEX_HOME`, which is deleted
+when the turn ends, so `codex exec resume` has nothing to continue and exits 1. Every turn is a
+new thread that opens with the conversation's transcript (`ChatTurnSpec.history`).
 """
 
 from __future__ import annotations
@@ -14,12 +19,15 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import ClassVar, Final
 
+import httpx
+
 from runtime.adapters._cli.paths import write_private
 from runtime.adapters._cli.process import Cli
 from runtime.adapters.codex_cli.auth import (
     AUTH_MODE_API_KEY,
     AUTH_MODE_BEDROCK,
     AUTH_MODE_SUBSCRIPTION,
+    bedrock_provider_config,
 )
 from runtime.adapters.codex_cli.cli import (
     AUTH_FILE,
@@ -29,7 +37,6 @@ from runtime.adapters.codex_cli.cli import (
     FLAG_MODEL,
     FLAG_SANDBOX,
     PINNED_VERSION,
-    SUBCMD_RESUME,
     VALUE_SANDBOX_WORKSPACE,
     VERSION_NAME,
 )
@@ -47,6 +54,7 @@ from runtime.assistant.adapters.codex_cli.exec_cli import (
     api_key_login,
     launch,
 )
+from runtime.assistant.adapters.codex_cli.relay import ResponsesRelay
 from runtime.assistant.adapters.codex_cli.tool_socket import ToolSocketServer, socket_path_for_turn
 from runtime.assistant.contract import (
     BackendStateStore,
@@ -76,7 +84,7 @@ class CodexCliBackend:
     kind: ClassVar[str] = "codex_cli"
     pinned_version: ClassVar[str] = PINNED_CODEX_VERSION
     supports_partial_text: ClassVar[bool] = False
-    supports_resume: ClassVar[bool] = True
+    supports_resume: ClassVar[bool] = False
     supports_cancel: ClassVar[bool] = True
     supports_effort: ClassVar[bool] = False
 
@@ -86,9 +94,11 @@ class CodexCliBackend:
         *,
         mcp_command: tuple[str, ...],
         codex_bin: str = CODEX_BIN,
+        bedrock_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._work_root = Path(work_root)
         self._mcp_command = mcp_command
+        self._bedrock_transport = bedrock_transport
         self._cli = Cli(agent_bin=codex_bin)
         self._live: dict[str, _Live] = {}
 
@@ -113,7 +123,7 @@ class CodexCliBackend:
     async def turn(
         self, spec: ChatTurnSpec, state: BackendStateStore, tools: ChatToolbox
     ) -> AsyncIterator[ChatEvent]:
-        del state  # resume uses Codex thread id on the conversation row, not the store yet.
+        del state
         cwd = self._work_root / spec.conversation_id
         if cwd.resolve().parent != self._work_root.resolve():
             yield TurnFailed(
@@ -126,9 +136,19 @@ class CodexCliBackend:
         config_dir = Path(tempfile.mkdtemp(prefix="factorial-assistant-codex-"))
         socket_path = socket_path_for_turn(spec.turn_id)
         tool_host = ToolSocketServer(socket_path, tools)
+        relay = (
+            ResponsesRelay(
+                bedrock_provider_config(spec.bedrock_region)["base_url"],
+                transport=self._bedrock_transport,
+            )
+            if spec.auth_mode == AUTH_MODE_BEDROCK
+            else None
+        )
         live = self._live[spec.turn_id] = _Live()
         try:
             await tool_host.start()
+            if relay is not None:
+                await relay.start()
             await _seed_auth(self._cli.agent_bin, config_dir, spec)
             document, _ = build_assistant_config(
                 worktree=cwd,
@@ -137,6 +157,7 @@ class CodexCliBackend:
                 tool_socket=socket_path,
                 auth_mode=spec.auth_mode,
                 bedrock_region=spec.bedrock_region,
+                bedrock_base_url=None if relay is None else relay.base_url,
             )
             write_private(config_dir / CONFIG_FILE, document)
             prompt = _prompt(spec)
@@ -181,6 +202,8 @@ class CodexCliBackend:
                 )
         finally:
             self._live.pop(spec.turn_id, None)
+            if relay is not None:
+                await relay.stop()
             await tool_host.stop()
             shutil.rmtree(config_dir, ignore_errors=True)
 
@@ -209,17 +232,6 @@ def _prompt(spec: ChatTurnSpec) -> str:
 
 
 def _argv(spec: ChatTurnSpec, cwd: Path) -> tuple[str, ...]:
-    if spec.resume_session:
-        return (
-            SUBCMD_EXEC,
-            SUBCMD_RESUME,
-            spec.resume_session,
-            FLAG_JSON,
-            FLAG_MODEL,
-            spec.model,
-            FLAG_SKIP_GIT_REPO_CHECK,
-            STDIN_PROMPT,
-        )
     return (
         SUBCMD_EXEC,
         FLAG_JSON,

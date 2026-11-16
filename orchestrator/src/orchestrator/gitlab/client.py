@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ssl
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import quote
 
@@ -86,18 +88,13 @@ class GitLabClient:
         if http is not None:
             await http.aclose()
 
-    async def request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: Any = None,
-    ) -> Any:
+    @asynccontextmanager
+    async def _held(self) -> AsyncIterator[httpx.AsyncClient]:
+        """The HTTP client for one request, which `aclose` waits for."""
         http = await self.http()
         self._in_flight += 1
         try:
-            response = await http.request(method, path, params=params, json=json)
+            yield http
         except httpx.ConnectError as exc:
             raise GitLabError(
                 f"cannot reach GitLab at {self._settings.base_url}: {exc}. "
@@ -109,16 +106,31 @@ class GitLabClient:
             self._in_flight -= 1
             if self._closing and not self._in_flight:
                 await self._close_http()
-        if response.status_code == 404:
-            raise GitLabError(f"{method} {path} not found", status_code=404)
-        if response.status_code >= 400:
-            raise GitLabError(
-                f"{method} {path} failed: {response.status_code} {response.text[:300]}",
-                status_code=response.status_code,
-            )
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: Any = None,
+    ) -> Any:
+        async with self._held() as http:
+            response = await http.request(method, path, params=params, json=json)
+        _raise_for(method, path, response)
         if response.status_code == 204 or not response.content:
             return None
         return response.json()
+
+    @asynccontextmanager
+    async def stream(self, url: str, **params: Any) -> AsyncIterator[httpx.Response]:
+        """A GET whose body the caller reads as it arrives, so it can stop early. Fails as
+        `request` does."""
+        async with self._held() as http, http.stream("GET", url, params=params or None) as response:
+            if response.status_code >= 400:
+                await response.aread()
+            _raise_for("GET", url, response)
+            yield response
 
     async def get(self, url: str, **params: Any) -> Any:
         # `url` not `path`: GitLab's tree API takes a query parameter named `path`, and a
@@ -138,3 +150,13 @@ class GitLabClient:
             page += 1
             if page > 20:
                 return out
+
+
+def _raise_for(method: str, path: str, response: httpx.Response) -> None:
+    if response.status_code == 404:
+        raise GitLabError(f"{method} {path} not found", status_code=404)
+    if response.status_code >= 400:
+        raise GitLabError(
+            f"{method} {path} failed: {response.status_code} {response.text[:300]}",
+            status_code=response.status_code,
+        )

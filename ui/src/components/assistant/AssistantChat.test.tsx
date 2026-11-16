@@ -444,7 +444,7 @@ describe("AssistantPage", () => {
     await type(composer(), "hello");
     await press("Enter", composer() ?? document);
     await settle();
-    expect(dialog()?.textContent).toContain("Set up the assistant");
+    expect(dialog()?.textContent).toContain("Set up the assistant in Assistant settings.");
     expect(composer()).toBeNull();
 
     // Fixed in Assistant settings, which saves and refreshes the settings every view reads.

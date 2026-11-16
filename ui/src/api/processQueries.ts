@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { errorDetails, errorHint, errorText } from "../format";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { ConfigEdit, SeedSource, SelectedFile } from "./types";
+import type { ConfigDelete, ConfigEdit, SeedSource, SelectedFile } from "./types";
 
 export function useSyncProcessVersions(id: number) {
   const client = useQueryClient();
@@ -141,8 +141,57 @@ export function useCommitConfig(id: number) {
       files: SelectedFile[];
       edits: ConfigEdit[];
       created?: SelectedFile[];
-    }) => api.commitConfig(id, input.content, input.files, input.edits, input.created),
+      deleted?: ConfigDelete[];
+    }) =>
+      api.commitConfig(id, input.content, input.files, input.edits, input.created, input.deleted),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.project(id) }),
+  });
+}
+
+/** Every synced snapshot, for the history. Fetched only while the history is open. */
+export function useProcessVersions(id: number, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.processVersions(id),
+    queryFn: () => api.listProcessVersions(id),
+    enabled,
+  });
+}
+
+/** What a restore to this version would do, read against the head as it is now: never cached,
+ *  because the head moves. */
+export function useRestorePreview(id: number, versionId: number | null) {
+  return useQuery({
+    queryKey: keys.restorePreview(id, versionId),
+    queryFn: () => api.getRestorePreview(id, versionId as number),
+    enabled: versionId !== null,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false, // a 409 at an unknown head is an answer
+  });
+}
+
+/** A restore is a commit and a sync, so it invalidates what those do. */
+export function useRestoreConfig(id: number) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { versionId: number; expectedHead: string }) =>
+      api.restoreConfig(id, input.versionId, input.expectedHead),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.project(id) }),
+  });
+}
+
+/** A commit's own checks on the draft, on demand. Nothing to invalidate: the verdict is the
+ *  whole result, and the caller drops it when the draft changes. */
+export function useCheckConfig(id: number) {
+  return useMutation({
+    mutationFn: (input: {
+      content: string;
+      files: SelectedFile[];
+      edits: ConfigEdit[];
+      created?: SelectedFile[];
+      deleted?: ConfigDelete[];
+    }) =>
+      api.checkConfig(id, input.content, input.files, input.edits, input.created, input.deleted),
   });
 }
 

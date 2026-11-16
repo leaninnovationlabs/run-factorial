@@ -1,12 +1,12 @@
 """The process templates the config editor offers.
 
-The contract under test: the editor offers the sample templates and nothing else. Each GitHub
-lane parses to what docs/samples/factorial-simple's process of the same name parses to, each
-GitLab lane to docs/samples/factorial-gitlab, and a first commit of each template's Simple lane
-into a repo with no config writes every file its sample folder has but the other lanes', with
-the sample's text. Where the sample depends on something set up outside the repo — a Runtime,
-an MCP server — the template carries it commented out, and each such example works once it is
-turned on.
+The contract under test: the editor offers the sample templates and nothing else. Each Simple
+lane parses to what docs/samples/factorial-simple's process of the same name parses to, the
+Superpowers lane to docs/samples/factorial-superpowers, and a first commit of each template's
+main lane into a repo with no config, on GitHub or on GitLab, writes every file its sample folder
+has but the other lanes', with the sample's text. Where the sample depends on something set up
+outside the repo — a Runtime, an MCP server — the template carries it commented out, and each
+such example works once it is turned on.
 """
 
 from __future__ import annotations
@@ -18,21 +18,32 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator.config import parse_named_process, parse_process
+from orchestrator.config import (
+    ConfigError,
+    load_config_folder,
+    parse_agent,
+    parse_mcp_server,
+    parse_named_process,
+    parse_process,
+)
 from orchestrator.config.lint import lint_process
 from orchestrator.config.models import AgentStep, GateStep, McpRefs
-from orchestrator.config.process_templates import PROCESS_TEMPLATES, ProcessTemplate
+from orchestrator.config.process_templates import (
+    CONFIG_SHELLS,
+    PROCESS_TEMPLATES,
+    ProcessTemplate,
+)
 from orchestrator.config.scaffold.assemble import assemble
-from orchestrator.config.scaffold.catalog import TEMPLATE_ROOT, Forge
+from orchestrator.config.scaffold.catalog import Forge
 from orchestrator.config.scaffold.propose import propose
 from orchestrator.config.scaffold.validate import validate_bundle
 from tests.api_harness import authed_client_for, build_app, make_settings
-from tests.paths import GITLAB_SAMPLE, SAMPLE, SAMPLE_PROCESS
+from tests.paths import SAMPLE, SAMPLE_PROCESS
 
 LANES = {lane.key: lane for lane in PROCESS_TEMPLATES[0].lanes}
 SIMPLE = LANES["simple"]
-GITLAB = PROCESS_TEMPLATES[1]
-GITLAB_LANES = {lane.key: lane for lane in GITLAB.lanes}
+SUPERPOWERS = PROCESS_TEMPLATES[1]
+SUPERPOWERS_LANES = {lane.key: lane for lane in SUPERPOWERS.lanes}
 
 
 def sample_lane(key: str, *, root: Path = SAMPLE) -> Path:
@@ -42,6 +53,7 @@ def sample_lane(key: str, *, root: Path = SAMPLE) -> Path:
 #: The sample's own README explains the sample to this repo's readers. The seeded branch carries
 #: a README of its own (`seed_config_branch`), so no commit writes this one.
 NOT_SCAFFOLDED = frozenset({"README.md"})
+SUPERPOWERS_SAMPLE = SAMPLE.parent / "factorial-superpowers"
 MCP_SERVER = ".factorial/mcp/product-docs.yaml"
 MCP_EXAMPLE = f"{MCP_SERVER}.example"
 PLAN_AGENT = ".factorial/agents/plan-agent/agent.yaml"
@@ -64,10 +76,10 @@ def uncomment(text: str, key: str) -> str:
 
 
 def test_the_editor_offers_the_sample_templates_with_every_lane_they_have() -> None:
-    assert [template.key for template in PROCESS_TEMPLATES] == ["simple", "simple-gitlab"]
+    assert [template.key for template in PROCESS_TEMPLATES] == ["simple", "superpowers"]
     for template, root, expected in (
         (PROCESS_TEMPLATES[0], SAMPLE, ["primary", "simple"]),
-        (GITLAB, GITLAB_SAMPLE, ["primary", "simple"]),
+        (SUPERPOWERS, SUPERPOWERS_SAMPLE, ["superpowers"]),
     ):
         lanes = [lane.key for lane in template.lanes]
         sample_lanes = sorted(
@@ -89,9 +101,7 @@ def test_a_templates_lanes_are_the_process_files_in_its_folder(tmp_path, monkeyp
     (folder / "notes.md").write_text("not a lane\n")
     monkeypatch.setattr(process_templates, "TEMPLATES_DIR", tmp_path)
 
-    template = process_templates.ProcessTemplate(
-        key="two", title="Two", description="", forge="github"
-    )
+    template = process_templates.ProcessTemplate(key="two", title="Two", description="")
     assert [(lane.key, lane.text) for lane in template.lanes] == [
         ("feature", "name: feature\n"),
         ("hotfix", "name: hotfix\n"),
@@ -99,11 +109,9 @@ def test_a_templates_lanes_are_the_process_files_in_its_folder(tmp_path, monkeyp
 
 
 LANE_CASES = [(LANES, SAMPLE, key) for key in sorted(LANES)] + [
-    (GITLAB_LANES, GITLAB_SAMPLE, key) for key in sorted(GITLAB_LANES)
+    (SUPERPOWERS_LANES, SUPERPOWERS_SAMPLE, "superpowers")
 ]
-LANE_CASE_IDS = [f"simple/{key}" for key in sorted(LANES)] + [
-    f"simple-gitlab/{key}" for key in sorted(GITLAB_LANES)
-]
+LANE_CASE_IDS = [f"simple/{key}" for key in sorted(LANES)] + ["superpowers/superpowers"]
 
 
 @pytest.mark.parametrize(("lanes", "root", "key"), LANE_CASES, ids=LANE_CASE_IDS)
@@ -174,10 +182,16 @@ def test_the_commented_app_preview_parses_once_turned_on(which: str) -> None:
     assert build.preview is not None and build.preview.services
 
 
+def main_lane(template: ProcessTemplate) -> str:
+    """The lane a first commit is tested with: Simple, or the only lane a template has."""
+    keys = [lane.key for lane in template.lanes]
+    return "simple" if "simple" in keys else keys[0]
+
+
 def first_commit(template: ProcessTemplate = PROCESS_TEMPLATES[0], forge: Forge = "github"):
-    """The template's Simple lane with every file ticked by default, into a repo with no config
+    """The template's main lane with every file ticked by default, into a repo with no config
     yet, on a project whose issues live on `forge`."""
-    text = {lane.key: lane for lane in template.lanes}["simple"].text
+    text = {lane.key: lane for lane in template.lanes}[main_lane(template)].text
     config = parse_process(text, origin="template")
     proposal = propose(config, forge=forge)
     selected = {
@@ -190,15 +204,22 @@ def first_commit(template: ProcessTemplate = PROCESS_TEMPLATES[0], forge: Forge 
     return assemble(config, text, selected, proposal)
 
 
-SAMPLE_CASES = [(PROCESS_TEMPLATES[0], SAMPLE), (GITLAB, GITLAB_SAMPLE)]
-SAMPLE_CASE_IDS = [template.key for template, _ in SAMPLE_CASES]
+FORGES: tuple[Forge, ...] = ("github", "gitlab")
+SAMPLE_CASES = [
+    (template, root, forge)
+    for template, root in ((PROCESS_TEMPLATES[0], SAMPLE), (SUPERPOWERS, SUPERPOWERS_SAMPLE))
+    for forge in FORGES
+]
+SAMPLE_CASE_IDS = [f"{template.key}/{forge}" for template, _, forge in SAMPLE_CASES]
 
 
 def sample_files(root: Path, template: ProcessTemplate) -> dict[str, Path]:
     """The sample's files by the path a first commit writes them at. The other lanes are files
     of their own, which their own commits write."""
     other_lanes = {
-        f"processes/process-{lane.key}.yaml" for lane in template.lanes if lane.key != "simple"
+        f"processes/process-{lane.key}.yaml"
+        for lane in template.lanes
+        if lane.key != main_lane(template)
     }
     return {
         f".factorial/{path.relative_to(root).as_posix()}": path
@@ -207,18 +228,21 @@ def sample_files(root: Path, template: ProcessTemplate) -> dict[str, Path]:
     }
 
 
-@pytest.mark.parametrize(("template", "root"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
+@pytest.mark.parametrize(("template", "root", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
 def test_a_first_commit_writes_the_whole_sample_folder(
-    template: ProcessTemplate, root: Path
+    template: ProcessTemplate, root: Path, forge: Forge
 ) -> None:
-    """The sample folder's paths, every agent with real files rather than a stub — and the MCP
-    server the sample defines as an inert example, which nothing selects."""
-    bundle = first_commit(template, template.forge)
+    """The sample folder's paths, every agent with real files rather than a stub, on either
+    forge — and the MCP server the sample defines as an inert example, which nothing selects."""
+    bundle = first_commit(template, forge)
     loaded = validate_bundle(bundle)
     assert bundle.stub_paths == frozenset()
     assert loaded.mcp_servers == {}
     assert all(agent.mcp == McpRefs() for agent in loaded.agents.values())
-    assert set(bundle.files) == set(sample_files(root, template)) - {MCP_SERVER} | {MCP_EXAMPLE}
+    expected = set(sample_files(root, template))
+    if MCP_SERVER in expected:
+        expected = expected - {MCP_SERVER} | {MCP_EXAMPLE}
+    assert set(bundle.files) == expected
 
 
 def _cut(pattern: str, text: str) -> str:
@@ -239,29 +263,20 @@ def as_sample(path: str, body: str) -> tuple[str, str]:
     return path, body
 
 
-@pytest.mark.parametrize(("template", "root"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
-def test_first_commit_bodies_equal_the_sample(template: ProcessTemplate, root: Path) -> None:
+@pytest.mark.parametrize(("template", "root", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
+def test_first_commit_bodies_equal_the_sample(
+    template: ProcessTemplate, root: Path, forge: Forge
+) -> None:
     """The samples are hand-kept copies of what a first commit writes, and drifted several
     releases behind before this test held them. Process files are compared parsed, above, since
     the sample's comments may say more."""
-    bundle = first_commit(template, template.forge)
+    bundle = first_commit(template, forge)
     sample = sample_files(root, template)
     for path, body in bundle.files.items():
         if path.startswith(".factorial/processes/"):
             continue
         target, expected = as_sample(path, body)
         assert sample[target].read_text() == expected, target
-
-
-def test_the_gitlab_plan_agent_skills_are_the_github_ones() -> None:
-    """The speckit skills name no forge, so the GitLab plan agent ships copies of the GitHub
-    one's; a fix to one must reach the other."""
-    agent = TEMPLATE_ROOT / "agents" / "plan-agent"
-    github, gitlab = agent / "base-target" / "skills", agent / "base-target-gitlab" / "skills"
-    files = sorted(path.relative_to(github) for path in github.rglob("*") if path.is_file())
-    assert files == sorted(path.relative_to(gitlab) for path in gitlab.rglob("*") if path.is_file())
-    for relative in files:
-        assert (gitlab / relative).read_bytes() == (github / relative).read_bytes(), relative
 
 
 def test_the_mcp_example_works_once_turned_on() -> None:
@@ -275,6 +290,16 @@ def test_the_mcp_example_works_once_turned_on() -> None:
     assert set(loaded.mcp_servers) == {"product-docs"}
 
 
+def test_the_superpowers_sample_loads_and_lints_clean() -> None:
+    """The lane is the reference for `request_approval()` and `checklist_done()`. The template
+    tests compare it file by file, and only this one loads the folder as a whole."""
+    config = load_config_folder(SUPERPOWERS_SAMPLE)
+    assert set(config.processes) == {"superpowers"}
+    lane = config.processes["superpowers"]
+    assert {step.agent for step in lane.steps if isinstance(step, AgentStep)} <= set(config.agents)
+    assert lint_process(lane) == []
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio(loop_scope="session")
 async def test_the_templates_route_serves_the_whole_file() -> None:
@@ -282,13 +307,10 @@ async def test_the_templates_route_serves_the_whole_file() -> None:
         response = await client.get("/api/process-templates")
     assert response.status_code == 200
     templates = response.json()["templates"]
-    assert [template["key"] for template in templates] == ["simple", "simple-gitlab"]
+    assert [template["key"] for template in templates] == ["simple", "superpowers"]
     assert all(template["title"] and template["description"] for template in templates)
     assert [(lane["key"], lane["yaml"]) for lane in templates[0]["lanes"]] == [
         (key, LANES[key].text) for key in ("primary", "simple")
-    ]
-    assert [(lane["key"], lane["yaml"]) for lane in templates[1]["lanes"]] == [
-        (key, GITLAB_LANES[key].text) for key in ("primary", "simple")
     ]
 
 
@@ -323,49 +345,10 @@ async def test_the_templates_route_carries_content_and_agents() -> None:
     assert all(agent["warning"] is None and agent["model"] for agent in simple["agents"])
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_gallery_gitlab_template_resolves_gitlab_agents(monkeypatch) -> None:
-    """The gallery previews the manifests an import would write, so a GitLab template's lanes
-    resolve against the GitLab agents."""
-    from orchestrator.api.routes import admin
-    from orchestrator.factorial.probe import catalog_agents
-
-    assert [template.forge for template in PROCESS_TEMPLATES] == ["github", "gitlab"]
-    asked: list[tuple[str, str]] = []
-
-    def spy(config, *, forge: Forge = "github"):
-        asked.append((config.name, forge))
-        return catalog_agents(config, forge=forge)
-
-    monkeypatch.setattr(admin, "catalog_agents", spy)
-    async with authed_client_for(build_app(make_settings(), None)) as client:
-        body = (await client.get("/api/process-templates")).json()
-
-    [gitlab] = [template for template in body["templates"] if template["key"] == "simple-gitlab"]
-    for lane in gitlab["lanes"]:
-        assert lane["agents"]
-        assert all(agent["warning"] is None and agent["model"] for agent in lane["agents"])
-    assert sorted(asked) == sorted(
-        [(lane.key, "github") for lane in LANES.values()]
-        + [(lane.key, "gitlab") for lane in GITLAB_LANES.values()]
-    )
-    for lane in GITLAB_LANES.values():
-        config = parse_named_process(lane.text, key=lane.key, origin="t")
-        build = catalog_agents(config, forge="gitlab")
-        files = propose(config, forge="gitlab").files
-        assert "merge request" in files[".factorial/agents/build-agent/agent.yaml"].body
-        assert all(agent.manifest is not None for agent in build)
-
-
 @pytest.mark.parametrize(
     "text",
-    [
-        LANES["primary"].text,
-        GITLAB_LANES["primary"].text,
-        sample_lane("primary").read_text(),
-        sample_lane("primary", root=GITLAB_SAMPLE).read_text(),
-    ],
-    ids=["template", "gitlab-template", "sample", "gitlab-sample"],
+    [LANES["primary"].text, sample_lane("primary").read_text()],
+    ids=["template", "sample"],
 )
 def test_primary_build_hands_the_ticket_to_code_review(text):
     steps = {s["name"]: s for s in yaml.safe_load(text)["steps"]}
@@ -373,3 +356,86 @@ def test_primary_build_hands_the_ticket_to_code_review(text):
     assert done["ticketLabel"] == "factorial:code-review"
     assert done["assign"] == ["{roles.code_reviewers}"]
     assert "testing" not in done["comment"]
+
+
+# --- the shells a new agent, skill, MCP server or process starts from ---------------------------
+
+EXAMPLE_START = "# --- example: uncomment and edit ---"
+EXAMPLE_END = "# --- end example ---"
+
+
+def named(kind: str, name: str) -> dict[str, str]:
+    return {file: body.replace("__NAME__", name) for file, body in CONFIG_SHELLS[kind].items()}
+
+
+def uncommented(text: str) -> str:
+    """The shell with its example block turned on, as its own first lines tell the operator to."""
+    out: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line == EXAMPLE_START:
+            inside = True
+        elif line == EXAMPLE_END:
+            inside = False
+        elif inside:
+            assert line == "#" or line.startswith("# "), line
+            out.append(line[2:])
+        else:
+            out.append(line)
+    assert not inside
+    return "\n".join(out) + "\n"
+
+
+def test_the_agent_shell_is_a_complete_agent_as_created() -> None:
+    files = named("agent", "review-agent")
+    manifest = parse_agent(files["agent.yaml"], origin="shell")
+    assert set(files) == {"agent.yaml", "system-prompt.md", "instructions.md"}
+    assert manifest.name == "review-agent"
+    assert {manifest.prompts.system, manifest.prompts.instructions} <= set(files)
+    assert [secret.key for secret in manifest.secrets] == ["GH_TOKEN"]
+    assert manifest.limits.max_turns == 200
+
+
+def test_the_agent_shell_prompt_keeps_the_prohibitions() -> None:
+    """Merging is enforced; the rest is a prompt rule, so the sentence is the control."""
+    prompt = CONFIG_SHELLS["agent"]["system-prompt.md"]
+    for phrase in ("merge", "self-approve", "add labels", "push to `main`"):
+        assert phrase in prompt
+
+
+def test_the_skill_shell_names_itself_in_its_frontmatter() -> None:
+    assert named("skill", "review-notes")["SKILL.md"].startswith("---\nname: review-notes\n")
+
+
+def test_no_shell_keeps_its_marker_once_named() -> None:
+    for kind in CONFIG_SHELLS:
+        assert all("__NAME__" not in body for body in named(kind, "x").values())
+
+
+def test_the_mcp_shell_is_refused_as_created_and_parses_once_its_example_is_uncommented() -> None:
+    text = named("mcp", "tracker")["server.yaml"]
+    with pytest.raises(ConfigError, match="transport"):
+        parse_mcp_server(text, name="tracker", origin="shell")
+    assert parse_mcp_server(uncommented(text), name="tracker", origin="shell").name == "tracker"
+
+
+def test_the_process_shell_is_refused_as_created_and_parses_once_its_example_is_uncommented() -> (
+    None
+):
+    text = named("process", "fast")["process.yaml"]
+    with pytest.raises(ConfigError, match="steps"):
+        parse_named_process(text, key="fast", origin="shell")
+    config = parse_named_process(uncommented(text), key="fast", origin="shell")
+    assert config.name == "fast"
+    assert lint_process(config) == []
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio(loop_scope="session")
+async def test_the_templates_route_serves_every_shell() -> None:
+    async with authed_client_for(build_app(make_settings(), None)) as client:
+        response = await client.get("/api/process-templates")
+    assert response.status_code == 200
+    shells = response.json()["shells"]
+    assert set(shells) == {"agent", "skill", "mcp", "process"}
+    assert shells["agent"]["agent.yaml"] == CONFIG_SHELLS["agent"]["agent.yaml"]

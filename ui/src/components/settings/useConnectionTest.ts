@@ -1,6 +1,6 @@
 /**
- * Settings' Test: one real turn in an archived conversation of its own, followed on that
- * conversation's stream until the turn ends or a minute passes. The time is the client's, from the
+ * Settings' Credential check: one real turn in an archived conversation of its own, followed on
+ * that conversation's stream until the turn ends or a minute passes. The time is the client's, from the
  * press to the turn's end, and the reply is the newest copy of each of the assistant's items.
  */
 
@@ -23,6 +23,8 @@ export type ConnectionTestState =
       costUsd: string | null;
       isEstimate: boolean;
       failure: string | null;
+      /** The closed `TurnFailure` kind: `auth` is a credential the model provider refused. */
+      failureReason: string | null;
     };
 
 /** The stream holds each item once, at its newest copy, in the order the items were made. */
@@ -69,6 +71,7 @@ export function useConnectionTest() {
       costUsd: turn.cost_usd,
       isEstimate: turn.cost_source === "estimated",
       failure: turn.status === "done" ? null : (turn.failure_message ?? turn.status),
+      failureReason: turn.status === "done" ? null : turn.failure_reason,
     });
   }, [following, turn, items]);
 

@@ -77,7 +77,7 @@ INVITE_LIFETIME: Final = timedelta(days=7)
 _SLUG: Final = re.compile(r"[a-z0-9][a-z0-9-]{1,38}[a-z0-9]")
 #: Words the dashboard uses as paths, and the seeded organization's.
 RESERVED_SLUGS: Final = frozenset(
-    {"api", "auth", "default", "dev", "invite", "onboarding", "orgs", "sign-in", "signup"}
+    {"api", "auth", "default", "dev", "invite", "join", "onboarding", "orgs", "sign-in", "signup"}
 )
 
 

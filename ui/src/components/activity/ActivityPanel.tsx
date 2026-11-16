@@ -13,17 +13,31 @@
  * Selection is two-way with the process graph above it: scrolling moves the graph's selected node,
  * and picking a node scrolls this region. `reportedRef` is what stops those two from driving each
  * other in a loop — see the comment on it.
+ *
+ * Focused leaves out the routine rows (`isRoutine`), by the same judgment that draws them dimmer.
+ * A block keeps its header whatever it hides, and the header counts the rows it hid beside the
+ * run's status; the rail counts the rows it shows.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { StepRun } from "../../api/types";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { StepRun, TimelineEntry } from "../../api/types";
 import type { ForgeHost } from "../../forge";
 import { Button, Code, cx, EmptyState, JumpRail, statusFacts, useScrollSpy } from "../ui";
 import {
   type ActivityOrder,
   type ActivitySegment,
   currentRows,
+  factsFor,
   type Held,
+  isRoutine,
   type LongContent,
   type Spawn,
   statusDot,
@@ -32,7 +46,7 @@ import { EventRow } from "./EventRow";
 import type { ForceCompleteProps } from "./force";
 import type { RedoOffer } from "./RedoStep";
 import { cancelledRetries, type RetryOffer } from "./retry";
-import { SegmentHeader } from "./SegmentHeader";
+import { type OutputOpeners, SegmentHeader } from "./SegmentHeader";
 
 /** Distance below the region's top edge at which a block counts as "the one you are reading". */
 const PROBE_OFFSET = 12;
@@ -60,9 +74,9 @@ export interface ActivityPanelProps {
   /** What a run was spawned on, read off `agent_spawned` — not `run.runtime_kind`. */
   runtimeFor: (run: StepRun) => Spawn | undefined;
   onOpenText: (content: LongContent, subtitle: string) => void;
-  /** The Output opener for a block's run, or undefined when it has no transcript, preview or
-   *  terminal. */
-  outputOpener?: (segment: ActivitySegment) => ((run: StepRun) => void) | undefined;
+  /** What a block's run can open in the Output drawer, or undefined when it has no terminal or
+   *  preview. */
+  outputOpener?: (segment: ActivitySegment) => OutputOpeners | undefined;
   /** Absent when the caller offers no interrupt; the button is then not rendered. */
   onInterrupt?: (stepRunId: number) => void;
   /** The failed run a Retry would follow (`retryOffer`), offered in that run's own block, while
@@ -89,6 +103,11 @@ export interface ActivityPanelProps {
   /** A new value takes the region to its latest event: the top newest first, the foot oldest
    *  first. */
   toLatest?: number | null;
+  /** Leave out the routine rows (`isRoutine`). */
+  focused?: boolean;
+  /** What the block named by `key` asks of the reader, drawn under its header: the messages
+   *  about the step the ticket waits at. */
+  message?: { key: string; content: ReactNode };
 }
 export function ActivityPanel({
   segments,
@@ -110,6 +129,8 @@ export function ActivityPanel({
   startingKey,
   startingRuntime,
   toLatest = null,
+  focused = false,
+  message,
 }: ActivityPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef(new Map<string, HTMLElement>());
@@ -130,6 +151,23 @@ export function ActivityPanel({
     () => cancelledRetries(segments.flatMap((segment) => segment.entries)),
     [segments],
   );
+
+  // Each block's rows as drawn, judged with the same `current` the row itself is drawn with.
+  const shownBy = useMemo(() => {
+    const shown = new Map<string, readonly TimelineEntry[]>();
+    for (const segment of segments) {
+      if (!focused) {
+        shown.set(segment.key, segment.entries);
+        continue;
+      }
+      const isCurrent = held?.key === segment.key ? currentRows(segment.entries) : null;
+      shown.set(
+        segment.key,
+        segment.entries.filter((entry) => !isRoutine(factsFor(entry, isCurrent?.(entry) ?? false))),
+      );
+    }
+    return shown;
+  }, [segments, held, focused]);
 
   const setNodeRef = useCallback((key: string, el: HTMLElement | null) => {
     if (el) nodeRefs.current.set(key, el);
@@ -196,6 +234,19 @@ export function ActivityPanel({
     });
   }, [toLatest, order]);
 
+  // A switch of Focused keeps the reader in the block they were reading: rows come and go above
+  // it, so the block goes back to the probe line. Not programmatic, so the graph stays on it.
+  const focusedRef = useRef(focused);
+  useLayoutEffect(() => {
+    if (focusedRef.current === focused) return;
+    focusedRef.current = focused;
+    const container = scrollRef.current;
+    const el = activeKey ? nodeRefs.current.get(activeKey) : undefined;
+    if (!container || !el) return;
+    container.scrollTop +=
+      el.getBoundingClientRect().top - container.getBoundingClientRect().top - PROBE_OFFSET;
+  }, [focused, activeKey]);
+
   useEffect(() => () => window.clearTimeout(settleRef.current), []);
 
   if (!segments.length) {
@@ -211,19 +262,26 @@ export function ActivityPanel({
     // As tall as the panel around it, which the page's fill layout sizes to end at the foot of
     // the window; the log scrolls inside it and the page does not.
     <div className="flex min-h-0 flex-1">
-      <AttemptRail segments={segments} activeKey={activeKey} onPick={onActiveKeyChange} />
+      <AttemptRail
+        segments={segments}
+        shownBy={shownBy}
+        activeKey={activeKey}
+        onPick={onActiveKeyChange}
+      />
 
       <div ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto overscroll-contain">
         {segments.map((segment) => {
           const segmentHeld = held?.key === segment.key ? held : null;
           const isCurrent = currentRows(segment.entries);
           const folded = Boolean(segment.run?.superseded_at) && !unfolded.has(segment.key);
+          const shown = shownBy.get(segment.key) ?? segment.entries;
+          const hidden = segment.entries.length - shown.length;
           return (
             <section key={segment.key} ref={(el) => setNodeRef(segment.key, el)}>
               <SegmentHeader
                 segment={segment}
                 runtimeFor={runtimeFor}
-                onOpenOutput={outputOpener?.(segment)}
+                output={outputOpener?.(segment)}
                 onInterrupt={onInterrupt}
                 interrupting={interrupting}
                 retry={retry && segment.run?.id === retry.run.id ? retry : undefined}
@@ -234,25 +292,26 @@ export function ActivityPanel({
                 }
                 redo={redo && segment.run?.id === redo.runId ? redo : undefined}
                 starting={segment.key === startingKey}
+                hidden={hidden}
                 startingRuntime={startingRuntime}
               />
+              {message?.key === segment.key && message.content}
               {segment.entries.length === 0 ? (
                 <p className="px-4 py-2 text-body-sm text-subtlest">
                   No events recorded for this attempt yet.
                 </p>
-              ) : folded ? (
+              ) : shown.length === 0 ? null : folded ? (
                 <div className="px-4 py-2">
                   <Button
                     spacing="compact"
                     onClick={() => setUnfolded((keys) => new Set(keys).add(segment.key))}
                   >
-                    Show {segment.entries.length}{" "}
-                    {segment.entries.length === 1 ? "event" : "events"}
+                    Show {shown.length} {shown.length === 1 ? "event" : "events"}
                   </Button>
                 </div>
               ) : (
                 <ol>
-                  {segment.entries.map((entry) => (
+                  {shown.map((entry) => (
                     <EventRow
                       key={entry.id}
                       entry={entry}
@@ -314,10 +373,13 @@ function subtitleFor(segment: ActivitySegment): string {
  */
 function AttemptRail({
   segments,
+  shownBy,
   activeKey,
   onPick,
 }: {
   segments: ActivitySegment[];
+  /** The rows each block draws, which the counts follow. */
+  shownBy: ReadonlyMap<string, readonly TimelineEntry[]>;
   activeKey: string | null;
   onPick: (key: string) => void;
 }) {
@@ -329,31 +391,34 @@ function AttemptRail({
       className="w-44 shrink-0 overflow-y-auto border-r border-default bg-surface-sunken p-2 max-md:hidden"
       activeKey={activeKey}
       onPick={onPick}
-      items={segments.map((segment) => ({
-        key: segment.key,
-        content: (
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-body-sm">
-              {segment.step}
-              {segment.attempt !== null && segment.attempt > 1 && (
-                <span className="text-subtlest"> #{segment.attempt}</span>
-              )}
-            </span>
-            <span className="mt-0.5 flex items-center gap-1.5 font-normal">
-              <span
-                role="img"
-                aria-label={
-                  segment.status === "info" ? "Admission" : statusFacts(segment.status).label
-                }
-                className={cx("size-1.5 shrink-0 rounded-full", statusDot(segment.status))}
-              />
-              <span className="truncate text-body-sm text-subtlest">
-                {segment.entries.length} {segment.entries.length === 1 ? "event" : "events"}
+      items={segments.map((segment) => {
+        const count = (shownBy.get(segment.key) ?? segment.entries).length;
+        return {
+          key: segment.key,
+          content: (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-body-sm">
+                {segment.step}
+                {segment.attempt !== null && segment.attempt > 1 && (
+                  <span className="text-subtlest"> #{segment.attempt}</span>
+                )}
+              </span>
+              <span className="mt-0.5 flex items-center gap-1.5 font-normal">
+                <span
+                  role="img"
+                  aria-label={
+                    segment.status === "info" ? "Admission" : statusFacts(segment.status).label
+                  }
+                  className={cx("size-1.5 shrink-0 rounded-full", statusDot(segment.status))}
+                />
+                <span className="truncate text-body-sm text-subtlest">
+                  {count} {count === 1 ? "event" : "events"}
+                </span>
               </span>
             </span>
-          </span>
-        ),
-      }))}
+          ),
+        };
+      })}
     />
   );
 }

@@ -1,0 +1,47 @@
+# MCP server manifest for `__NAME__`, created from the editor's shell.
+#
+# NOT FINISHED. The config is refused until you uncomment and edit the example below, because a
+# server has no safe default URL or command.
+#
+# The file stem IS the server name: it is what an agent's `mcp:` block names, and what the tool
+# prefix is built from (`mcp__<server>__<tool>`).
+#
+# WHAT THIS FILE CANNOT DO: declaring a server here does not make it run. The project's operator
+# allowlist has to permit this exact name, transport, URL and tool set. This folder selects; it
+# never grants. An agent gets the server only when its manifest lists it: under `mcp.shared` for
+# a file in `.factorial/mcp/`, or under `mcp.local` for a file in that agent's own `mcp/` folder.
+specVersion: factorial/v1
+kind: McpServer
+name: __NAME__
+
+# --- example: uncomment and edit ---
+# description: Describe in one line what the server gives an agent
+#
+# # http | sse | stdio. Prefer `http`. A `stdio` server runs a command inside the agent's
+# # container, beside a live token, and its version must be pinned exactly.
+# transport: http
+#
+# http:
+#   # HTTPS only; the loader refuses anything else, because the headers below are credentials.
+#   url: https://mcp.example.com/__NAME__/mcp
+#   headers:
+#     # `{secrets.KEY}` is the only substitution allowed here. The value never lives in this
+#     # folder. A key named here must appear in `secrets:` below.
+#     Authorization: "Bearer {secrets.SERVICE_TOKEN}"
+#
+# # Declared, not stored. This list is what Factorial resolves at spawn. It is not an isolation
+# # boundary.
+# secrets:
+#   - key: SERVICE_TOKEN
+#     description: API token for the server
+#
+# tools:
+#   # fnmatch patterns. Omit `allow` to permit every tool the server exposes; the operator
+#   # allowlist still has to permit it.
+#   allow:
+#     - search
+#
+# # true (default): a server that will not connect fails the run, with a reason. false: the run
+# # proceeds without it.
+# required: true
+# --- end example ---

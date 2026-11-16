@@ -23,12 +23,17 @@ function downloadYaml(text: string) {
 /** The row over the editor: the way back and what is being edited, with what the commit has to
  *  say under that heading; then the commit button, the config's verdict and the whole-config
  *  actions; and the file input Import opens. With nothing to commit the button says so itself,
- *  rather than a reason beside it. `readOnly` keeps the way back and Export and Copy alone. */
+ *  rather than a reason beside it. `readOnly` keeps the way back and Export and Copy alone.
+ *
+ *  The verdict chip is the process file's own check, made as it is typed. Validate is the whole
+ *  draft's: every edited, new and deleted file, judged as a commit would judge it. */
 export function EditorActions({
   readOnly = false,
   heading,
   commitButton,
   onCommit,
+  onValidate,
+  validating = false,
   unpermittedSlugs,
   onPermitAndCommit,
   text,
@@ -48,6 +53,9 @@ export function EditorActions({
   heading?: EditorHeading;
   commitButton: CommitButtonState;
   onCommit: () => void;
+  /** Runs the commit's own checks on every file of the draft, and commits nothing. */
+  onValidate?: () => void;
+  validating?: boolean;
   /** E2B runtimes the config names that the project has not permitted. */
   unpermittedSlugs: string[];
   onPermitAndCommit: () => void;
@@ -148,6 +156,11 @@ export function EditorActions({
                 onClick={onPermitAndCommit}
               >
                 Permit and commit
+              </Button>
+            )}
+            {onValidate && text.trim() && (
+              <Button isLoading={validating} onClick={onValidate}>
+                Validate
               </Button>
             )}
             {text.trim() && !checkingValidity && verdict && (

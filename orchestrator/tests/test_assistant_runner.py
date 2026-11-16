@@ -9,7 +9,8 @@ import json
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -26,6 +27,7 @@ from orchestrator.assistant.items import SUMMARY_CAP, append_item
 from orchestrator.assistant.prompt import system_prompt
 from orchestrator.assistant.proposals import decline, expire_stale, record_proposal
 from orchestrator.assistant.runner import RunnerDeps, run_turn
+from orchestrator.assistant.toolbox import registry
 from orchestrator.assistant.turns import (
     RESTART_NOTICE,
     claim_turn,
@@ -45,6 +47,7 @@ from orchestrator.db.models import (
 )
 from orchestrator.mcp_server.chat.scope import ChatScope
 from orchestrator.settings import AssistantProcessSettings
+from runtime.assistant.adapters.bedrock_responses import BedrockResponsesBackend
 from runtime.assistant.contract import (
     ChatBackend,
     ChatEvent,
@@ -84,6 +87,8 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
 OWNER = "host:1"
 Deps = Callable[..., RunnerDeps]
+#: Streams recorded from Bedrock: a reply that calls `factorial_projects_list`, then its answer.
+BEDROCK_STREAMS = Path(__file__).parents[2] / "runtime/tests/fixtures/bedrock-responses-2026-11-10"
 
 
 @pytest.fixture(autouse=True)
@@ -361,6 +366,33 @@ async def test_next_turn_reads_current_settings(
     assert (await row(maker, second.id)).model == "claude-sonnet-4-5"
 
 
+class _Sessionless(FakeBackend):
+    supports_resume: ClassVar[bool] = False
+
+
+async def test_a_backend_that_keeps_no_session_is_handed_none_to_resume(
+    maker: async_sessionmaker[AsyncSession], deps_with: Deps
+) -> None:
+    """A conversation's row can name a session its backend no longer keeps: Codex turns reported
+    a thread whose rollout was deleted with each turn. Handing that over asks the backend to
+    continue what does not exist."""
+    await enable_assistant(maker)
+    backend = _Sessionless([TurnDone(stop=TurnStop.END)])
+    turn = await sent(maker)
+    async with maker() as session:
+        await session.execute(
+            update(ChatConversation)
+            .where(ChatConversation.id == turn.conversation_id)
+            .values(backend_kind=backend.kind, backend_session_id="thread-1")
+        )
+        await session.commit()
+
+    await run_turn(turn.id, deps_with(backend), owner=OWNER)
+
+    [spec] = backend.specs
+    assert spec.resume_session is None
+
+
 @pytest.mark.parametrize("setup", ["never_set_up", "disabled", "no_credential"])
 async def test_disabled_or_unconfigured_assistant_fails_the_turn_with_config(
     maker: async_sessionmaker[AsyncSession], deps_with: Deps, setup: str
@@ -458,8 +490,12 @@ async def test_a_turn_the_api_cannot_answer_fails_without_asking_for_set_up(
     )
 
 
+@pytest.mark.parametrize("kind", ["codex_cli", "bedrock_responses"])
 async def test_a_bedrock_turn_mints_its_own_bearer_and_asks_the_api_for_nothing(
-    maker: async_sessionmaker[AsyncSession], deps_with: Deps, monkeypatch: pytest.MonkeyPatch
+    maker: async_sessionmaker[AsyncSession],
+    deps_with: Deps,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     monkeypatch.setattr(
         "orchestrator.assistant.runner.mint_bearer", lambda **_: "bedrock-api-key-test"
@@ -469,7 +505,7 @@ async def test_a_bedrock_turn_mints_its_own_bearer_and_asks_the_api_for_nothing(
             session,
             await default_organization_id(session),
             AssistantSettings(
-                enabled=True, backend="codex_cli", auth_mode="bedrock", model="us.xai.grok-4.6"
+                enabled=True, backend=kind, auth_mode="bedrock", model="us.xai.grok-4.6"
             ),
             by="t",
         )
@@ -482,7 +518,79 @@ async def test_a_bedrock_turn_mints_its_own_bearer_and_asks_the_api_for_nothing(
 
     [spec] = backend.specs
     assert spec.credential.get_secret_value() == "bedrock-api-key-test"
+    assert (spec.auth_mode, spec.bedrock_region) == ("bedrock", "us-east-1")
     assert stored.asked == []
+
+
+async def test_a_bedrock_turn_reads_the_factory_through_the_turn_s_own_tools(
+    maker: async_sessionmaker[AsyncSession], deps_with: Deps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole path, on streams recorded from Bedrock: the backend that calls it, the model's
+    call answered from the database by the turn's toolbox, and the items the Drawer shows."""
+    monkeypatch.setattr(
+        "orchestrator.assistant.runner.mint_bearer", lambda **_: "bedrock-api-key-test"
+    )
+    async with maker() as session:
+        await svc.save_assistant_settings(
+            session,
+            await default_organization_id(session),
+            AssistantSettings(
+                enabled=True,
+                backend="bedrock_responses",
+                auth_mode="bedrock",
+                model="us.xai.grok-4.6",
+                bedrock_region="us-east-1",
+            ),
+            by="t",
+        )
+        await session.commit()
+    replies = [
+        (BEDROCK_STREAMS / "tool-call.sse").read_bytes(),
+        (BEDROCK_STREAMS / "tool-answer.sse").read_bytes(),
+    ]
+    requests: list[httpx.Request] = []
+
+    async def bedrock(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=replies.pop(0)
+        )
+
+    backend = BedrockResponsesBackend(transport=httpx.MockTransport(bedrock))
+    turn = await sent(maker, "which projects are there?")
+
+    await run_turn(turn.id, deps_with(backend), owner=OWNER)
+
+    done = await row(maker, turn.id)
+    assert (done.status, done.stop_reason, done.failure_message) == ("done", "end", None)
+    assert (done.input_tokens, done.output_tokens, done.cost_usd) == (7579 + 7642, 43 + 63, None)
+    items = await items_of(maker, turn.conversation_id)
+    assert [item.kind for item in items] == [
+        "user_text",
+        "assistant_text",
+        "tool",
+        "assistant_text",
+    ]
+    assert items[1].payload == {"text": "I'll list the factory projects now."}
+    tool = items[2].payload
+    assert (tool["name"], tool["input"], tool["status"], tool["ok"]) == (
+        "factorial_projects_list",
+        {},
+        "done",
+        True,
+    )
+    first, second = (json.loads(request.content) for request in requests)
+    assert requests[0].headers["authorization"] == "Bearer bedrock-api-key-test"
+    assert str(requests[0].url) == (
+        "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses"
+    )
+    assert {tool["name"] for tool in first["tools"]} == set(registry())
+    assert first["input"][0]["content"][0]["text"] == system_prompt()
+    # The model's next request carries all the tool read; the Drawer's item keeps its start.
+    handed = second["input"][-1]
+    assert (handed["type"], handed["call_id"]) == ("function_call_output", tool["call_id"])
+    assert '{"projects":' in handed["output"]
+    assert handed["output"].startswith(tool["summary"])
 
 
 async def test_a_turn_that_cannot_start_logs_its_turn_and_conversation(
@@ -678,6 +786,41 @@ async def test_a_failed_turn_says_why_and_a_limit_says_where_it_stopped(
     assert (stopped.status, stopped.stop_reason) == ("done", "budget")
     [limit] = await kinds(maker, limited.conversation_id, ChatItemKind.NOTICE)
     assert limit.payload == {"text": "Stopped at the per-turn limit.", "reason": "budget"}
+
+
+async def test_a_turn_the_backend_fails_logs_why(
+    maker: async_sessionmaker[AsyncSession], deps_with: Deps
+) -> None:
+    """A backend that reports its own failure raises nothing, so no traceback is logged. The
+    reason went to the turn's row alone, and whoever watched the process saw a failed turn and
+    no word of why."""
+    await enable_assistant(maker)
+    turn = await sent(maker)
+    backend = FakeBackend(
+        [TurnFailed(reason=TurnFailure.INFRASTRUCTURE, message="codex exited 1: no rollout")]
+    )
+
+    with probing("orchestrator.assistant.runner") as handler:
+        await run_turn(turn.id, deps_with(backend), owner=OWNER)
+
+    (line,) = [line for line in handler.lines if "codex exited 1: no rollout" in line["msg"]]
+    assert line["level"] == "WARNING"
+    assert "infrastructure" in line["msg"]
+    assert (line["turn_id"], line["conversation_id"]) == (turn.id, turn.conversation_id)
+
+
+async def test_a_turn_refused_before_its_backend_starts_logs_why(
+    maker: async_sessionmaker[AsyncSession], deps_with: Deps
+) -> None:
+    turn = await sent(maker)
+
+    with probing("orchestrator.assistant.runner") as handler:
+        await run_turn(turn.id, deps_with(FakeBackend([])), owner=OWNER)
+
+    (line,) = [line for line in handler.lines if "off or has no credential" in line["msg"]]
+    assert line["level"] == "WARNING"
+    assert "config" in line["msg"]
+    assert (line["turn_id"], line["conversation_id"]) == (turn.id, turn.conversation_id)
 
 
 async def test_an_approval_turn_tells_the_model_what_was_decided(

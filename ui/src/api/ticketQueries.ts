@@ -223,6 +223,8 @@ export function useTerminalRequests(stepRunId: number, ticketId: number) {
       onSuccess: () =>
         Promise.all([
           qc.invalidateQueries({ queryKey: keys.runTerminal(stepRunId) }),
+          // A pending Resume refuses an Approve, so what the review offers changes too.
+          qc.invalidateQueries({ queryKey: keys.runReview(stepRunId) }),
           refetchTicketPage(qc, ticketId),
         ]),
     }),
@@ -330,6 +332,37 @@ export function useCompletionAnswer(stepRunId: number, requestId: number | null,
     queryFn: () => api.getCompletion(stepRunId, requestId ?? 0),
     enabled: enabled && requestId !== null,
     refetchInterval: (query) => (query.state.data?.outcome === "pending" ? 2000 : false),
+  });
+}
+
+/** No sooner: each read lists the repository's branches on the forge, and the worker's tick is
+ *  30 seconds, so nothing it compares against moves faster. */
+const REVIEW_MS = 30_000;
+
+/** What Approve on the run would approve. `enabled` only for a run of a step that awaits review,
+ *  since every read goes to the forge. The ticket page `poll`s; any other reader of the same run
+ *  shares its cache. */
+export function useReview(stepRunId: number, enabled: boolean, poll = false) {
+  return useQuery({
+    queryKey: keys.runReview(stepRunId),
+    queryFn: () => api.getReview(stepRunId),
+    enabled: enabled && stepRunId > 0,
+    staleTime: REVIEW_MS,
+    refetchInterval: enabled && poll ? REVIEW_MS : false,
+    retry: retryUnlessClientError,
+  });
+}
+
+/** Approve a run at the commit its review showed. The review is read again either way: a refusal
+ *  means the branch or the run moved since it was read. */
+export function useApproveStep(ticketId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ stepRunId, headSha }: { stepRunId: number; headSha: string }) =>
+      api.approveStep(stepRunId, headSha),
+    onSuccess: () => refetchTicketPage(qc, ticketId),
+    onSettled: (_result, _error, { stepRunId }) =>
+      qc.invalidateQueries({ queryKey: keys.runReview(stepRunId) }),
   });
 }
 

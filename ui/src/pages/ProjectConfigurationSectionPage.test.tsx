@@ -94,7 +94,7 @@ describe("a configuration page", () => {
     expect(paths()).not.toContain(`/api/projects/${PROJECT_ID}/readiness`);
   });
 
-  it("names itself and nothing above it: the side navigation says where it is", async () => {
+  it("names itself and nothing above it: the frame says where it is", async () => {
     const root = await page("details");
     expect(root.querySelector("h1")?.textContent).toBe("Details");
     expect(root.querySelector('nav[aria-label="Breadcrumbs"]')).toBeNull();
@@ -241,6 +241,69 @@ describe("Process", () => {
     expect(root.textContent).toContain("Review the factorial branch before Factorial syncs it");
     expect(root.textContent).not.toContain("never synced");
     expect(root.textContent).not.toContain("Sync one from the repository");
+  });
+
+  const NEVER_SYNCED: ReadinessItem = {
+    ...SECRETS,
+    key: "process_config",
+    state: "blocked",
+    summary: "never synced",
+    detail: "No process yet. Sync one from the repository.",
+  };
+  const NOT_CONNECTED: ReadinessItem = {
+    ...SECRETS,
+    key: "github_connection",
+    state: "blocked",
+    summary: "not connected",
+    detail: "No GitHub connection. Connect this project to GitHub with an App or a token.",
+  };
+  const button = (root: HTMLElement, name: string) =>
+    [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+      (each) => each.textContent === name,
+    );
+
+  it("says once that GitHub isn't connected, with where to connect, and shuts Edit and Sync", async () => {
+    // It said "never synced" with advice to sync, the server's sentence with a bare link, and
+    // "press Edit config, then Commit and sync": three things, none naming the cause.
+    const root = await page("process", { readiness: [NEVER_SYNCED, NOT_CONNECTED], processes: [] });
+    await settle(20);
+    const notice = byText(root, "h3", "Connect this project to GitHub")?.closest("section");
+    expect(notice?.textContent).toContain("no GitHub connection yet");
+    expect(byText(notice as HTMLElement, "a", "Connect GitHub")?.getAttribute("href")).toBe(
+      `/projects/${PROJECT_ID}/configuration/ticket-source`,
+    );
+    expect(byText(notice as HTMLElement, "a", "GitHub App guide")?.getAttribute("href")).toBe(
+      "https://www.runfactorial.com/docs/github-app/",
+    );
+    expect(root.textContent).not.toContain("never synced");
+    expect(root.textContent).not.toContain("Sync one from the repository");
+    expect(root.textContent).not.toContain("Commit and sync");
+    expect(button(root, "Edit config")?.disabled).toBe(true);
+    expect(button(root, "Sync config")?.disabled).toBe(true);
+    expect(root.textContent).not.toContain("Connect GitHub first");
+  });
+
+  it("asks a reader who may not connect it to ask an admin, with no Connect button", async () => {
+    const root = await page(
+      "process",
+      { readiness: [NEVER_SYNCED, NOT_CONNECTED], processes: [] },
+      MEMBER_PERMISSIONS,
+    );
+    await settle(20);
+    const notice = byText(root, "h3", "Connect this project to GitHub")?.closest("section");
+    expect(notice?.textContent).toContain("Ask a project admin to connect it.");
+    expect(byText(notice as HTMLElement, "a", "Connect GitHub")).toBeNull();
+  });
+
+  it("draws no connection notice for a connected project", async () => {
+    const root = await page("process", {
+      readiness: [NEVER_SYNCED, { ...NOT_CONNECTED, state: "ok", summary: "connected" }],
+      processes: [],
+    });
+    await settle(20);
+    expect(root.textContent).not.toContain("Connect this project to GitHub");
+    expect(root.textContent).toContain("never synced");
+    expect(button(root, "Sync config")?.disabled).toBe(false);
   });
 });
 
@@ -614,7 +677,7 @@ describe("a reader who may read the config but not change it", () => {
     [
       "secrets",
       { readiness: [SECRETS], declared_secrets: ["DOCS_TOKEN"], secret_names: ["STORED_TOKEN"] },
-      ["Save", "Replace value", "Remove", "Save secret"],
+      ["Set value", "Edit", "Remove STORED_TOKEN", "Add secret"],
     ],
   ];
   const buttons = (root: HTMLElement) =>
@@ -669,9 +732,9 @@ describe("a reader who may read the config but not change it", () => {
       },
       MEMBER_PERMISSIONS,
     );
-    expect(root.querySelector('[data-delivery-for="STORED_TOKEN"]')?.textContent).toBe(
-      "Supplied as the header x-token on api.example.com, through the egress proxy.",
-    );
+    const supplied = root.querySelector('[data-supplied-as="header"]')?.textContent;
+    expect(supplied).toContain("Header");
+    expect(supplied).toContain("x-token on api.example.com");
     await view?.unmount();
     root = await page(
       "runtime",

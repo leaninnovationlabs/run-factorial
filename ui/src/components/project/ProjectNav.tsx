@@ -1,10 +1,8 @@
 /**
  * The side navigation's items inside a project: Dashboard, Tickets, the Assistant — which opens
  * over the page the reader is on, as a Drawer, so the question is about what is behind it — and
- * Settings, a group of one row per configuration page that folds away. The project
- * itself — its name on a band across the navigation, the button that switches to another
- * (`ProjectSwitcher`) — heads the navigation above these, outside the region they scroll in
- * (`SideNav`).
+ * Settings, a group of one row per configuration page that folds away. The project itself — its
+ * name, the button that switches to another (`ProjectSwitcher`) — is the top bar's.
  *
  * The Assistant shows only to a reader who may use it, and Settings only to one who holds
  * `projects:read`, which the configuration pages' reads need.

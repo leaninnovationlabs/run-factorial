@@ -221,7 +221,7 @@ describe("the header", () => {
 describe("a reading surface", () => {
   const triggers: [string, (root: HTMLElement) => Element | null][] = [
     ["the issue's description", (root) => byText(root, "button", "Description")],
-    ["a run's output", (root) => byText(root, "button", "Output")],
+    ["a run's terminal", (root) => byText(root, "button", "Terminal")],
     ["a summary in full", (root) => root.querySelector('button[aria-label^="Read "]')],
   ];
 
@@ -332,11 +332,17 @@ describe("the retry row", () => {
 describe("a run's output", () => {
   /** The page at `search`, signed in, with every read the drawer makes left in flight: which run
    *  and which sections the drawer opens on is what is under test. */
-  async function at(search: string, over: TicketOver = {}) {
+  async function at(
+    search: string,
+    over: TicketOver = {},
+    config: Record<string, unknown> = CONFIG,
+  ) {
     vi.spyOn(api, "authMe").mockResolvedValue({ email: "operator@example.com" });
     vi.spyOn(api, "getRunActivity").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getRunTerminal").mockReturnValue(new Promise(() => {}));
-    const qc = seeded([], over);
+    vi.spyOn(api, "getRunPreview").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getRunOutputs").mockReturnValue(new Promise(() => {}));
+    const qc = seeded([], over, undefined, config);
     qc.setDefaultOptions({ queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } });
     view = await mount(
       <QueryClientProvider client={qc}>
@@ -395,9 +401,26 @@ describe("a run's output", () => {
     expect(expanded()).toEqual(["Terminal"]);
   });
 
-  it("opens a parked run's output on its terminal, where Resume is", async () => {
+  it("opens a step's files alone from its block's Files button", async () => {
+    const files = {
+      ...CONFIG,
+      steps: CONFIG.steps.map((step) =>
+        step.name === "plan" ? { ...step, preview: { files: ["spec.md"] } } : step,
+      ),
+    };
+    const root = await at("", {}, files);
+    const header = [...root.querySelectorAll("header")].find((found) =>
+      found.textContent?.includes("Attempt 2"),
+    ) as HTMLElement;
+    await click(byText(header, "button", "Files"));
+    await settle(20);
+    expect(drawer()?.textContent).toContain("plan, attempt 2");
+    expect(expanded()).toEqual(["Files"]);
+  });
+
+  it("opens a parked run's terminal, where Resume is, from its block's header", async () => {
     const root = await at("", parked);
-    await click(byText(root, "header button", "Output"));
+    await click(byText(root, "header button", "Terminal"));
     await settle(20);
     expect(sections().map(({ name }) => name)).toEqual(["Terminal"]);
     expect(expanded()).toEqual(["Terminal"]);

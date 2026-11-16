@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
+from pydantic import SecretStr
 
 from orchestrator.github.state import ReviewVerdict
+from orchestrator.gitlab.client import GitLabClient
 from orchestrator.gitlab.observer import GitLabStateSource, list_issues
+from orchestrator.settings import GitLabSettings
 
 
 class _Api:
@@ -276,3 +280,34 @@ async def test_a_merge_request_gitlab_is_merging_reads_as_open() -> None:
     [merge_request] = await source.pull_requests()
 
     assert (merge_request.state, merge_request.merged) == ("open", False)
+
+
+@pytest.mark.asyncio
+async def test_file_text_reads_the_raw_endpoint_and_none_when_absent() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.raw_path.startswith(
+            b"/api/v4/projects/group%2Fproject/repository/files/docs%2Fplan.md/raw"
+        ):
+            return httpx.Response(200, content="- [ ] café\n".encode())
+        return httpx.Response(404, json={"message": "404 File Not Found"})
+
+    client = GitLabClient(GitLabSettings(base_url="https://gitlab.test", token=SecretStr("t")))
+    client._http = httpx.AsyncClient(  # pyright: ignore[reportPrivateUsage]
+        base_url="https://gitlab.test/api/v4", transport=httpx.MockTransport(handler)
+    )
+    source = GitLabStateSource(client, "group/project", 42)
+
+    assert await source.file_text("spec/42-x", "docs/plan.md") == "- [ ] café\n"
+    assert await source.file_text("spec/42-x", "docs/gone.md") is None
+    assert seen[0].endswith("/repository/files/docs%2Fplan.md/raw?ref=spec%2F42-x")
+
+    seen.clear()
+    assert await source.file_text("spec/42-x", "docs/12 x?a=b#c%d.md") is None
+    assert await source.file_text("spec/42-x", "docs/../secrets.md") is None
+    assert seen == [
+        "https://gitlab.test/api/v4/projects/group%2Fproject/repository/files/"
+        "docs%2F12%20x%3Fa%3Db%23c%25d.md/raw?ref=spec%2F42-x"
+    ]

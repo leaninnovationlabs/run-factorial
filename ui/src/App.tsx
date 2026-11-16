@@ -29,6 +29,7 @@ const SignUpPage = lazy(() =>
 const OnboardingPage = lazy(() =>
   import("./pages/accountPages").then((m) => ({ default: m.OnboardingPage })),
 );
+const JoinPage = lazy(() => import("./pages/accountPages").then((m) => ({ default: m.JoinPage })));
 const InvitePage = lazy(() =>
   import("./pages/accountPages").then((m) => ({ default: m.InvitePage })),
 );
@@ -146,6 +147,14 @@ export function App() {
         element={
           <Suspense fallback={<SessionCheck />}>
             <OnboardingPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/join"
+        element={
+          <Suspense fallback={<SessionCheck />}>
+            <JoinPage />
           </Suspense>
         }
       />

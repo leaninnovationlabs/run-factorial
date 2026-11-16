@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.config import AgentStep
 from orchestrator.db.models import Event, StepRun, StepRunStatus, Ticket, TicketStatus
 from orchestrator.events import EventType, ResumedVia, append
-from orchestrator.events.read_models import latest_run_event
+from orchestrator.events.read_models import latest_park, latest_run_event
 from orchestrator.events.terminals import stretch_starts
 from orchestrator.events.types import REQUESTED_VIA_WORDS, RequestedVia, requested_via
 from orchestrator.github import LABEL_INTERRUPTED, LABEL_WAITING
@@ -502,25 +502,10 @@ async def _latest_park(tick: _Tick, run: StepRun) -> _Park | None:
     park's starts when the stretch the quit ended did: the park waits on the gateway's record of
     the keys, or on CI, and a person who said on the ticket why they quit said it to the turn.
     """
-    park = (
-        await tick.session.execute(
-            select(Event.id, Event.type, Event.details, Event.created_at)
-            .where(
-                Event.step_run_id == run.id,
-                Event.type.in_([EventType.AGENT_INTERRUPTED, EventType.AGENT_PARKED]),
-            )
-            .order_by(Event.id.desc())
-            .limit(1)
-        )
-    ).one_or_none()
+    park = await latest_park(tick.session, run.ticket_id, run.id)
     if park is None:
         return None
-    reason = (
-        str(park.details.get("reason") or ParkReason.IDLE.value)
-        if park.type == EventType.AGENT_PARKED
-        else ParkReason.USER.value
-    )
-    at_prompt = park.details.get("at_prompt") is True
+    reason, at_prompt = park.reason, park.at_prompt
     # A ceiling can park a session at its question too, and an answer posted before it is the
     # turn's.
     if reason not in (ParkReason.IDLE, ParkReason.CEILING, ParkReason.EXITED):

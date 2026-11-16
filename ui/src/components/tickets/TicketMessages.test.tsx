@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /** The waiting-gate message's actions: the pull request, the preview, and Request changes, or
- *  Close and exit once the pull request closed without a merge. */
+ *  Close and exit once the pull request closed without a merge; and which messages a scope draws. */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -93,5 +93,17 @@ describe("a gate whose pull request closed without a merge", () => {
       forge: { kind: "gitlab", origin: "https://gitlab.test" },
     });
     expect(document.querySelector("section h3")?.textContent).toBe("Merge request closed");
+  });
+});
+
+describe("a message's scope", () => {
+  it.each([
+    ["ticket", "Couldn't check the ticket", "Waiting for a review"],
+    ["step", "Waiting for a review", "Couldn't check the ticket"],
+  ] as const)("draws only the %s's messages", async (scope, shown, left) => {
+    // Both at once: a gate waits on a review while the ticket's latest state can't be read.
+    await show({ onRequestChanges: () => {} }, { failing: true, scope });
+    expect(document.body.textContent).toContain(shown);
+    expect(document.body.textContent).not.toContain(left);
   });
 });

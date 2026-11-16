@@ -41,8 +41,14 @@ PREDICATE_ARITY: Final[Mapping[str, tuple[int, int]]] = MappingProxyType(
         "pr_changes_requested": (1, 1),  # (head) — mirrors ci_green's single glob argument
         "issue_comment_contains": (1, 1),  # (marker)
         "pr_comment_contains": (2, 2),  # (head, marker)
+        "request_approval": (0, 0),
+        "checklist_done": (2, 2),  # (path, ref) — matched as file_exists matches them
     }
 )
+
+#: The predicate a person's dashboard approval satisfies. Only an agent step's acceptance feeds
+#: it the approval, so `ProcessConfig` refuses it anywhere else.
+REVIEW_PREDICATE: Final = "request_approval"
 
 #: The postcondition predicates a spawn turns into a delivery probe. Declared here beside the
 #: arity table so lint and the worker read one registry; `worker.templates` maps each name to
@@ -260,6 +266,11 @@ def iter_calls(condition: Condition | None) -> Iterator[PredicateCall]:
             yield from iter_calls(condition.not_)
         case _:
             return
+
+
+def awaits_review(condition: Condition | None) -> bool:
+    """Whether the condition calls `request_approval()` anywhere in it."""
+    return any(call.name == REVIEW_PREDICATE for call in iter_calls(condition))
 
 
 def iter_conjunctive(condition: Condition | None) -> Iterator[PredicateCall]:

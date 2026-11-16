@@ -69,7 +69,12 @@ The assistant has a list of the same kind, `FACTORIAL_ASSISTANT__OFFERED`. Its e
 `<backend>:<auth_mode>`, for example `claude_sdk:api_key`. If you do not set it, the assistant
 offers the Claude API key and the Codex API key. An organization that uses another sign-in
 keeps it, and its settings page marks it "No longer offered". When `FACTORIAL_MULTI_ORG__ENABLED`
-is `true`, the assistant never offers `codex_cli:bedrock`.
+is `true`, the assistant never offers a `bedrock` entry.
+
+To run the assistant on a Bedrock model, such as Grok, put `bedrock_responses:bedrock` in the
+list. That backend calls Bedrock itself. It shows the reply while the model writes it, and it
+shows each tool call. `codex_cli:bedrock` runs the Codex CLI on Bedrock. The model can use the
+assistant's tools with both entries.
 
 The conditions:
 

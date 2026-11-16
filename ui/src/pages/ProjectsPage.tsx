@@ -37,12 +37,15 @@ const HEAD = [
 /** A filter is worth its row only once the list is longer than a glance. */
 const FILTER_FROM = 10;
 
+/** The reader's last All / Active / Paused, kept in the browser (`useActiveView`). */
+export const PROJECTS_SHOW_KEY = "sf-ui:projects-show";
+
 export function ProjectsPage() {
   const query = useProjects();
   const canCreate = useCan("projects:manage");
   const canRuntimes = useCan("runtimes:manage");
   const [filter, setFilter] = useState("");
-  const [admission, setAdmission] = useActiveView();
+  const [admission, setAdmission] = useActiveView(PROJECTS_SHOW_KEY);
   usePageTitle(["Projects"]);
 
   const all = query.data;

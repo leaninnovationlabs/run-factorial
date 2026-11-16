@@ -297,9 +297,10 @@ async def test_preflight_failure_is_written_to_the_status_row(
     assert status["ok"] is False
     assert status["message"] == (
         "claude_sdk: claude-agent-sdk 0.1.0 is installed; "
-        "codex_cli: claude-agent-sdk 0.1.0 is installed"
+        "codex_cli: claude-agent-sdk 0.1.0 is installed; "
+        "bedrock_responses: claude-agent-sdk 0.1.0 is installed"
     )
-    assert status["version"] == "claude_sdk fake, codex_cli fake"
+    assert status["version"] == "claude_sdk fake, codex_cli fake, bedrock_responses fake"
     assert datetime.fromisoformat(status["at"]).tzinfo is not None
     # Sends stay queued while the backend cannot run them.
     assert backend.specs == []
@@ -334,6 +335,7 @@ async def test_a_backend_that_fails_its_check_idles_only_its_own_turns(
     assert status["backends"] == {
         "claude_sdk": {"ok": True, "message": None},
         "codex_cli": {"ok": False, "message": "`codex` is not on PATH"},
+        "bedrock_responses": {"ok": True, "message": None},
     }
 
 

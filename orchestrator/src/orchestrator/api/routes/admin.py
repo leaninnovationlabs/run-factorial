@@ -19,14 +19,11 @@ from fastapi import APIRouter, HTTPException, Path, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.access import Permission
 from orchestrator.adapters.registry import (
     display_of,
     forge_of,
-    host_registries,
-    resolve_bindings,
 )
 from orchestrator.api.access import SIGNED_IN, GrantDep, needs, require_dashboard_origin
 from orchestrator.api.auth import PersonDep, PrincipalDep
@@ -34,6 +31,7 @@ from orchestrator.api.deps import (
     AccessReaderDep,
     ConfigBranchReaderDep,
     ConfigBranchSeederDep,
+    ConfigCommitWriter,
     ConfigCommitWriterDep,
     ConfigSourceDep,
     ConfigSourceOptionalDep,
@@ -46,6 +44,7 @@ from orchestrator.api.deps import (
     SessionDep,
     SettingsDep,
     WorkflowsReaderDep,
+    read_bindings,
 )
 from orchestrator.api.guards import NoEchoRoute, refuse_bad_name
 from orchestrator.api.readiness import (
@@ -85,9 +84,12 @@ from orchestrator.api.schemas import (
     ConfigFilesOut,
     ConfigPreviewIn,
     ConfigPreviewOut,
+    ConfigRestoreIn,
     DefaultBranchConfigOut,
     DefaultProcessIn,
     DefaultProcessMovedOut,
+    DraftCheckOut,
+    DraftProblemOut,
     FileProposalOut,
     ForgeDisplayOut,
     GitHubConnectionIn,
@@ -118,6 +120,7 @@ from orchestrator.api.schemas import (
     ProjectReadiness,
     ProjectRuntimeRef,
     ReadinessItem,
+    RestorePreviewOut,
     SecretDeliveryIn,
     SecretDeliveryOut,
     SecretList,
@@ -136,15 +139,20 @@ from orchestrator.api.services import config as config_service
 from orchestrator.api.services import github_connection as connection_service
 from orchestrator.api.services import projects as project_service
 from orchestrator.api.services.actor import Actor
-from orchestrator.api.services.config import ConfigDraft, NewFile, SyncedConfig
+from orchestrator.api.services.config import (
+    ConfigCommitResult,
+    ConfigDraft,
+    NewFile,
+    SyncedConfig,
+)
 from orchestrator.api.services.errors import Conflict, as_sentence
 from orchestrator.api.services.refs import ticket_source
 from orchestrator.api.services.vocabulary import config_vocabulary
 from orchestrator.config import ConfigError, ProcessConfig, parse_named_process, parse_process
 from orchestrator.config.lint import lint_process
 from orchestrator.config.loader import dump_config_yaml
-from orchestrator.config.process_templates import PROCESS_TEMPLATES
-from orchestrator.config.scaffold.assemble import FileEdit
+from orchestrator.config.process_templates import CONFIG_SHELLS, PROCESS_TEMPLATES
+from orchestrator.config.scaffold.assemble import FileDelete, FileEdit
 from orchestrator.config.scaffold.propose import ComponentProposal, FileProposal
 from orchestrator.db.models import (
     ProcessVersion,
@@ -980,16 +988,8 @@ async def list_pending_issues(
     if source is None:
         return []
     from orchestrator.worker.admission import pending_bound
-    from orchestrator.worker.context import ProjectGitHub
 
-    async def github(_session: AsyncSession, found: Project) -> ProjectGitHub | None:
-        api = await github_for(found)
-        if api is None:
-            return None
-        return ProjectGitHub.over(api.client, api.contents, bot_login=api.bot_login)
-
-    trackers, forges = host_registries(github)
-    bindings = await resolve_bindings(session, project, trackers=trackers, forges=forges)
+    bindings = await read_bindings(session, project, github_for)
     if bindings is None:
         return []
 
@@ -1524,30 +1524,35 @@ async def commit_config(
     is what lets the sync guard take it.
     """
     project = await _require_project(session, project_id)
-    if write_commit is None:
-        row = (
-            await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
-        ).scalar_one_or_none()
-        detail = (
-            f"{display_of(project, row.kind if row is not None else None).unconfigured} "
-            "Commit the config by hand, or connect the project."
-        )
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
-    draft = ConfigDraft(
-        content=payload.content,
-        files=[NewFile(item.path, item.body) for item in payload.files],
-        edits=[FileEdit(e.path, e.body, e.base_sha) for e in payload.edits],
-        created={item.path: item.body for item in payload.created},
-    )
     result = await config_service.commit_config(
         session,
         source,
-        write_commit,
+        await _config_writer(session, project, write_commit),
         project,
-        draft,
+        _draft_of(payload),
         actor=Actor.dashboard(principal),
         message=None,
     )
+    return _commit_out(result)
+
+
+async def _config_writer(
+    session: SessionDep, project: Project, write_commit: ConfigCommitWriter | None
+) -> ConfigCommitWriter:
+    """The forge that receives a config commit, or the 503 saying the project has none."""
+    if write_commit is not None:
+        return write_commit
+    row = (
+        await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
+    ).scalar_one_or_none()
+    detail = (
+        f"{display_of(project, row.kind if row is not None else None).unconfigured} "
+        "Commit the config by hand, or connect the project."
+    )
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+
+def _commit_out(result: ConfigCommitResult) -> ConfigCommitOut:
     return ConfigCommitOut(
         sha=result.sha,
         url=result.url,
@@ -1555,8 +1560,95 @@ async def commit_config(
         committed=result.committed,
         components=[_component_out(c) for c in result.components],
         written=result.written,
+        deleted=result.deleted,
         sync=None if result.sync is None else _sync_out(result.sync),
         sync_error=result.sync_error,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/process-versions/{version_id}/restore",
+    response_model=RestorePreviewOut,
+)
+@needs(Permission.PROJECTS_MANAGE)
+async def preview_config_restore(
+    project_id: int, version_id: int, session: SessionDep, source: ConfigSourceDep
+) -> RestorePreviewOut:
+    """What restoring the config folder to this version would write and delete. Writes
+    nothing; 409 when the branch head is one no one vouches for."""
+    project = await _require_project(session, project_id)
+    plan = await config_service.plan_restore(session, source, project, version_id)
+    return RestorePreviewOut(
+        target_sha=plan.target_sha,
+        head_sha=plan.head_sha,
+        writes=plan.writes,
+        deletes=plan.deletes,
+        retires=plan.retires,
+        unchanged=plan.unchanged,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/config-restores",
+    response_model=ConfigCommitOut,
+    status_code=status.HTTP_201_CREATED,
+)
+@needs(Permission.PROJECTS_MANAGE)
+async def restore_config_version(
+    project_id: int,
+    payload: ConfigRestoreIn,
+    session: SessionDep,
+    source: ConfigSourceDep,
+    write_commit: ConfigCommitWriterDep,
+    principal: PrincipalDep,
+) -> ConfigCommitOut:
+    """Commit the config folder back to a synced version's, as the App, then sync that commit
+    (tech-stack decision 93). The operator's click is the approval, as it is for a commit."""
+    project = await _require_project(session, project_id)
+    result = await config_service.restore_config(
+        session,
+        source,
+        await _config_writer(session, project, write_commit),
+        project,
+        payload.version_id,
+        actor=Actor.dashboard(principal),
+        expected_head=payload.expected_head,
+    )
+    return _commit_out(result)
+
+
+@router.post("/projects/{project_id}/config-checks", response_model=DraftCheckOut)
+@needs(Permission.PROJECTS_MANAGE)
+async def check_config_draft(
+    project_id: int, payload: ConfigCommitIn, session: SessionDep, source: ConfigSourceDep
+) -> DraftCheckOut:
+    """Exactly the checks `config-commits` runs on this draft, as a verdict. Writes nothing.
+
+    Always 200 with a verdict when the draft could be judged: a config problem is this
+    endpoint's result. A forge that cannot be read is still a request error.
+    """
+    project = await _require_project(session, project_id)
+    check = await config_service.check_config(
+        session, source, project, _draft_of(payload), surface="dashboard"
+    )
+    return DraftCheckOut(
+        valid=check.valid,
+        problems=[
+            DraftProblemOut(path=p.path, message=p.message, hint=p.hint) for p in check.problems
+        ],
+        warnings=check.warnings,
+        would_write=[write.path for write in check.would_write],
+        would_delete=check.would_delete,
+    )
+
+
+def _draft_of(payload: ConfigCommitIn) -> ConfigDraft:
+    return ConfigDraft(
+        content=payload.content,
+        files=[NewFile(item.path, item.body) for item in payload.files],
+        edits=[FileEdit(e.path, e.body, e.base_sha) for e in payload.edits],
+        created={item.path: item.body for item in payload.created},
+        deleted=[FileDelete(d.path, d.base_sha) for d in payload.deleted],
     )
 
 
@@ -1577,10 +1669,7 @@ async def process_templates() -> ProcessTemplatesOut:
                     key=lane.key,
                     yaml=lane.text,
                     content=config.model_dump(mode="json", by_alias=True),
-                    agents=[
-                        _agent_detail(agent)
-                        for agent in catalog_agents(config, forge=template.forge)
-                    ],
+                    agents=[_agent_detail(agent) for agent in catalog_agents(config)],
                 )
             )
         out.append(
@@ -1591,7 +1680,9 @@ async def process_templates() -> ProcessTemplatesOut:
                 lanes=lanes,
             )
         )
-    return ProcessTemplatesOut(templates=out)
+    return ProcessTemplatesOut(
+        templates=out, shells={kind: dict(files) for kind, files in CONFIG_SHELLS.items()}
+    )
 
 
 @router.get("/vocabulary", response_model=VocabularyOut)

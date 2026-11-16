@@ -1,12 +1,14 @@
 /**
- * The top bar: the menu button and the product on the left, and the search in the middle. Where
- * the reader is — the project, the organization — is the side navigation's to say, and so is the
- * assistant, a page of its own; anything new is created from the list it belongs to.
+ * The top bar: the menu button and the mark on the left, then where the reader is — the
+ * organization and, inside a project, the project, each a link to its home with a chevron beside
+ * it that opens the menu that switches it — and the search in the middle. A ticket's page is inside its project. The side navigation lists
+ * the pages of the place the bar names; the assistant is one of them, and anything new is created
+ * from the list it belongs to.
  *
- * A phone has no side navigation on the page, so there the bar says where the reader is: the
- * organization beside the mark, and the project under it inside one — a ticket's page included.
- * The search is an icon at the right (`JumpSearch`'s `collapsible`), and opened it takes the room
- * the names held.
+ * Below 1024px the search is an icon at the right (`JumpSearch`'s `collapsible`), so the names keep
+ * the bar, and opened it takes the room they held. On a phone the bar names the place as labels,
+ * the organization over the project: a name in a bar this high is too small a thing to press, so
+ * the menus are in the navigation the tab bar's Menu opens.
  */
 
 import { useState } from "react";
@@ -14,10 +16,11 @@ import { Link } from "react-router-dom";
 import logoUrl from "../../../logo.svg";
 import { useOrganizationDetail } from "../../api/organizationQueries";
 import { useProject } from "../../api/projectQueries";
-import { useProjectPlace } from "../project";
+import { ProjectSwitcher, useProjectPlace } from "../project";
 import { cx, IconButton } from "../ui";
-import { useIsPhone } from "../ui/media";
+import { BELOW_LG, useIsPhone, useMedia } from "../ui/media";
 import { JumpSearch } from "./JumpSearch";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SIDE_NAV_ID } from "./SideNav";
 
 export function TopNav({
@@ -33,15 +36,19 @@ export function TopNav({
   onToggleNav?: () => void;
 }) {
   const phone = useIsPhone();
+  const folds = useMedia(BELOW_LG);
   const [searching, setSearching] = useState(false);
-  const titled = phone && !searching;
+  const named = !(folds && searching);
   return (
-    // Three columns from `md`, the outer two equal, so the search sits on the page's centre line
-    // rather than in the middle of whatever the left group leaves. Narrower it is a row, the search
-    // taking what the mark leaves: there the grid's flexible outer columns gave the mark less than
-    // its own width, and the search was drawn over it.
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-default bg-surface px-2 sm:px-3 md:grid md:grid-cols-[1fr_minmax(0,28rem)_1fr]">
-      <div className="flex shrink-0 items-center gap-2">
+    // Three columns from `lg`, the outer two equal, so the search sits on the page's centre line
+    // rather than in the middle of whatever the left group leaves — unless the names need more
+    // than half of what the search leaves: the left column is never narrower than they are, so
+    // the search moves right before a name is cut shorter than its own cap. Narrower it is a row,
+    // the names taking what the mark leaves and the search folded to an icon at its end.
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-default bg-surface px-2 sm:px-3 lg:grid lg:grid-cols-[minmax(max-content,1fr)_minmax(0,28rem)_minmax(0,1fr)]">
+      <div
+        className={cx("flex items-center gap-2", named && !phone ? "min-w-0 flex-1" : "shrink-0")}
+      >
         {onToggleNav && (
           <IconButton
             icon="menu"
@@ -51,20 +58,42 @@ export function TopNav({
             onClick={onToggleNav}
           />
         )}
-        <Link to="/overview" className="flex shrink-0 items-center gap-2 rounded-md px-1 py-1">
-          {/* Named once: by the wordmark where it shows, by the alt text where it does not. */}
+        <Link to="/overview" className="flex shrink-0 items-center rounded-md p-1">
           <img data-nav-mark src={logoUrl} alt="" className="size-6" />
-          <span className="hidden text-heading-xs text-default md:inline">Factorial</span>
-          <span className="sr-only md:hidden">Factorial</span>
+          <span className="sr-only">Factorial</span>
         </Link>
+        {named && !phone && <PlaceSwitchers />}
       </div>
-      {titled && <PlaceTitle />}
-      <div className={titled ? "shrink-0" : "min-w-0 flex-1"}>
-        <JumpSearch collapsible={phone} unfolded={searching} onUnfoldedChange={setSearching} />
+      {named && phone && <PlaceTitle />}
+      <div className={folds ? (searching ? "min-w-0 flex-1" : "shrink-0") : "min-w-0"}>
+        <JumpSearch collapsible={folds} unfolded={searching} onUnfoldedChange={setSearching} />
       </div>
       {/* The third column holds nothing; it is what keeps the search on the centre line. */}
-      <div aria-hidden="true" className="hidden md:block" />
+      <div aria-hidden="true" className="hidden lg:block" />
     </header>
+  );
+}
+
+/** The organization, and the project inside one, each cut short rather than wrapped; a tooltip
+ *  says the name in full. */
+function PlaceSwitchers() {
+  const place = useProjectPlace();
+  return (
+    <div data-place-switchers className="flex min-w-0 items-center gap-1">
+      <div className="min-w-0 max-w-48">
+        <OrganizationSwitcher />
+      </div>
+      {place && (
+        <>
+          <span aria-hidden="true" className="shrink-0 text-subtlest">
+            /
+          </span>
+          <div className="min-w-0 max-w-48">
+            <ProjectSwitcher place={place} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

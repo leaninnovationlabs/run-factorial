@@ -62,6 +62,7 @@ export function DataTable<T, K extends string = string>({
   page = 1,
   onSetPage,
   isHeadSticky = false,
+  isTopAligned,
   stack,
 }: {
   /** What the table lists; its accessible name. */
@@ -86,6 +87,9 @@ export function DataTable<T, K extends string = string>({
   page?: number;
   onSetPage?: (page: number) => void;
   isHeadSticky?: boolean;
+  /** A row whose cells start at its top rather than its middle: a row of fields being edited,
+   *  where one cell grows a field or an error under it and the others must stay level with it. */
+  isTopAligned?: (row: T) => boolean;
   stack?: Stack<K>;
 }) {
   const phone = useIsPhone();
@@ -201,7 +205,13 @@ export function DataTable<T, K extends string = string>({
                 </tr>
               ) : (
                 shown.map((row) => (
-                  <Row key={rowKey(row)} head={head} values={cells(row)} href={rowHref?.(row)} />
+                  <Row
+                    key={rowKey(row)}
+                    head={head}
+                    values={cells(row)}
+                    href={rowHref?.(row)}
+                    isTopAligned={isTopAligned?.(row) ?? false}
+                  />
                 ))
               )}
             </tbody>
@@ -229,10 +239,12 @@ function Row<K extends string>({
   head,
   values,
   href,
+  isTopAligned = false,
 }: {
   head: Column<K>[];
   values: Record<K, ReactNode>;
   href?: string;
+  isTopAligned?: boolean;
 }) {
   const link = useRowLink(href ?? "");
   return (
@@ -247,7 +259,8 @@ function Row<K extends string>({
         <td
           key={column.key}
           className={cx(
-            "px-3 py-2 align-middle",
+            "px-3 py-2",
+            isTopAligned ? "align-top" : "align-middle",
             column.align === "end" && "text-right tabular-nums",
           )}
         >

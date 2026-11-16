@@ -61,6 +61,37 @@ async def test_commit_config_files_writes_the_branch_and_records_the_sha() -> No
     ]
 
 
+class _TreeClient(_Client):
+    """A branch whose tree already holds `paths`."""
+
+    def __init__(self, *paths: str) -> None:
+        super().__init__()
+        self.paths = paths
+
+    async def paginate(self, url: str, **params: object) -> list[object]:
+        self.calls.append(("GET", url, params))
+        return [{"path": path, "type": "blob", "id": "f" * 40} for path in self.paths]
+
+
+async def test_a_none_body_is_sent_as_a_delete_action() -> None:
+    gone = ".factorial/mcp/tracker.yaml"
+    client = _TreeClient(gone)
+
+    await commit_config_files(
+        client,  # type: ignore[arg-type]
+        "group/app",
+        "factorial",
+        "a" * 40,
+        {gone: None, ".factorial/mcp/never-there.yaml": None},
+        "Update the p process from the Factorial dashboard",
+        _noop,
+    )
+
+    commit = client.calls[-1][2]
+    assert isinstance(commit, dict)
+    assert commit["actions"] == [{"action": "delete", "file_path": gone}]
+
+
 class _SeedClient:
     def __init__(self, *, trees: list[object] | None = None, exists: bool = False) -> None:
         self.trees = trees if trees is not None else [{"name": ".factorial", "type": "tree"}]

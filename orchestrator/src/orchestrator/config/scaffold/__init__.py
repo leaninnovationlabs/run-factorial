@@ -1,6 +1,6 @@
 """The `.factorial/` folder every scaffold path is written under, and the committable output of
-`assemble.assemble`: every file to write, which are stubs, and which shared components are new
-versus already owned by the target repo."""
+`assemble.assemble`: every file to write, which are stubs, which shared components are new
+versus already owned by the target repo, and every file to delete."""
 
 from __future__ import annotations
 
@@ -27,3 +27,5 @@ class ScaffoldBundle:
     #: Shared MCP servers the target repo already had. Deliberately absent from `files`, so
     #: validation must be told about them; without it their absence reads as a defect.
     present_mcp: frozenset[str] = frozenset()
+    #: Files the commit removes from the branch. Never in `files`.
+    deleted: frozenset[str] = frozenset()

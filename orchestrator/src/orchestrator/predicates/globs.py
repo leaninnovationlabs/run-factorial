@@ -32,6 +32,7 @@ __all__ = [
     "matches_path",
     "matches_ref",
     "resolve_refs",
+    "sole_ref",
 ]
 
 
@@ -71,3 +72,10 @@ def fixed_folder(pattern: str) -> str:
 def resolve_refs(branches: Iterable[BranchState], ref_glob: str) -> tuple[BranchState, ...]:
     """Concrete branches a ref argument names: many for a glob, at most one for a literal."""
     return tuple(branch for branch in branches if matches_ref(ref_glob, branch.name))
+
+
+def sole_ref(branches: Iterable[BranchState], ref_glob: str) -> BranchState | None:
+    """The one branch a ref argument names, or None when it names none or several: a glob that
+    matches two leaves which one unsaid. What `request_approval()` reads and Approve records."""
+    matched = resolve_refs(branches, ref_glob)
+    return matched[0] if len(matched) == 1 else None

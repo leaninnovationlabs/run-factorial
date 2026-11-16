@@ -269,7 +269,7 @@ async def test_vocabulary_serves_the_closed_registries() -> None:
     body = response.json()
     by_name = {p["name"]: p for p in body["predicates"]}
     assert by_name["pr_approved"] == {"name": "pr_approved", "min_args": 2, "max_args": 3}
-    assert len(by_name) == 11
+    assert len(by_name) == 13
     assert body["actions"] == ["fix_the_contract"]
     assert "slug" in body["placeholders"]
     assert "ticket_body" in body["input_sources"]

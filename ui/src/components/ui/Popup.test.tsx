@@ -4,12 +4,12 @@
  * out puts the focus somewhere sensible, and an item that cannot run says why instead of acting.
  */
 
-import { act, useState } from "react";
+import { act, useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { byText, click, type Mounted, mount, pointerDown, press, settle } from "../../testDom";
 import { ConfirmDialog } from "./dialog";
 import { clearFlags, FlagGroup } from "./Flag";
-import { DropdownMenu, Popup } from "./Popup";
+import { ContextMenu, DropdownMenu, Popup, PopupAt } from "./Popup";
 
 let view: Mounted | null = null;
 
@@ -299,5 +299,197 @@ describe("the popup surface", () => {
     });
     expect(menu()?.getAttribute("style")).not.toBe(before);
     expect((menu() as HTMLElement | null)?.style.top).toBe("90px");
+  });
+
+  it("hangs from the anchor it is given rather than its button, which keeps the focus", async () => {
+    // The top bar's place: the menu hangs under the name and its chevron, not the chevron alone.
+    function Place() {
+      const anchor = useRef<HTMLDivElement | null>(null);
+      return (
+        <div ref={anchor} data-anchor>
+          <DropdownMenu
+            anchorRef={anchor}
+            placement="bottom-start"
+            trigger={{ label: "Actions" }}
+            items={[{ label: "Rename", onClick: vi.fn() }]}
+          />
+        </div>
+      );
+    }
+    view = await mount(<Place />);
+    const box = (left: number, width: number) => () =>
+      ({
+        top: 10,
+        left,
+        width,
+        height: 32,
+        right: left + width,
+        bottom: 42,
+        x: left,
+        y: 10,
+      }) as DOMRect;
+    (document.querySelector("[data-anchor]") as HTMLElement).getBoundingClientRect = box(40, 160);
+    trigger().getBoundingClientRect = box(176, 24);
+    trigger().focus();
+    await click(trigger());
+    expect((menu() as HTMLElement).style.left).toBe("40px");
+    expect((menu() as HTMLElement).style.top).toBe("48px");
+    await press("Escape", menu() as HTMLElement);
+    expect(document.activeElement).toBe(trigger());
+  });
+});
+
+describe("a menu item with an icon", () => {
+  it("draws the icon before its label, and none where none is given", async () => {
+    view = await mount(
+      <DropdownMenu
+        trigger={{ label: "Actions" }}
+        items={[
+          {
+            group: "Add new",
+            items: [
+              { label: "Agent", icon: "agent", onClick: vi.fn() },
+              { label: "Plain", onClick: vi.fn() },
+            ],
+          },
+        ]}
+      />,
+    );
+    await click(trigger());
+    const [agent, plain] = items();
+    expect(agent?.querySelector("svg")?.getAttribute("data-glyph")).toBe("agent");
+    expect(agent?.textContent).toBe("Agent");
+    expect(plain?.querySelector("svg")).toBeNull();
+    expect(document.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe("Add new");
+  });
+});
+
+describe("PopupAt", () => {
+  function Prompt({ onClose }: { onClose: () => void }) {
+    return (
+      <>
+        <button type="button">elsewhere</button>
+        <PopupAt at={{ x: 40, y: 60 }} label="New agent" onClose={onClose}>
+          {/* biome-ignore lint/a11y/noAutofocus: the prompt exists to take one name */}
+          <input aria-label="name" autoFocus />
+        </PopupAt>
+      </>
+    );
+  }
+  const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
+
+  it("opens as a named dialog under the point, and leaves the focus on the field that took it", async () => {
+    view = await mount(<Prompt onClose={vi.fn()} />);
+    await settle();
+    expect(dialog()?.getAttribute("aria-label")).toBe("New agent");
+    expect(dialog()?.style.left).toBe("40px");
+    expect(dialog()?.style.top).toBe("66px");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("name");
+  });
+
+  it("closes on Escape and on a press outside it", async () => {
+    const onClose = vi.fn();
+    view = await mount(<Prompt onClose={onClose} />);
+    await settle();
+    await press("Escape");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await pointerDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("draws nothing without a point", async () => {
+    view = await mount(
+      <PopupAt at={null} label="New agent" onClose={vi.fn()}>
+        <span>inside</span>
+      </PopupAt>,
+    );
+    expect(dialog()).toBeNull();
+  });
+});
+
+describe("ContextMenu", () => {
+  function Row({ onRename }: { onRename: () => void }) {
+    const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+    return (
+      <>
+        <button
+          type="button"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setAt({ x: event.clientX, y: event.clientY });
+          }}
+        >
+          agents
+        </button>
+        <ContextMenu
+          at={at}
+          label="Actions for agents"
+          items={[
+            { label: "New agent", onClick: onRename },
+            { label: "Delete folder", onClick: vi.fn() },
+          ]}
+          onClose={() => setAt(null)}
+        />
+      </>
+    );
+  }
+  const row = () => byText(document, "button", "agents") as HTMLButtonElement;
+
+  async function rightClicked(onRename = vi.fn()) {
+    view = await mount(<Row onRename={onRename} />);
+    row().focus();
+    await act(async () => {
+      row().dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 40,
+          clientY: 60,
+        }),
+      );
+    });
+    await settle();
+    return onRename;
+  }
+
+  it("is closed until it is given a point", async () => {
+    view = await mount(<Row onRename={vi.fn()} />);
+    expect(menu()).toBeNull();
+  });
+
+  it("opens as a named menu with the focus on its first item", async () => {
+    await rightClicked();
+    expect(menu()?.getAttribute("aria-label")).toBe("Actions for agents");
+    // Under the point of the right-click (40, 60), by the popup's own gap.
+    expect((menu() as HTMLElement).style.left).toBe("40px");
+    expect((menu() as HTMLElement).style.top).toBe("66px");
+    expect(items().map((item) => item.textContent)).toEqual(["New agent", "Delete folder"]);
+    expect(document.activeElement).toBe(items()[0]);
+  });
+
+  it("moves between its items with the arrow keys, as a menu does", async () => {
+    await rightClicked();
+    await press("ArrowDown", document.activeElement ?? document);
+    expect(document.activeElement).toBe(items()[1]);
+  });
+
+  it("closes on Escape and gives the focus back to what had it", async () => {
+    await rightClicked();
+    await press("Escape");
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(row());
+  });
+
+  it("closes on a press outside it", async () => {
+    await rightClicked();
+    await pointerDown(document.body);
+    expect(menu()).toBeNull();
+  });
+
+  it("runs a chosen item and closes", async () => {
+    const onRename = await rightClicked();
+    await click(items()[0]);
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(menu()).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ import yaml
 from orchestrator.config import ConfigError, parse_process
 from orchestrator.config.scaffold.assemble import (
     EditConflict,
+    FileDelete,
     FileEdit,
     SelectionError,
     assemble,
@@ -361,3 +362,136 @@ def test_a_path_sent_as_both_an_edit_and_a_created_file_is_refused():
             created={PROMPT: "x"},
             repo_blobs={PROMPT: BLOB},
         )
+
+
+OTHER_LANE = ".factorial/processes/process-other.yaml"
+
+
+def test_a_deleted_file_leaves_the_bundle_and_is_named_in_deleted():
+    config, proposal = _setup(present_agents=("plan-agent",))
+    bundle = assemble(
+        config,
+        UNSTACKED,
+        {},
+        proposal,
+        deleted=[FileDelete(PROMPT, BLOB)],
+        repo_blobs={PROMPT: BLOB},
+    )
+    assert bundle.deleted == frozenset({PROMPT})
+    assert PROMPT not in bundle.files
+
+
+def test_a_delete_whose_file_moved_on_the_branch_is_a_conflict():
+    config, proposal = _setup(present_agents=("plan-agent",))
+    with pytest.raises(EditConflict, match=r"system-prompt\.md"):
+        assemble(
+            config,
+            UNSTACKED,
+            {},
+            proposal,
+            deleted=[FileDelete(PROMPT, BLOB)],
+            repo_blobs={PROMPT: "c" * 40},
+        )
+
+
+def test_a_delete_outside_the_config_folder_is_refused():
+    config, proposal = _setup()
+    workflow = ".github/workflows/ci.yml"
+    # In the blobs on purpose: membership alone must not admit a path outside the config folder.
+    with pytest.raises(SelectionError, match=r"not under \.factorial/"):
+        assemble(
+            config,
+            UNSTACKED,
+            {},
+            proposal,
+            deleted=[FileDelete(workflow, BLOB)],
+            repo_blobs={workflow: BLOB},
+        )
+
+
+def test_a_path_both_edited_and_deleted_is_refused():
+    config, proposal = _setup(present_agents=("plan-agent",))
+    with pytest.raises(SelectionError, match="both edited and deleted"):
+        assemble(
+            config,
+            UNSTACKED,
+            {},
+            proposal,
+            edits=[FileEdit(PROMPT, "x", BLOB)],
+            deleted=[FileDelete(PROMPT, BLOB)],
+            repo_blobs={PROMPT: BLOB},
+        )
+
+
+def test_a_deleted_path_the_branch_no_longer_has_is_skipped():
+    """A retried commit finds its deletion already made, and must stay a no-op."""
+    config, proposal = _setup()
+    bundle = assemble(
+        config, UNSTACKED, {}, proposal, deleted=[FileDelete(PROMPT, BLOB)], repo_blobs={}
+    )
+    assert bundle.deleted == frozenset()
+
+
+def test_deleting_the_lanes_own_process_file_writes_no_process_and_no_stub():
+    config, proposal = _setup()
+    own = process_bundle_path(config.name)
+    bundle = assemble(
+        config,
+        UNSTACKED,
+        {},
+        proposal,
+        deleted=[FileDelete(own, BLOB)],
+        repo_blobs={own: BLOB, OTHER_LANE: BLOB},
+    )
+    assert bundle.deleted == frozenset({own})
+    assert bundle.files == {}
+    assert bundle.stub_paths == frozenset()
+
+
+def test_a_retried_delete_of_the_lanes_own_process_writes_nothing():
+    """The first try landed, so the branch no longer has the file. The retry must not put the
+    process back: it writes nothing and removes nothing, which the commit reads as a no-op."""
+    config, proposal = _setup()
+    own = process_bundle_path(config.name)
+    bundle = assemble(
+        config,
+        UNSTACKED,
+        {},
+        proposal,
+        deleted=[FileDelete(own, BLOB)],
+        repo_blobs={OTHER_LANE: BLOB},
+    )
+    assert bundle.files == {}
+    assert bundle.deleted == frozenset()
+    assert bundle.stub_paths == frozenset()
+
+
+def test_a_commit_that_deletes_its_own_process_adds_no_files_for_it():
+    config, proposal = _setup()
+    own = process_bundle_path(config.name)
+    with pytest.raises(SelectionError, match="cannot add files for that process"):
+        assemble(
+            config,
+            UNSTACKED,
+            _default_selection(proposal),
+            proposal,
+            deleted=[FileDelete(own, BLOB)],
+            repo_blobs={own: BLOB, OTHER_LANE: BLOB},
+        )
+
+
+def test_deleting_the_only_process_is_refused():
+    config, proposal = _setup()
+    own = process_bundle_path(config.name)
+    with pytest.raises(SelectionError) as caught:
+        assemble(
+            config,
+            UNSTACKED,
+            {},
+            proposal,
+            deleted=[FileDelete(own, BLOB)],
+            repo_blobs={own: BLOB},
+        )
+    assert caught.value.detail == (
+        "A project keeps at least one process. Add another process before you delete this one."
+    )

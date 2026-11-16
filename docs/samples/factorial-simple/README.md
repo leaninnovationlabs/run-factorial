@@ -18,15 +18,15 @@ to `factorial` writes your process file plus an `agents/<name>/` folder for ever
 agent it names that your repo does not already have, offered in a file explorer where every
 candidate file is readable and editable before you select it. Nothing is consented to by name
 alone. Each catalog agent carries lane **variants**, `stacked` and/or `base-target`; only the one
-matching your config's own branch topology ever contributes a file. A project whose issues are on
-GitLab gets the GitLab copy of `base-target` instead, whichever template it starts from
-(`../factorial-gitlab/`). An agent left with no
+matching your config's own branch topology ever contributes a file. The `base-target` prompts
+serve GitHub and GitLab: each gives both the `gh` and the `glab` command and tells the agent to
+use `glab` when `GITLAB_HOST` is set. An agent left with no
 matching variant (or with every one of its files left unticked) gets the same
 commented-but-empty `agent.yaml` it always would. Those prompts declare
 `skills/project-constitution/`, itself variant-per-lane, and the same commit writes whichever
 copy matches: a copy of the one below, with its naming table pointed at your lane's own branches.
 
-**This sample's lanes are the editor's GitHub template, and the variant that serves them is
+**This sample's lanes are the editor's Simple template, and the variant that serves them is
 `base-target`.** The editor's **Simple template** is this folder's process files, one lane each,
 with comments written for operators and each `runtime:` line commented out as an example; tests
 hold each template lane to the sample lane of the same name, once that line is turned on. Every `pr_open`
@@ -138,8 +138,8 @@ and how to give the section to another agent.
 
 `test-agent` runs in the `simple` lane only, after the build agent's PR is open. It runs the
 repository's suite on a normal checkout and posts one pass/fail comment, `## Test Verdict`. It
-pushes nothing. `ci_green` is the acceptance gate of the step; the comment is evidence that the
-step ran, and the diagnostic when it failed. `pr_comment_contains` checks that the verdict
-exists, not what it says, so a `FAIL` verdict next to green CI still moves the ticket to
-`code_review_gate`. The `primary` lane has no test step, for a repository without CI on pull
-requests.
+pushes nothing. The comment is the acceptance gate of the step: `pr_comment_contains` checks
+that the verdict exists, not what it says, so a `FAIL` verdict still moves the ticket to
+`code_review_gate`, where the reviewer reads it. The step carries `ci_green` commented out:
+turn it on for a repository that runs CI on pull requests, and the step then waits for green
+checks too. The `primary` lane has no test step, for a repository with no suite to run.

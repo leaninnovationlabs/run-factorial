@@ -497,7 +497,10 @@ how to write a good summary. The agent commits each file on its branch with the 
 work, so the file merges when its PR merges.
 
 **What the worker records.** When a run ends, the worker reads the run's branch on GitHub and
-records every file that the step's attempts changed there. The record
+records every file that the step's attempts changed there. A step whose postconditions call
+`request_approval()` is also read each time its session stops at its prompt with them unmet, so
+its files show while a person reviews them. A run that has delivered no branch yet takes its
+`{slug}` from the one branch its `workspace.branch` matches. The record
 starts where the branch stood when the run started, so a step that works on another step's
 branch is shown only its own files. A file the step wrote but did not declare is recorded and
 not shown.
@@ -589,7 +592,8 @@ active time and the deployment's session ceiling are the limits. A session renew
 every hour, and parks for a person at the deployment's `terminal.session_ceiling`. A
 session that stops at its prompt with its postconditions unmet waits there for
 `terminal.idle_park_after` (10 minutes). Then it parks for a person under `factorial:waiting`
-when the agent asked a question, its turn failed, or a person typed into it or released it;
+when the agent asked a question, its turn failed, a person typed into it or released it, or the
+step's postconditions call `request_approval()`;
 otherwise the attempt fails with `postcondition_failed` and `retry` applies, so a silent stop
 costs an attempt. A silent stop also waits while a check run that a `ci_green` postcondition
 reads is not complete, and then for `terminal.idle_park_after` after the last one completes, but
@@ -758,6 +762,8 @@ a parse error naming the malformed call.
 | `ticket_has_assignee()` | 0 | The issue has at least one assignee. |
 | `issue_comment_contains(marker)` | 1 | The issue has a comment **by the App's own bot login** containing `marker`. |
 | `pr_comment_contains(head, marker)` | 2 | A matching PR has such a comment. A change request that the orchestrator posts from the dashboard does not count. |
+| `request_approval()` | 0 | A person pressed **Approve** in the dashboard for this step's current run, at the commit the step's branch ends on now. See [Waiting for a person's approval](#waiting-for-a-persons-approval). |
+| `checklist_done(path, ref)` | 2 | Every file matching `path` on every branch matching `ref` has at least one task box and none open, and at least one file matches. |
 
 Notes:
 
@@ -769,9 +775,67 @@ Notes:
 - **The comment predicates are author-fenced.** Only the App's own bot login counts, because the
   marker is delivery evidence and a third party could otherwise forge it. A marker must be a
   non-empty literal. An empty one is refused at parse time.
+- **`checklist_done` counts task boxes outside fenced code.** A box is `[ ]`, `[x]` or `[X]`
+  after a `-`, `*` or `+` bullet or a `1.` or `1)` number, indented or not, with one or more
+  spaces or tabs before it and a space or the end of the line after it. A line in a blockquote
+  is read without its leading `>` markers, so a quoted task counts. A line of three or more
+  backticks or tildes, at any indentation, opens a fence, but a backtick line with another
+  backtick after its fence is inline code. Only a line of the same character, at least as long,
+  at any indentation and with nothing after it, closes the fence. A fence that does not close
+  runs to the end of the file. Boxes inside a fence never count, so an
+  example checklist in a plan is not work left open. A file with no box, over
+  1 MB, or not UTF-8 makes it false. Each matching file costs one forge read per tick, so keep
+  `path` narrow. It proves the list is finished, not that the work is good: pair it with
+  `ci_green` and a review.
 - **A new predicate is a code change**, in `orchestrator/predicates/library.py` plus the arity
   table in `config/conditions.py`. There is no per-attempt predicate and no comment-*content*
   predicate; `any:`/`not:` cannot manufacture either.
+
+### Waiting for a person's approval
+
+```yaml
+- name: plan
+  kind: agent
+  agent: sp-planning-agent
+  next: build
+  workspace: { repo: "{repo}", base: main, branch: "sp/{ticket}-{slug}" }
+  postconditions:
+    all:
+      - branch_exists("sp/{ticket}-*")
+      - file_exists("docs/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
+      - request_approval()
+  preview:
+    files:
+      - { path: "docs/plans/{ticket}-{slug}-plan.md", label: "Plan" }
+```
+
+- **The step waits for a person.** When the agent stops at its prompt with this unmet, the
+  session parks under `factorial:waiting`, however it stopped, and costs no attempt. The person
+  reads the work, which the Files view shows as of the session's latest stop, and presses
+  **Approve** in the run's Output drawer: in the footer under Files or Preview when the step has
+  them, in the terminal otherwise. The loop accepts the run once
+  every other postcondition holds too.
+- **Approve waits for the files to catch up.** When the branch moves while the session waits (a
+  push, a bot, **Update branch**), the files are read again at the next tick, or at a parked
+  run's next re-check. Until then Approve is refused with `files_stale`, because the person would
+  approve a commit whose files they never saw. A step with no `preview.files` is not held.
+- **To ask for changes, answer the agent** in the same session: **Resume** with an answer, or
+  type in its terminal. It pushes, and the person approves the new commit. **Redo** starts the
+  step clean.
+- **An approval is of one run at one commit.** A push after it, a retry, a Redo or the next step
+  on the same branch needs a new one. A second press by the same person at the same commit
+  within 60 seconds records nothing. After that it records a new approval, which counts over an
+  issue comment posted before it.
+- **The wait has a limit.** The `timeout` does not count it, but past the workspace retention (7
+  days by default) Approve is refused and Redo is the way on.
+- **Put `branch_exists` beside it.** Approve needs exactly one branch matching
+  `workspace.branch`, and `request_approval()` tells the runtime nothing to look for.
+- **It is not a gate.** Nothing merges, and only a `human_gate` reaches `main`. A person who may
+  operate the ticket presses Approve, on the dashboard only: never through MCP or the assistant.
+
+`docs/samples/factorial-superpowers/` is a whole lane built this way: `brainstorm` and `plan`
+wait for an approval, `build` waits for `checklist_done` on the plan, `review` reads the whole
+branch, and `code_review_gate` merges.
 
 ### Globs
 
@@ -844,10 +908,10 @@ in **conjunctive positions**: the condition itself, or a child of `all:`.
 
 A call under `any:` is one alternative among several, and one under `not:` asserts the opposite.
 Neither states "this must be delivered", so neither derives an expectation. The postcondition
-still evaluates in full either way; only the delivery probe narrows. `file_exists`, `ci_green`,
-`pr_merged`, `pr_approved`, `pr_changes_requested`, `ticket_label` and `ticket_has_assignee` never
-derive anything: no adapter can verify a file, and the rest are a gate's business or not
-artifacts at all.
+still evaluates in full either way; only the delivery probe narrows. `file_exists`,
+`checklist_done`, `ci_green`, `pr_merged`, `pr_approved`, `pr_changes_requested`,
+`ticket_label`, `ticket_has_assignee` and `request_approval` never derive anything: no adapter
+can verify a file, and the rest are a gate's business, a person's, or not artifacts at all.
 
 So **put the predicate that names the step's delivery at the top level of
 `all:`**, not nested inside `any:`.
@@ -936,6 +1000,9 @@ it found in one error rather than the first:
 5. Every `gate.onReject.rerunStep` resolves to a real step.
 6. The terminal step is reachable from `entry.step`, following `next` **and** gate rework edges.
 7. No step is unreachable from `entry.step`.
+8. `request_approval()` appears only in an agent step's `postconditions`, never under `not:`.
+   Only the acceptance of an agent's run reads the approval, so anywhere else it would be false
+   for ever, and under `not:` an approval would fail the run.
 
 Rule 7 is the one that catches a half-finished edit: a step you renamed but forgot to point at is
 an orphan, and the file will not load.

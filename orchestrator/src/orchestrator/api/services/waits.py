@@ -12,8 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.schemas import TerminalIdleOut, TerminalParkedOut
-from orchestrator.db.models import Event, StepRun, StepRunStatus
+from orchestrator.api.services.outputs import pinned_review_step
+from orchestrator.db.models import Event, StepRun, StepRunStatus, Ticket
 from orchestrator.events import EventType, ResumedVia
+from orchestrator.events.read_models import park_reason
 from orchestrator.events.terminals import (
     last_terminal_input,
     question_parks_now,
@@ -39,9 +41,9 @@ _WAITS_READ: Final = 200
 
 
 async def session_waits(
-    session: AsyncSession, run: StepRun, idle_park_after: timedelta
+    session: AsyncSession, ticket: Ticket, run: StepRun, idle_park_after: timedelta
 ) -> tuple[TerminalIdleOut | None, TerminalParkedOut | None]:
-    """An IDLE run's spell, or a parked one's park, from the log."""
+    """An IDLE run's spell, or a parked one's park, from the log. `ticket` is the run's."""
     if run.status not in (StepRunStatus.IDLE, StepRunStatus.INTERRUPTED):
         return None, None
     rows = (
@@ -71,8 +73,10 @@ async def session_waits(
         if question_parks_now(spell.details.get("question_expires_at"), typed, since):
             parks_at = since
         reason = str(spell.details.get("reason") or "idle")
-        # A stop that does not park ends at the deadline, and its step retries.
-        parks, _ = await waits_for_a_person(session, run, reason, typed)
+        # A stop that does not park ends at the deadline, and its step retries. The pinned config
+        # is read only when the log does not decide.
+        parks, _ = await waits_for_a_person(session, run, reason, typed, review=False)
+        parks = parks or await pinned_review_step(session, ticket, run) is not None
         return (
             TerminalIdleOut(
                 reason=reason,
@@ -90,10 +94,7 @@ async def session_waits(
     )
     if park is None:
         return None, None
-    if park.type == EventType.AGENT_INTERRUPTED:
-        why = ParkReason.USER.value
-    else:
-        why = str(park.details.get("reason") or ParkReason.IDLE.value)
+    why = park_reason(park.type, park.details)
     # A ceiling can park a session at its question as well as mid-turn.
     asked = why in (ParkReason.IDLE, ParkReason.CEILING)
     before = [row for row in stretch if row.id < park.id]

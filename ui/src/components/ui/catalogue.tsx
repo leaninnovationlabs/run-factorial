@@ -152,6 +152,7 @@ export function Messages() {
             { text: "Primary action", onClick: () => {} },
             { text: "Learn more", href: "https://atlassian.design" },
           ]}
+          onDismiss={appearance === "success" ? () => {} : undefined}
         >
           What happened, and what to do about it, in one or two sentences.
         </SectionMessage>

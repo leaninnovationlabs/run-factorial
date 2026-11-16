@@ -49,7 +49,8 @@ MARKS = {
         r"organis|colour|\blabelled\b|judgement|serialis|afterwards", re.IGNORECASE
     ),
     "ellipsis": re.compile("\N{HORIZONTAL ELLIPSIS}"),
-    "design document": re.compile(r"tech-stack\.md|design\.md"),
+    # Not a file name that ends in one, such as the superpowers sample's `<N>-<slug>-design.md`.
+    "design document": re.compile(r"(?<![\w-])(?:tech-stack|design)\.md"),
     "UK canceled": re.compile(r"(?s)^(?=.*\s).*(?<![`'\"])\b[Cc]ancelled\b(?![:`'\"])"),
 }
 CODE_MARKS = {
@@ -91,17 +92,10 @@ ALLOWED: list[tuple[str, str, str]] = [
         "the runtime's stop reason",
     ),
     ("runtime/src/runtime/adapters/e2b/adapter.py", "cancelled by", "the runtime's stop reason"),
-    *(
-        (
-            path,
-            "\N{BOX DRAWINGS LIGHT HORIZONTAL}\N{BLACK RIGHT-POINTING TRIANGLE}",
-            "the ASCII diagram the skill shows",
-        )
-        for path in (
-            "spec-page/SKILL.md",
-            "spec-page/github/SKILL.md",
-            "spec-page/gitlab/SKILL.md",
-        )
+    (
+        "spec-page/SKILL.md",
+        "\N{BOX DRAWINGS LIGHT HORIZONTAL}\N{BLACK RIGHT-POINTING TRIANGLE}",
+        "the ASCII diagram the skill shows",
     ),
 ]
 
@@ -113,17 +107,8 @@ VERDICT_PAIRS = [
         ORCHESTRATOR / "config/scaffold/templates/agents/test-agent/base-target/instructions.md",
     ),
     (
-        ORCHESTRATOR
-        / "config/scaffold/templates/process-templates/simple-gitlab/processes/process-simple.yaml",
-        ORCHESTRATOR
-        / "config/scaffold/templates/agents/test-agent/base-target-gitlab/instructions.md",
-    ),
-    *(
-        (
-            REPO_ROOT / "docs/samples" / sample / "processes/process-simple.yaml",
-            REPO_ROOT / "docs/samples" / sample / "agents/test-agent/instructions.md",
-        )
-        for sample in ("factorial-simple", "factorial-gitlab")
+        REPO_ROOT / "docs/samples/factorial-simple/processes/process-simple.yaml",
+        REPO_ROOT / "docs/samples/factorial-simple/agents/test-agent/instructions.md",
     ),
 ]
 

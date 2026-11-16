@@ -17,10 +17,11 @@ import { api } from "../../api/client";
 import type { StepRun, TimelineEntry } from "../../api/types";
 import { run as fixtureRun } from "../../pages/TicketPage.fixture";
 import { ROLE_BOLD, ROLE_SUBTLE, ROLE_TEXT } from "../../status";
-import { byText, click, mount } from "../../testDom";
+import { byText, click, mount, pointerDown } from "../../testDom";
 import { ActivityPanel, type Waiting } from "./ActivityPanel";
 import { type ActivityOrder, type ActivitySegment, type Held, segmentsFrom } from "./activity";
 import type { RetryOffer } from "./retry";
+import { type OutputOpeners, RunFigures } from "./SegmentHeader";
 
 const REPO = "northwind/harbor-invoices";
 
@@ -43,7 +44,7 @@ function panel(
   held: Held | null,
   waitingOn?: (segment: ActivitySegment) => Waiting | null,
   startingKey?: string | null,
-  outputOpener?: (segment: ActivitySegment) => ((run: StepRun) => void) | undefined,
+  outputOpener?: (segment: ActivitySegment) => OutputOpeners | undefined,
   retry?: RetryOffer,
 ) {
   return (
@@ -110,39 +111,55 @@ const GATE_RUNS = [
 ];
 const HELD: Held = { key: "spec_gate#2", condition: "waiting_gate" };
 
-describe("ActivityPanel's run header cost", () => {
+describe("a run's metrics", () => {
   const AGENT = [ev(1, "step_started", { step: "build", attempt: 1, kind: "agent" })];
 
   const ESTIMATED: StepRun[] = [
-    { ...run("build", 1, "succeeded", "agent"), cost_usd: "0.2559", cost_source: "estimated" },
+    {
+      ...run("build", 1, "succeeded", "agent"),
+      model: "claude-sonnet-5-5",
+      input_tokens: 41_200,
+      output_tokens: 9_300,
+      cost_usd: "0.2559",
+      cost_source: "estimated",
+    },
   ];
+  const figures = (shown: StepRun) => renderToString(<RunFigures run={shown} />);
 
-  it("labels a list-price estimate and leaves a measured figure alone", () => {
-    const estimated = render(AGENT, ESTIMATED, null);
-    // Captioned as an estimate for a reader, `~` ahead of the box, and a way into why it is one — never a native `title`, which a keyboard never shows.
-    expect(estimated).toMatch(
-      /Cost, estimated(?:<!-- -->)? <\/span><span>~<\/span><span data-metric-box/,
-    );
-    expect(estimated).toContain('aria-label="Why this cost is an estimate"');
-    expect(estimated).not.toContain("title=");
-
-    const reported = render(
-      AGENT,
-      [{ ...run("build", 1, "succeeded", "agent"), cost_usd: "0.2559", cost_source: "reported" }],
-      null,
-    );
-    expect(reported).toMatch(/>Cost(?:<!-- -->)? <\/span><span data-metric-box/);
-    expect(reported).not.toContain("~");
-    expect(reported).not.toContain("Why this cost is an estimate");
+  it("keeps the figures and the model out of the row, behind one icon", () => {
+    const header = render(AGENT, ESTIMATED, null).match(/<header[^>]*>.*?<\/header>/s)?.[0] ?? "";
+    expect(header).toContain('aria-label="Run metrics"');
+    expect(header).not.toContain("data-metric-box");
+    expect(header).not.toContain("claude-sonnet-5-5");
   });
 
-  it("says why a figure is an estimate, when its mark is pressed", async () => {
+  it("labels a list-price estimate and leaves a measured figure alone", () => {
+    const estimated = figures(ESTIMATED[0] as StepRun);
+    expect(estimated).toContain(">claude-sonnet-5-5<");
+    // Captioned as an estimate for a reader, `~` ahead of the box, and why it is one in words.
+    expect(estimated).toMatch(
+      />Cost<\/dt><dd><span data-metric[^>]*><span>~<\/span><span data-metric-box/,
+    );
+    expect(estimated).toContain("at list rates");
+    expect(estimated).not.toContain("title=");
+
+    const reported = figures({ ...(ESTIMATED[0] as StepRun), cost_source: "reported" });
+    expect(reported).toMatch(/>Cost<\/dt><dd><span data-metric[^>]*><span data-metric-box/);
+    expect(reported).not.toContain("~");
+    expect(reported).not.toContain("list rates");
+  });
+
+  it("opens the figures on a press, as a touch screen does, and closes on one outside", async () => {
     const view = await mount(panel(AGENT, ESTIMATED, null));
-    expect(document.body.textContent).not.toContain("list rates");
-    await click(view.container.querySelector('[aria-label="Why this cost is an estimate"]'));
-    const opened = document.querySelector('[role="dialog"]');
-    expect(opened?.textContent).toContain("Estimated cost");
-    expect(opened?.textContent).toContain("list rates");
+    const icon = view.container.querySelector<HTMLElement>('[aria-label="Run metrics"]');
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    await click(icon);
+    const card = document.querySelector<HTMLElement>('[role="tooltip"]');
+    expect(card?.textContent).toContain("claude-sonnet-5-5");
+    expect(card?.textContent).toContain("list rates");
+    expect(icon?.getAttribute("aria-describedby")).toBe(card?.id);
+    await pointerDown(document.body);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
     await view.unmount();
   });
 
@@ -154,18 +171,89 @@ describe("ActivityPanel's run header cost", () => {
       cost_usd: "1.1650",
       cost_source: "estimated",
     };
-    const going = render(AGENT, [live], null);
-    expect(going).toMatch(/Cost so far, estimated(?:<!-- -->)? <\/span><span>~<\/span>/);
-    expect(going).toContain(">so far<");
-    expect(going).toContain("Tokens so far");
+    const going = figures(live);
+    expect(going).toMatch(/>Cost so far<\/dt><dd><span data-metric[^>]*><span>~<\/span>/);
+    expect(going).toContain(">Tokens so far<");
+    expect(going).toContain("still running");
 
-    const ended = render(
-      AGENT,
-      [{ ...live, status: "succeeded", cost_usd: "1.5000", cost_source: "reported" }],
-      null,
-    );
+    const ended = figures({
+      ...live,
+      status: "succeeded",
+      cost_usd: "1.5000",
+      cost_source: "reported",
+    });
     expect(ended).not.toContain("so far");
-    expect(ended).toMatch(/>Cost(?:<!-- -->)? <\/span><span data-metric-box/);
+    expect(ended).toMatch(/>Cost<\/dt><dd><span data-metric[^>]*><span data-metric-box/);
+  });
+});
+
+describe("ActivityPanel, Focused", () => {
+  const LOG = [
+    ev(1, "step_started", { step: "build", attempt: 1, kind: "agent" }),
+    ev(2, "agent_spawned", { step: "build", attempt: 1, agent: "builder", run_id: "r-1" }),
+    ev(3, "preview_failed", { step: "build", attempt: 1, reason: "the dev server exited" }),
+    ev(4, "agent_completed", { step: "build", attempt: 1, summary: "Built the export." }),
+    ev(5, "step_completed", { step: "build", attempt: 1 }),
+    ev(6, "step_started", { step: "check", attempt: 1, kind: "check" }),
+    ev(7, "step_completed", { step: "check", attempt: 1 }),
+  ];
+  const RUNS = [run("build", 1, "succeeded", "agent"), run("check", 1, "succeeded", "check")];
+  const shown = (focused: boolean) =>
+    renderToString(
+      <ActivityPanel
+        segments={segmentsFrom(LOG, RUNS)}
+        order="oldest"
+        repo={REPO}
+        activeKey={null}
+        onActiveKeyChange={() => {}}
+        runtimeFor={() => undefined}
+        onOpenText={() => {}}
+        held={null}
+        focused={focused}
+      />,
+    ).replace(/<!-- -->/g, "");
+
+  it("leaves out the routine rows, but never one that warns", () => {
+    const html = shown(true);
+    expect(html).toContain("Agent completed");
+    // Routine by `significant`, but its tone is a warning: Focused keeps trouble in view.
+    expect(html).toContain("Preview failed");
+    expect(html).not.toContain("Agent started");
+    expect(html).not.toContain("Step started");
+    expect(html).not.toContain("Step completed");
+  });
+
+  /** The words of a block's header, the step's own code to the header's end. */
+  const header = (html: string, step: string) => {
+    const from = html.indexOf(`>${step}</code>`);
+    return html
+      .slice(from, html.indexOf("</header>", from))
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+  };
+
+  it("counts the rows it hid beside the run's status, and draws nothing in their place", () => {
+    const html = shown(true);
+    // Every row of `check` is routine: its header says so, and no list or line stands below it.
+    expect(header(html, "check")).toMatch(/Succeeded ?2 routine events hidden/);
+    const check = html.slice(html.indexOf(">check</code>"));
+    expect(check).not.toContain("<ol");
+    expect(check).not.toMatch(/<p[^>]*>[^<]*hidden/);
+  });
+
+  it("counts the rows it hid in a block it only partly hides", () => {
+    // Entered/started, Agent started and Step completed; Agent completed and Preview failed stay.
+    expect(header(shown(true), "build")).toMatch(/Succeeded ?3 routine events hidden/);
+  });
+
+  it("draws no count while it hides nothing", () => {
+    expect(shown(false)).not.toContain("data-hidden-rows");
+    expect(shown(false)).not.toContain("routine events hidden");
+  });
+
+  it("counts on the rail the rows the log shows", () => {
+    expect(shown(true)).toMatch(/>2 events<.*>0 events</s);
+    expect(shown(false)).toMatch(/>5 events<.*>2 events</s);
   });
 });
 
@@ -173,22 +261,33 @@ describe("ActivityPanel's run header output", () => {
   const AGENT = [ev(1, "step_started", { step: "build", attempt: 1, kind: "agent" })];
   const RUNS = [run("build", 1, "succeeded", "agent")];
 
-  it("opens a run's transcript, preview and terminal from one Output button", async () => {
-    const opened: number[] = [];
+  it("opens a run's terminal and its files from a button each", async () => {
+    const opened: string[] = [];
     const view = await mount(
-      panel(AGENT, RUNS, null, undefined, undefined, () => (shown) => opened.push(shown.id)),
+      panel(AGENT, RUNS, null, undefined, undefined, () => ({
+        terminal: (shown) => opened.push(`terminal ${shown.id}`),
+        preview: { label: "Files", open: (shown) => opened.push(`preview ${shown.id}`) },
+      })),
     );
     const header = view.container.querySelector("header") as HTMLElement;
-    expect([...header.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([
-      "Output",
-    ]);
-    await click(byText(header, "button", "Output"));
-    expect(opened).toEqual([1]);
+    expect(
+      [...header.querySelectorAll("button")].map((b) => b.textContent?.trim()).filter(Boolean),
+    ).toEqual(["Terminal", "Files"]);
+    await click(byText(header, "button", "Files"));
+    await click(byText(header, "button", "Terminal"));
+    expect(opened).toEqual(["preview 1", "terminal 1"]);
     await view.unmount();
   });
 
-  it("offers no Output on a run that has none", () => {
-    expect(render(AGENT, RUNS, null)).not.toContain(">Output<");
+  it("offers only what the run has", () => {
+    const terminalOnly = render(AGENT, RUNS, null, undefined, undefined, () => ({
+      terminal: () => {},
+    }));
+    expect(terminalOnly).toContain(">Terminal<");
+    expect(terminalOnly).not.toContain(">Preview<");
+    const none = render(AGENT, RUNS, null);
+    expect(none).not.toContain(">Terminal<");
+    expect(none).not.toContain(">Preview<");
   });
 });
 

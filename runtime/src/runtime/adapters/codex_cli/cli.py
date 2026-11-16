@@ -27,7 +27,8 @@ CODEX_BIN: Final = "codex"
 
 #: The version the parsers were last hand-checked against: a host run is refused on any other
 #: (`spawn_refusal`). An E2B template installs the CLI's latest instead, and its builder's smoke
-#: run checks the parse.
+#: run checks the parse. The assistant's Bedrock relay knows this version's `namespace` tool and
+#: call (`runtime/assistant/adapters/codex_cli/relay.py`): a re-pin runs a tool call through it.
 PINNED_VERSION: Final = "0.164.0"
 FLAG_VERSION: Final = "--version"
 #: What `--version` prints before the version, on its first line.

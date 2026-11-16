@@ -12,13 +12,14 @@ the likelier of the two failures precisely because the file's existence looks li
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from orchestrator.config import AgentManifest, AgentStep, ConfigError, ProcessConfig, parse_agent
 from orchestrator.config.loader import AGENT_FILE, AGENTS_DIR
 from orchestrator.config.scaffold import CONFIG_DIR
-from orchestrator.config.scaffold.catalog import Forge
 from orchestrator.config.scaffold.propose import propose
 
 if TYPE_CHECKING:
@@ -68,7 +69,14 @@ def agent_names(config: ProcessConfig) -> list[str]:
     return sorted({step.agent for step in config.steps if isinstance(step, AgentStep)})
 
 
-def _brief(exc: Exception) -> str:
+def _raise_cancellation(loaded: Sequence[object]) -> None:
+    """`gather` hands back what a read raised; only an `Exception` is a verdict about an agent."""
+    for result in loaded:
+        if isinstance(result, BaseException) and not isinstance(result, Exception):
+            raise result
+
+
+def _brief(exc: BaseException) -> str:
     text = str(exc).strip()
     first = text.splitlines()[0] if text else exc.__class__.__name__
     return first[:_MAX_REASON]
@@ -81,13 +89,19 @@ async def agent_gaps(source: _Source, repo: str, sha: str, config: ProcessConfig
     a sync response prints every gap as a line, while the config explorer hangs each one on the
     manifest node it belongs to and never shows the others.
     """
-    gaps: list[AgentGap] = []
-    for name in agent_names(config):
-        try:
-            await source.load_agent(repo, source.agent_manifest_path(name), sha)
-        except Exception as exc:  # absent, unparseable or unreadable — all the same verdict
-            gaps.append(AgentGap(name=name, reason=_brief(exc)))
-    return gaps
+    names = agent_names(config)
+    # Together: each agent is several forge round trips, and the explorer waits on all of them.
+    loaded = await asyncio.gather(
+        *(source.load_agent(repo, source.agent_manifest_path(name), sha) for name in names),
+        return_exceptions=True,
+    )
+    _raise_cancellation(loaded)
+    # Absent, unparseable or unreadable — all the same verdict.
+    return [
+        AgentGap(name=name, reason=_brief(result))
+        for name, result in zip(names, loaded, strict=True)
+        if isinstance(result, BaseException)
+    ]
 
 
 async def resolve_agents(
@@ -98,22 +112,24 @@ async def resolve_agents(
     The same read and verdict as `agent_gaps`, so the process-config section cannot disagree with
     the warning the explorer hangs on a manifest.
     """
-    resolved: list[AgentResolution] = []
-    for name in agent_names(config):
-        try:
-            agent = await source.load_agent(repo, source.agent_manifest_path(name), sha)
-        except Exception as exc:
-            resolved.append(AgentResolution(name=name, manifest=None, reason=_brief(exc)))
-        else:
-            resolved.append(AgentResolution(name=name, manifest=agent.manifest))
-    return resolved
+    names = agent_names(config)
+    loaded = await asyncio.gather(
+        *(source.load_agent(repo, source.agent_manifest_path(name), sha) for name in names),
+        return_exceptions=True,
+    )
+    _raise_cancellation(loaded)
+    return [
+        AgentResolution(name=name, manifest=None, reason=_brief(result))
+        if isinstance(result, BaseException)
+        else AgentResolution(name=name, manifest=result.manifest)
+        for name, result in zip(names, loaded, strict=True)
+    ]
 
 
-def catalog_agents(config: ProcessConfig, *, forge: Forge = "github") -> list[AgentResolution]:
+def catalog_agents(config: ProcessConfig) -> list[AgentResolution]:
     """`resolve_agents`' verdict read from the catalog instead of a repo: the manifest a first
-    commit of `config` would write for each agent it names on a `forge` project. Reads only
-    package data."""
-    files = propose(config, forge=forge).files
+    commit of `config` would write for each agent it names. Reads only package data."""
+    files = propose(config).files
     resolved: list[AgentResolution] = []
     for name in agent_names(config):
         proposed = files.get(f"{CONFIG_DIR}/{AGENTS_DIR}/{name}/{AGENT_FILE}")

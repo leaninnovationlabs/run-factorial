@@ -109,6 +109,11 @@ The reasons are in decision 50.
 - **A message is not a block of colour.** A `SectionMessage` is on the plain surface, with a
   grey edge and a bar down its left edge in its role's colour. Its actions are default buttons. A
   `Banner` keeps the bold fill, because it tells you something that is true on every page.
+- **Only a success message closes.** A success message that tells the result of an action (a
+  sync, a commit, a check) has a close button (`onDismiss`, with `useDismissible`). The next
+  result shows again. A warning or an error stays, because you can still need it. An
+  information message stays, because it tells the state of the page. A success message that is
+  the whole page, such as "Check your email", does not close.
 - **There is no subtle button.** ADS has a white default button and a subtle button with no
   fill, and a row of subtle buttons looked like text. Here `default` is the one everyday button,
   on a light wash of its own (`--button-fill`, lighter than ADS's neutral in light mode). `ghost` has no fill: an icon button is `ghost` unless you set another
@@ -230,6 +235,19 @@ The reasons are in decision 50.
   makes everything under it `inert`, which contains focus without a Tab trap. Do not build a
   second overlay mechanism, and do not add a headless component library (deferred in
   `tech-stack.md` §5).
+- **A right-click menu is `ContextMenu`**, and a button on the same row opens the same entries
+  in a `DropdownMenu`. A right-click has no keyboard equivalent and no touch equivalent, so the
+  button is the control and the right-click is a shortcut to it. `ContextMenu` is not an ADS
+  name: ADS has no menu at a pointer. It uses the `DropdownMenu` surface, layer and menu list.
+  A menu item may carry an `icon` before its label, and a group's name is the heading over its
+  items ("Add new").
+- **A question that belongs where the person pressed opens in `PopupAt`**: the popup's surface
+  at a point, with no button of its own. The config explorer asks for a new file's name there.
+- **Figures that do not need room in a row go behind an icon in a `HoverCard`**: a run's model,
+  duration, tokens and cost on its attempt's header. A mouse on the icon, keyboard focus or a
+  press opens the card, and a press is how a phone opens it. The card describes the icon and
+  never takes the focus, so it holds text only. `HoverCard` is not an ADS name: ADS has no card
+  that opens on hover. It uses the layer stack and a popup's surface.
 - **Action feedback** goes through `useActionFeedback` / `showFlag`. A slow action says so after
   `SLOW_AFTER_MS`.
 - **Data loading** wraps a query in `QueryBoundary`, with a skeleton shaped like the content, not
@@ -245,7 +263,9 @@ decision 50.
 
 - **The tab bar** (`shell/TabBar.tsx`) is at the foot of the window: Tickets, Assistant and Menu.
   Tickets shows only in a project, and goes to the tickets of that project. Menu opens the side
-  navigation over the page. The top bar has no menu button on a phone.
+  navigation over the page, with the organization and project menus at its top. The top bar has
+  no menu button on a phone. It shows the organization and the project as names only, because
+  a name in the bar is too small to press.
 - **A layout change in script** uses `useIsPhone()` (`components/ui/media.ts`). Use it only when
   the phone draws a different thing, for example a list in place of a board. When only the
   layout changes, use a `max-md:` or `md:` class.

@@ -8,6 +8,7 @@ import {
 } from "./commitGate";
 
 const READY: Parameters<typeof commitButtonState>[0] = {
+  loading: false,
   hasText: true,
   checkingConfig: false,
   checkFailed: false,
@@ -24,6 +25,13 @@ const READY: Parameters<typeof commitButtonState>[0] = {
  * which the page writes beside the button (a disabled button shows no tooltip, #167).
  */
 describe("commitButtonState", () => {
+  it("says the config is loading before anything else", () => {
+    // No text yet because none has been read: asking for a config would be the wrong advice.
+    expect(commitButtonState({ ...READY, loading: true, hasText: false }).reason).toBe(
+      "Loading the config…",
+    );
+  });
+
   it("says a check that failed has failed, rather than checking for ever", () => {
     // The request answered with an error: nothing is running, and nothing will until an edit.
     expect(commitButtonState({ ...READY, checkFailed: true, validForText: false }).reason).toBe(

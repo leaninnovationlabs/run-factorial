@@ -119,9 +119,18 @@ def _parse_yaml(text: str, origin: Path | str) -> Any:
             "Write each value out in full.",
         ) from None
     except yaml.YAMLError as exc:
-        raise ConfigError(origin, f"The file is not valid YAML: {exc}") from exc
+        raise ConfigError(origin, _yaml_problem(exc)) from exc
     finally:
         loader.dispose()
+
+
+def _yaml_problem(exc: yaml.YAMLError) -> str:
+    mark = getattr(exc, "problem_mark", None)
+    problem = getattr(exc, "problem", None)
+    if mark is None or not problem:
+        return f"The file is not valid YAML: {exc}"
+    where = f"line {mark.line + 1}, column {mark.column + 1}"
+    return f"The file is not valid YAML at {where}: {problem}."
 
 
 def _read_text(path: Path) -> str:
@@ -154,7 +163,12 @@ def _invalid(what: str, exc: ValidationError) -> str:
 # config came from.
 
 
+_EMPTY: Final = "The file is empty or holds only comments."
+
+
 def _validate_process(data: Any, origin: Path | str) -> ProcessConfig:
+    if data is None:
+        raise ConfigError(origin, _EMPTY)
     try:
         return ProcessConfig.model_validate(data)
     except ValidationError as exc:
@@ -162,6 +176,8 @@ def _validate_process(data: Any, origin: Path | str) -> ProcessConfig:
 
 
 def _validate_agent(data: Any, origin: Path | str) -> AgentManifest:
+    if data is None:
+        raise ConfigError(origin, _EMPTY)
     try:
         return AgentManifest.model_validate(data)
     except ValidationError as exc:
@@ -169,6 +185,8 @@ def _validate_agent(data: Any, origin: Path | str) -> AgentManifest:
 
 
 def _validate_mcp_server(data: Any, origin: Path | str) -> McpServerManifest:
+    if data is None:
+        raise ConfigError(origin, _EMPTY)
     try:
         return McpServerManifest.model_validate(data)
     except ValidationError as exc:

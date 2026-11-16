@@ -135,3 +135,39 @@ def test_an_edited_other_lane_naming_an_unknown_agent_is_refused() -> None:
     base = {".factorial/processes/process-other.yaml": other}
     with pytest.raises(ConfigError, match="ghost-agent"):
         validate_bundle(bundle_for(lane("p")), base_files=base)
+
+
+def test_a_folder_error_names_the_file_under_the_config_folder() -> None:
+    """The loader reads a temp copy of the folder; the error must name the repository's path."""
+    manifest = ".factorial/agents/x/agent.yaml"
+    with pytest.raises(ConfigError) as caught:
+        validate_bundle(bundle_for(lane("p")), base_files={manifest: "# nothing yet\n"})
+    assert caught.value.origin == manifest
+    assert caught.value.detail == "The file is empty or holds only comments."
+
+
+def test_deleting_a_prompt_its_manifest_still_names_is_refused_naming_the_manifest() -> None:
+    config = parse_process(lane("p"), origin="test")
+    agent = ".factorial/agents/plan-agent/"
+    on_branch = {p: f.body for p, f in propose(config).files.items() if p.startswith(agent)}
+    bundle = dataclasses.replace(
+        bundle_for(lane("p"), present=("plan-agent",)),
+        deleted=frozenset({f"{agent}system-prompt.md"}),
+    )
+    with pytest.raises(ConfigError) as caught:
+        validate_bundle(bundle, base_files=on_branch)
+    assert caught.value.origin == f"{agent}agent.yaml"
+    assert "system-prompt.md" in caught.value.detail
+
+
+def test_deleting_an_agent_a_step_still_names_is_refused_naming_the_process() -> None:
+    config = parse_process(lane("p"), origin="test")
+    agent = ".factorial/agents/plan-agent/"
+    on_branch = {p: f.body for p, f in propose(config).files.items() if p.startswith(agent)}
+    bundle = dataclasses.replace(
+        bundle_for(lane("p"), present=("plan-agent",)), deleted=frozenset(on_branch)
+    )
+    with pytest.raises(ConfigError, match="plan-agent") as caught:
+        validate_bundle(bundle, base_files=on_branch)
+    assert caught.value.origin == ".factorial/processes/process-p.yaml"
+

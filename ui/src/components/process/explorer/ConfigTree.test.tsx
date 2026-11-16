@@ -10,7 +10,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ConfigFile, FileProposal } from "../../../api/types";
-import { click, mount } from "../../../testDom";
+import { click, hover, mount, settle } from "../../../testDom";
 import { ConfigTree } from "./ConfigTree";
 import type { ExplorerFile } from "./tree";
 
@@ -63,6 +63,47 @@ const tree = (over: Partial<Parameters<typeof ConfigTree>[0]> = {}) => (
 const draw = (over: Partial<Parameters<typeof ConfigTree>[0]> = {}) => renderToString(tree(over));
 
 describe("ConfigTree", () => {
+  it("draws a deleted file struck through with a Restore button and no Delete button", () => {
+    const html = draw({
+      files: [repoFile(PROMPT)],
+      deleted: new Set([PROMPT]),
+      deletable: new Set([PROMPT]),
+      onDelete: noop,
+      onRestore: noop,
+    });
+    expect(html).toContain("line-through");
+    expect(html).toContain("Deleted");
+    expect(html).toContain('aria-label="Restore system-prompt.md"');
+    expect(html).not.toContain('aria-label="Delete system-prompt.md"');
+  });
+
+  it("lets a long file name give way to the row's actions", () => {
+    // The name sits in a box that may shrink, so it truncates before the Delete button is
+    // pushed out of a narrow explorer.
+    const html = draw({ files: [repoFile(PROMPT)], deletable: new Set([PROMPT]), onDelete: noop });
+    expect(html).toMatch(/<span class="flex min-w-0 shrink">\s*<button[^>]*>.*?system-prompt\.md/s);
+  });
+
+  it("offers Delete on a file the editor may delete, and on no other", () => {
+    const rows = { files: [repoFile(PROMPT), repoFile(MANIFEST)], onDelete: noop };
+    const html = draw({ ...rows, deletable: new Set([PROMPT]) });
+    expect(html).toContain('aria-label="Delete system-prompt.md"');
+    expect(html).not.toContain('aria-label="Delete agent.yaml"');
+    // The read-only drawer hands down no way to delete.
+    expect(draw({ files: rows.files, deletable: new Set([PROMPT]) })).not.toContain(
+      'aria-label="Delete system-prompt.md"',
+    );
+  });
+
+  it("gives a folder row a menu button named for the folder, when it has entries", () => {
+    const entries = () => [{ label: "Delete folder", onClick: noop }];
+    expect(draw({ files: [repoFile(PROMPT)], menuFor: entries })).toContain(
+      'aria-label="Actions for plan-agent"',
+    );
+    expect(draw({ files: [repoFile(PROMPT)], menuFor: () => [] })).not.toContain("Actions for");
+    expect(draw({ files: [repoFile(PROMPT)] })).not.toContain("Actions for");
+  });
+
   it("renders a file row when its directory is expanded", () => {
     expect(draw()).toContain("agent.yaml");
   });
@@ -207,5 +248,77 @@ describe("ConfigTree", () => {
     const html = draw({ files: [repoFile(MANIFEST)], selected: new Set() });
     expect(html).not.toMatch(/\btext-success\b/);
     expect(html).not.toMatch(/\btext-information\b/);
+  });
+
+  it("reports a right-click on a folder row with the pointer's place, and leaves a file row's alone", async () => {
+    const seen: Array<[string, { x: number; y: number }]> = [];
+    const view = await mount(
+      tree({
+        files: [repoFile(PROMPT)],
+        // Only the agent's own folder has a menu here.
+        menuFor: (node) =>
+          node.name === "plan-agent" ? [{ label: "New skill", onClick: noop }] : [],
+        onContextMenu: (node, at) => seen.push([node.path, at]),
+      }),
+    );
+    const rightClick = (element: Element | null | undefined) => {
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 40,
+        clientY: 60,
+      });
+      element?.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const folder = document.querySelector('[aria-label="Collapse plan-agent"]')?.parentElement;
+    expect(rightClick(folder)).toBe(true);
+    expect(seen).toEqual([[".factorial/agents/plan-agent", { x: 40, y: 60 }]]);
+
+    // A folder with no menu keeps the browser's own.
+    expect(
+      rightClick(document.querySelector('[aria-label="Collapse agents"]')?.parentElement),
+    ).toBe(false);
+    const file = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "system-prompt.md",
+    );
+    expect(rightClick(file)).toBe(false);
+    expect(seen).toHaveLength(1);
+    await view.unmount();
+  });
+
+  it("shows the whole name of a file or folder over one that is cut short, and nothing over one that fits", async () => {
+    const view = await mount(tree({ files: [repoFile(PROMPT)] }));
+    const cut = (element: Element | null | undefined, scroll: number) => {
+      if (!element) throw new Error("no name to measure");
+      Object.defineProperty(element, "scrollWidth", { configurable: true, value: scroll });
+      Object.defineProperty(element, "clientWidth", { configurable: true, value: 80 });
+    };
+    const tip = () => document.querySelector('[role="tooltip"]')?.textContent ?? null;
+    const fileName = [...document.querySelectorAll("button span")].find(
+      (span) => span.textContent === "system-prompt.md",
+    );
+    const folderName = [...document.querySelectorAll("span")].find(
+      (span) => span.textContent === "plan-agent" && span.children.length === 0,
+    );
+
+    cut(fileName, 80);
+    await hover(fileName?.closest("button"));
+    await settle(350);
+    expect(tip()).toBeNull();
+
+    cut(fileName, 200);
+    await hover(fileName?.closest("button"));
+    await settle(350);
+    expect(tip()).toBe("system-prompt.md");
+
+    cut(folderName, 200);
+    await hover(folderName);
+    await settle(350);
+    expect(document.body.textContent).toContain("plan-agent");
+    expect([...document.querySelectorAll('[role="tooltip"]')].map((t) => t.textContent)).toContain(
+      "plan-agent",
+    );
+    await view.unmount();
   });
 });

@@ -55,6 +55,7 @@ are a projection of that state for people to read.
    | `escalated` | A step failed or was rejected, and escalated to a person. | `factorial_ticket_unblock`, which grants a fresh attempt when the step's retry policy allows one; in the dashboard, Retry continues the failed session instead |
    | `interrupted` | Someone interrupted the agent, or ended its session from its terminal. Its workspace is kept. | `factorial_ticket_resume` |
    | `waiting` | A session went idle and parked. | `factorial_ticket_resume` |
+   | `waiting`, on a step whose postconditions call `request_approval()` | The agent finished and asks for a person's approval. | The person reads the work beside the run in the dashboard and presses Approve. No tool approves. |
    | `ceiling` | A session reached its wall-clock ceiling. | A person presses Resume in the dashboard. No tool lifts a ceiling. |
    | `rollover` | A short state between two runs. | None. Check again shortly. |
 

@@ -1,0 +1,93 @@
+# Process `__NAME__`, created from the editor's shell.
+#
+# NOT FINISHED. The config is refused until you uncomment and edit the example below, because a
+# process has no safe default steps. https://www.runfactorial.com/docs/processes/ describes every
+# field. When a template fits, start from it instead: Replace with template, in the editor.
+specVersion: factorial/v1
+kind: Process
+name: __NAME__ # must equal the name in this file's name: process-__NAME__.yaml
+# The Runtime this process runs on, by its slug. The editor adds the line for the process on
+# screen; change it to any Runtime the organization has.
+# runtime: your-runtime
+
+# --- example: uncomment and edit ---
+# description: Describe in one line what this process does to a ticket
+#
+# defaults:
+#   timeout: 1h # counts the time the session works, not the time it waits at its prompt
+#   retry:
+#     maxAttempts: 2
+#     backoff: 10m
+#   onFailure:
+#     escalate:
+#       ticketLabel: "factorial:blocked"
+#       assign: ["{ticket_owner}"]
+#       comment: |
+#         Factorial stopped at {step} after {attempt} attempt(s): {failure_summary}.
+#         Fix the cause, then remove `factorial:blocked` to retry.
+#
+# # Which issues enter the process, and at which step.
+# entry:
+#   when:
+#     all:
+#       - ticket_label("factorial:new")
+#       - ticket_has_assignee()
+#   step: build
+#
+# steps:
+#   # An agent step runs one agent. Factorial checks the postconditions before the ticket moves
+#   # on; it never trusts the agent's own report.
+#   - name: build
+#     kind: agent
+#     description: Do the work the ticket asks for and open a pull request
+#     agent: build-agent # an agent under agents/, by its folder name
+#     next: review_gate
+#     workspace:
+#       repo: "{repo}"
+#       base: main
+#       branch: "work/{ticket}-{slug}" # {slug} is chosen by the agent at runtime
+#     inputs:
+#       - ticket_body
+#       - ticket_comments
+#     postconditions:
+#       all:
+#         - branch_exists("work/{ticket}-*")
+#         - pr_open("work/{ticket}-*", "main")
+#         # To have the run also wait for a person to press Approve in the dashboard, at the
+#         # commit the branch ends on, add this line:
+#         # - request_approval()
+#     onSuccess:
+#       ticketLabel: "factorial:review"
+#       assign: ["{ticket_owner}"]
+#       comment: "Ready for review: {pr_url}"
+#
+#   # A gate waits for a person. Factorial merges only a head a qualifying person approved.
+#   - name: review_gate
+#     kind: human_gate
+#     description: A reviewer approves the pull request
+#     next: done
+#     gate:
+#       type: pr_approval
+#       pr: { head: "work/{ticket}-*", base: "main" }
+#       approvers: ["{ticket_owner}"]
+#       approverPermission: write
+#       waiting:
+#         ticketLabel: "factorial:review"
+#         assign: ["{ticket_owner}"]
+#       onApprove:
+#         merge: true
+#         ticketLabel: "factorial:done"
+#         assign: ["{ticket_owner}"]
+#       onReject:
+#         rerunStep: build
+#         inputs:
+#           - pr_review_comments
+#         ticketLabel: "factorial:rework"
+#         assign: ["{ticket_owner}"]
+#
+# terminal:
+#   step: done
+#   actions:
+#     closeTicket: true
+#     comment: "Factorial finished. Merged to main."
+# --- end example ---

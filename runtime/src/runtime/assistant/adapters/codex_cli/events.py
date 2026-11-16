@@ -9,7 +9,6 @@ from runtime.adapters.codex_cli.events import (
     CodexEvent,
     CommandExecution,
     ErrorEvent,
-    ThreadStarted,
     TurnCompleted,
     TurnStarted,
     UnknownItem,
@@ -39,13 +38,9 @@ class EventMapper:
     def __init__(self, *, max_steps: int) -> None:
         self._max_steps = max_steps
         self._turns = 0
-        self._thread_id: str | None = None
         self._failed: TurnFailed | None = None
 
     def map(self, event: CodexEvent) -> list[ChatEvent]:
-        if isinstance(event, ThreadStarted):
-            self._thread_id = event.thread_id
-            return []
         if isinstance(event, TurnStarted):
             self._turns += 1
             if self._turns > self._max_steps:
@@ -71,8 +66,7 @@ class EventMapper:
             )
             return [self._failed]
         if isinstance(event, TurnCompleted):
-            usage = _usage(event, self._thread_id)
-            out: list[ChatEvent] = [usage]
+            out: list[ChatEvent] = [_usage(event)]
             if self._failed is not None:
                 out.append(self._failed)
             else:
@@ -81,7 +75,7 @@ class EventMapper:
         return []
 
 
-def _usage(event: TurnCompleted, session_id: str | None) -> Usage:
+def _usage(event: TurnCompleted) -> Usage:
     inp = event.input_tokens or 0
     cached = event.cached_input_tokens or 0
     out = event.output_tokens or 0
@@ -91,5 +85,6 @@ def _usage(event: TurnCompleted, session_id: str | None) -> Usage:
         output_tokens=out,
         cost_usd=None,
         cost_reported=False,
-        session_id=session_id,
+        # The thread's rollout does not outlive the turn (`backend.py`): nothing to resume.
+        session_id=None,
     )

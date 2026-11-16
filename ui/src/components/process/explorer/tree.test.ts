@@ -208,6 +208,23 @@ describe("changeOf", () => {
     expect(changeOf(childNamed(tree(), "process.yaml"), new Set([NEW]), new Set())).toBeNull();
   });
 
+  it("calls a file the commit removes deleted, and its folder too once every file in it is", () => {
+    const A = ".factorial/notes/a.md";
+    const B = ".factorial/notes/b.md";
+    const root = must(
+      buildTree([
+        { path: A, repo: repo(A, { kind: "other" }) },
+        { path: B, repo: repo(B, { kind: "other" }) },
+      ])[0],
+    );
+    const notes = childNamed(root, "notes");
+    const none = new Set<string>();
+    expect(changeOf(childNamed(notes, "a.md"), none, none, none, new Set([A]))).toBe("deleted");
+    expect(changeOf(notes, none, none, none, new Set([A, B]))).toBe("deleted");
+    // Some of it stays: the folder is one something changes in, not one that goes.
+    expect(changeOf(notes, none, none, none, new Set([A]))).toBe("modified");
+  });
+
   it("calls a file the commit creates outside the ticks added: a new lane's own process file", () => {
     const LANE = ".factorial/processes/process-hotfix.yaml";
     const root = must(buildTree([{ path: LANE }])[0]);

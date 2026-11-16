@@ -1,6 +1,7 @@
 /**
  * A popup anchored to the control that opens it — a menu, or a small dialog of explanation — and
- * the DropdownMenu built on it.
+ * the DropdownMenu built on it. The ContextMenu is the same menu at the point of a right-click,
+ * and PopupAt the same small dialog at a point.
  *
  * A non-modal layer on the overlay stack (`layers.ts`): it takes Escape before whatever it sits
  * over, closes on a press outside it, and hands the focus back to its trigger. It does not make
@@ -17,6 +18,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -24,7 +26,7 @@ import { createPortal } from "react-dom";
 import { type ButtonAppearance, type ButtonSpacing, buttonLook } from "./Button";
 import { cx } from "./cx";
 import { showFlag } from "./Flag";
-import { type Placement, place } from "./floating";
+import { type Box, type Placement, place } from "./floating";
 import { type Glyph, Icon } from "./icons";
 import { pushLayer } from "./layers";
 import { Tooltip } from "./Tooltip";
@@ -51,6 +53,7 @@ export function Popup({
   role = "dialog",
   label,
   initialFocusRef,
+  anchorRef,
   children,
 }: {
   isOpen: boolean;
@@ -61,14 +64,25 @@ export function Popup({
   label: string;
   /** Where the focus lands on open; the popup itself when absent. */
   initialFocusRef?: RefObject<HTMLElement | null>;
+  /** What the popup is placed against, when that is more than its trigger; the trigger still
+   *  takes the focus back. */
+  anchorRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
   const id = useId();
-  const anchor = useRef<HTMLButtonElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
+  const anchor = useMemo<Anchor>(
+    () => ({
+      box: () => (anchorRef?.current ?? button.current)?.getBoundingClientRect() ?? null,
+      focus: () => button.current?.focus(),
+      contains: (node) => button.current?.contains(node) ?? false,
+    }),
+    [anchorRef],
+  );
   return (
     <>
       {trigger({
-        ref: anchor,
+        ref: button,
         "aria-expanded": isOpen,
         "aria-haspopup": role,
         "aria-controls": isOpen ? id : undefined,
@@ -93,6 +107,16 @@ export function Popup({
   );
 }
 
+/** What a surface is opened from: a button, or the point of a right-click. */
+type Anchor = {
+  /** What the surface is placed against; null while there is nothing to place against. */
+  box: () => Box | null;
+  /** Hands the focus back on Escape. */
+  focus: () => void;
+  /** Whether `node` is the anchor itself, so a press or a focus on it is not "away". */
+  contains: (node: Node) => boolean;
+};
+
 function Surface({
   id,
   role,
@@ -106,7 +130,7 @@ function Surface({
   id: string;
   role: "dialog" | "menu";
   label: string;
-  anchor: RefObject<HTMLButtonElement | null>;
+  anchor: Anchor;
   placement: Placement;
   initialFocusRef?: RefObject<HTMLElement | null>;
   onClose: (how: PopupClose) => void;
@@ -118,10 +142,17 @@ function Surface({
   useEffect(() => {
     closer.current = onClose;
   }, [onClose]);
+  /** True while Escape hands the focus back: the surface losing it then is not a second close. A
+   *  button anchor is recognised as the place the focus went; a point has no such element. */
+  const handingBack = useRef(false);
   const close = useCallback(
     (how: PopupClose) => {
+      if (handingBack.current) return;
       closer.current(how);
-      if (how === "escape") anchor.current?.focus();
+      if (how !== "escape") return;
+      handingBack.current = true;
+      anchor.focus();
+      handingBack.current = false;
     },
     [anchor],
   );
@@ -130,10 +161,11 @@ function Surface({
   // a scroll does not bubble, so it is caught on its way down), and a resize moves everything.
   useLayoutEffect(() => {
     const reposition = () => {
-      if (!anchor.current || !surface.current) return;
+      const box = anchor.box();
+      if (!box || !surface.current) return;
       setAt(
         place(
-          anchor.current.getBoundingClientRect(),
+          box,
           surface.current.getBoundingClientRect(),
           { width: window.innerWidth, height: window.innerHeight },
           placement,
@@ -153,10 +185,11 @@ function Surface({
     const element = surface.current;
     if (!element) return;
     const pop = pushLayer(element, () => close("escape"), { modal: false });
-    (initialFocusRef?.current ?? element).focus();
+    // A field inside that took the focus as it mounted keeps it.
+    if (!element.contains(document.activeElement)) (initialFocusRef?.current ?? element).focus();
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (element.contains(target) || anchor.current?.contains(target)) return;
+      if (element.contains(target) || anchor.contains(target)) return;
       close("away");
     };
     document.addEventListener("pointerdown", onPointer);
@@ -178,7 +211,7 @@ function Surface({
       style={at ? { top: at.top, left: at.left } : { top: -9999, left: -9999 }}
       onBlur={(event) => {
         const next = event.relatedTarget as Node | null;
-        if (next && !surface.current?.contains(next) && !anchor.current?.contains(next)) {
+        if (next && !surface.current?.contains(next) && !anchor.contains(next)) {
           close("away");
         }
       }}
@@ -192,6 +225,8 @@ function Surface({
 export type MenuItem = {
   label: string;
   onClick: () => void;
+  /** Drawn before the label: what kind of thing the item makes or acts on. */
+  icon?: Glyph;
   description?: string;
   /** Why the item cannot run now. It stays in the menu and pressable, says so beneath its label,
    *  and choosing it explains instead of acting (ADS: avoid disabled menu items). */
@@ -227,6 +262,7 @@ export function DropdownMenu({
   items,
   heading,
   placement = "bottom-end",
+  anchorRef,
 }: {
   trigger: {
     label: string;
@@ -243,6 +279,8 @@ export function DropdownMenu({
   /** What the menu is about, written above its items: who is signed in, say. */
   heading?: string;
   placement?: Placement;
+  /** What the menu hangs from, when that is more than its button (`Popup`). */
+  anchorRef?: RefObject<HTMLElement | null>;
 }) {
   const [open, setOpen] = useState(false);
   const first = useRef<HTMLButtonElement | null>(null);
@@ -268,6 +306,7 @@ export function DropdownMenu({
       label={trigger.label}
       placement={placement}
       initialFocusRef={first}
+      anchorRef={anchorRef}
       trigger={({ ref, ...aria }) => {
         const props: MenuTriggerProps = {
           ...aria,
@@ -321,6 +360,118 @@ export function DropdownMenu({
         <MenuList entries={items} onChoose={choose} firstRef={first} />
       </div>
     </Popup>
+  );
+}
+
+/** The anchor of something opened at a point in the window instead of from a button. Keyed on
+ *  the point's numbers, not on the object that carries them, so a caller may build it inline. */
+function usePointAnchor(at: { x: number; y: number } | null): Anchor | null {
+  const x = at?.x;
+  const y = at?.y;
+  return useMemo<Anchor | null>(() => {
+    if (x === undefined || y === undefined || typeof document === "undefined") return null;
+    // What had the focus as it opened, read before the surface takes it.
+    const opener = document.activeElement as HTMLElement | null;
+    return {
+      box: () => ({ top: y, left: x, width: 0, height: 0 }),
+      focus: () => opener?.focus?.(),
+      contains: () => false,
+    };
+  }, [x, y]);
+}
+
+/**
+ * A menu at the point of a right-click: `DropdownMenu`'s surface, layer and list, placed where
+ * the pointer was instead of under a button. A right-click has no keyboard or touch equivalent,
+ * so the same entries are also behind a button on the row that opens this
+ * (docs/design-system.md, Patterns).
+ */
+export function ContextMenu({
+  at,
+  label,
+  items,
+  onClose,
+}: {
+  /** The pointer's place in the window (`clientX`, `clientY`); null is closed. */
+  at: { x: number; y: number } | null;
+  label: string;
+  items: MenuEntry[];
+  onClose: () => void;
+}) {
+  const id = useId();
+  const first = useRef<HTMLButtonElement | null>(null);
+  const anchor = usePointAnchor(at);
+  if (!anchor) return null;
+
+  function choose(item: MenuItem) {
+    // The same order as `DropdownMenu`: the focus goes back before the item acts, so a dialog
+    // the item opens records the right place to return it to.
+    anchor?.focus();
+    onClose();
+    if (item.unavailable) {
+      showFlag({ appearance: "info", title: item.unavailable });
+      return;
+    }
+    item.onClick();
+  }
+
+  return createPortal(
+    <Surface
+      id={id}
+      role="menu"
+      label={label}
+      anchor={anchor}
+      placement="bottom-start"
+      initialFocusRef={first}
+      onClose={onClose}
+    >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Tab leaves the menu to where it was opened */}
+      <div
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          anchor.focus();
+          onClose();
+        }}
+      >
+        <MenuList entries={items} onChoose={choose} firstRef={first} />
+      </div>
+    </Surface>,
+    document.body,
+  );
+}
+
+/**
+ * A small dialog at a point in the window: the popup's surface and layer with no button of its
+ * own to hang from, for a question that belongs where the person just pressed, such as the name
+ * of the thing they chose to add. Escape, a press outside it or the focus leaving closes it.
+ */
+export function PopupAt({
+  at,
+  label,
+  onClose,
+  children,
+}: {
+  /** A place in the window (`clientX`, `clientY`); null is closed. */
+  at: { x: number; y: number } | null;
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const anchor = usePointAnchor(at);
+  if (!anchor) return null;
+  return createPortal(
+    <Surface
+      id={id}
+      role="dialog"
+      label={label}
+      anchor={anchor}
+      placement="bottom-start"
+      onClose={onClose}
+    >
+      {children}
+    </Surface>,
+    document.body,
   );
 }
 
@@ -498,6 +649,7 @@ function MenuList({
             className={entry.isSelected ? "mt-0.5 text-selected" : "mt-0.5 invisible"}
           />
         )}
+        {entry.icon && <Icon glyph={entry.icon} className="mt-0.5 text-icon-subtle" />}
         <span className="flex flex-col items-start">
           <span className={entry.unavailable ? "text-subtle" : undefined}>{entry.label}</span>
           {(entry.unavailable ?? entry.description) && (

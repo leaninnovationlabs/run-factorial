@@ -119,8 +119,11 @@ export function AppShell({
     serializeFlag,
   );
   const [overlayOpen, setOverlayOpen] = useState(false);
-  /** A page holding all of `main` (`useFocusMode`): the side navigation steps away. */
-  const [focused, setFocused] = useState(false);
+  /** A page holding all of `main` (`useFocusMode`), or a route drawn that way from the start:
+   *  the side navigation steps away. The route is the painted page's, so the navigation goes as
+   *  that page arrives rather than a frame after. */
+  const [focusedByPage, setFocused] = useState(false);
+  const focused = focusedByPage || route?.focus === true;
   const nav = navLayout(narrow, medium, compact, overlayOpen);
   const closeOverlay = useCallback(() => setOverlayOpen(false), []);
   useFocusOnNavigate(page.pathname, phase);

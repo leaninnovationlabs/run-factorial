@@ -338,19 +338,25 @@ def test_the_assistant_offers_the_api_keys_unless_the_operator_says_otherwise() 
     assert build(multi_org={"enabled": True}).assistant_offers == API_KEYS
     listed = build(assistant={"offered": "claude_sdk:subscription,codex_cli:bedrock"})
     assert listed.assistant_offers == {"claude_sdk:subscription", "codex_cli:bedrock"}
+    direct = build(assistant={"offered": "bedrock_responses:bedrock"})
+    assert direct.assistant_offers == {"bedrock_responses:bedrock"}
 
 
-def test_an_assistant_list_that_offers_nothing_stops_the_start() -> None:
+@pytest.mark.parametrize(
+    "offered", ["codex_cli:bedrock", "bedrock_responses:bedrock,codex_cli:bedrock"]
+)
+def test_an_assistant_list_that_offers_nothing_stops_the_start(offered: str) -> None:
     """Multi-org drops Bedrock after the list is read, so a Bedrock-only list would leave no
     organization any sign-in to choose."""
     with pytest.raises(ValueError, match="FACTORIAL_ASSISTANT__OFFERED"):
-        build(multi_org={"enabled": True}, assistant={"offered": "codex_cli:bedrock"})
+        build(multi_org={"enabled": True}, assistant={"offered": offered})
 
 
 def test_multi_org_never_offers_the_assistant_the_host_s_bedrock_role() -> None:
     """A stranger's organization would mint from the host's AWS role (design.md §7.14)."""
     listed = build(
-        multi_org={"enabled": True}, assistant={"offered": "codex_cli:api_key,codex_cli:bedrock"}
+        multi_org={"enabled": True},
+        assistant={"offered": "codex_cli:api_key,codex_cli:bedrock,bedrock_responses:bedrock"},
     )
     assert listed.assistant_offers == {"codex_cli:api_key"}
 

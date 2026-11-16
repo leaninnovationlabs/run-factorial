@@ -396,12 +396,14 @@ class EventType(StrEnum):
     PREVIEW_PAGE_OBSERVED = "preview_page_observed"
 
     #: What a run of a step that declares `preview.files` changed on its branch, as the worker
-    #: read it on GitHub when the run ended — once per run (tech-stack decision 71). The record is
-    #: the step's footprint, wider than what it declares; the API selects from it. Carries
-    #: `status` and what that status needs: `branch`, `commit` (the end), `start` (where the
-    #: diff began), `start_at_spawn`, `slug` (the run's own, or null), `cut_off` and `files`
-    #: (each `path`, `blob`, `size` and `changed`, null where unknown) when `observed`; `branch`
-    #: as a glob when `no_branch`; `matches` when `ambiguous`; `reason` when `lookup_failed`.
+    #: read it on GitHub (tech-stack decision 71): once when the run ended, and on a step that
+    #: awaits review also once per idle spell, so the newest record is the work as of the
+    #: session's latest stop. The record is the step's footprint, wider than what it declares; the
+    #: API selects from it. Carries `status` and what that status needs: `branch`, `commit` (the
+    #: branch head at that stop), `start` (where the diff began), `start_at_spawn`, `slug` (the
+    #: run's, else that of the one branch its glob found, or null), `cut_off` and `files` (each
+    #: `path`, `blob`, `size` and `changed`, null where unknown) when `observed`; `branch` as a
+    #: glob when `no_branch`; `matches` when `ambiguous`; `reason` when `lookup_failed`.
     RUN_OUTPUTS_OBSERVED = "run_outputs_observed"
 
     #: A human asked, from the dashboard, for changes to a step whose preview they reviewed.
@@ -422,6 +424,13 @@ class EventType(StrEnum):
     #: `requested_by` and `requested_via`. Answered once, by `STEP_ACCEPTED_ON_REQUEST`,
     #: `STEP_FORCED` or `COMPLETION_REFUSED`, each naming it by `request_id`.
     COMPLETION_REQUESTED = "completion_requested"
+
+    #: A person approved, from the dashboard, the run of a step whose postconditions call
+    #: `request_approval()`, at the commit its branch ended on then. Recorded by the API against
+    #: the run, with `step`, `attempt`, `head_sha`, `branch`, `approved_by` and
+    #: `requested_via`. It queues nothing: the predicate reads the newest one at acceptance
+    #: (`events.approvals`), and a push after it leaves it approving an older commit.
+    STEP_APPROVED = "step_approved"
 
     #: The loop did not complete the run a `COMPLETION_REQUESTED` named. Carries `step`,
     #: `attempt`, `request_id`, `reason` (`worker.completions.CompletionRefusal`), `detail`,

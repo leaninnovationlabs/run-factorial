@@ -94,14 +94,23 @@ function Where() {
   return <output data-where>{`${pathname}${search}`}</output>;
 }
 
-async function open(draft: EditorDraftPayload | ApiError = DRAFT) {
+async function open(
+  draft: EditorDraftPayload | ApiError = DRAFT,
+  /** The pinned file's read: already answered, never answering, or refused. */
+  pinned: "read" | "pending" | "failed" = "read",
+) {
   if (draft instanceof ApiError) vi.spyOn(api, "getAssistantDraft").mockRejectedValue(draft);
   else vi.spyOn(api, "getAssistantDraft").mockResolvedValue(draft);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   holding(client);
   client.setQueryData(keys.processTemplates, { templates: [] });
   client.setQueryData(keys.runtimes, []);
-  client.setQueryData(keys.processVersionRaw(51, 30), { content: RUNNING, source: "repo" });
+  if (pinned === "read") {
+    client.setQueryData(keys.processVersionRaw(51, 30), { content: RUNNING, source: "repo" });
+  }
+  if (pinned === "failed") {
+    vi.spyOn(api, "getProcessVersionRaw").mockRejectedValue(new ApiError(502, "No answer."));
+  }
   view = await mount(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/projects/51/configuration/process?draft=41"]}>
@@ -194,5 +203,23 @@ describe("useEditorDraft", () => {
     expect(editor()).toBeNull();
     expect(document.body.textContent).toContain("no such draft");
     expect(where()).toBe("/projects/51/configuration/process");
+  });
+
+  const processText = () =>
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="process.yaml"]');
+
+  test("the assistant's draft is on screen before the pinned file has been read", async () => {
+    await open(DRAFT, "pending");
+    expect(editor()).not.toBeNull();
+    expect(processText()?.value).toBe(DRAFT.content);
+    expect(readRepoEdits(51, "standard")).toEqual({
+      ".factorial/agents/build/prompt.md": { body: "Build it.\n", base: "b".repeat(40) },
+    });
+  });
+
+  test("the draft stays on screen when the pinned file cannot be read", async () => {
+    await open(DRAFT, "failed");
+    await settle();
+    expect(processText()?.value).toBe(DRAFT.content);
   });
 });

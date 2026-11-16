@@ -54,6 +54,21 @@ describe("Composer", () => {
     expect(field?.value).toBe("");
   });
 
+  test("Option+Enter and Ctrl+Enter write a new line where the caret is, and do not send", async () => {
+    const { field } = await render();
+    const input = field as HTMLTextAreaElement;
+    await type(input, "first second");
+    input.setSelectionRange(5, 6);
+    await press("Enter", input, { altKey: true });
+    expect(input.value).toBe("first\nsecond");
+    await press("Enter", input, { ctrlKey: true });
+    expect(input.value).toBe("first\n\nsecond");
+    expect(onSend).not.toHaveBeenCalled();
+    await press("Enter", input);
+    await settle();
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("first\n\nsecond");
+  });
+
   test("Enter while an IME is composing does not send", async () => {
     const { field } = await render();
     await type(field, "東京");

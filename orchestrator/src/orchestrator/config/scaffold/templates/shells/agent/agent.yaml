@@ -1,0 +1,37 @@
+# Agent manifest for `__NAME__`, created from the editor's shell. It parses as written. Edit each
+# value to fit the agent. https://www.runfactorial.com/docs/agents/ describes every field.
+specVersion: factorial/v1
+kind: Agent
+name: __NAME__ # must equal this folder's name
+description: Describe in one line what this agent does
+
+prompts: # both files must exist beside this one
+  system: system-prompt.md
+  instructions: instructions.md
+
+# The skills and MCP servers this agent uses. Uncomment a block and list names. A shared one is
+# `.factorial/skills/<name>/SKILL.md` or `.factorial/mcp/<name>.yaml`. A local one is under this
+# folder's `skills/` or `mcp/`. A name listed here must have its file, or the config is refused.
+# skills:
+#   shared: []
+#   local: []
+# mcp:
+#   shared: []
+#   local: []
+
+# A concrete, versioned model id, never a size alias ("sonnet", "opus"): an alias resolves to a
+# name the API rejects, and the agent fails on its first turn. The process's Runtime picks the
+# CLI, so a Codex runtime needs a Codex model id.
+model: claude-sonnet-5-5
+
+limits:
+  # A turn is one model request on Claude, one prompt round on Codex; the run fails past the limit.
+  # The count spans resumes within one attempt and restarts on a retry.
+  max_turns: 200
+
+# What must be minted for this agent. This is NOT an isolation boundary: the substrate may inject
+# every stored secret into every container regardless of what is declared here. Values live in
+# the orchestrator's project secrets, never in this folder.
+secrets:
+  - key: GH_TOKEN
+    description: The forge token, minted per run and scoped to the target repo

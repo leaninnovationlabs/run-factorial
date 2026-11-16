@@ -33,12 +33,32 @@ def test_credential_names_match_the_adapter_constants() -> None:
         "subscription": SECRET_AUTH_JSON,
         "bedrock": ENV_BEDROCK_BEARER,
     }
+    assert BACKENDS["bedrock_responses"].credentials == {"bedrock": ENV_BEDROCK_BEARER}
 
 
 def test_every_vocabulary_kind_is_registered() -> None:
     from runtime.assistant.adapters import _REGISTRY
 
     assert set(BACKENDS) == set(_REGISTRY)
+
+
+def test_the_process_builds_every_backend_it_names() -> None:
+    """Each backend takes its own options: a working directory for the two that start a CLI,
+    none for the one that starts nothing. An option a backend does not take fails its preflight,
+    and the process then refuses every turn of that backend."""
+    from orchestrator.assistant.__main__ import backend_options
+    from runtime.assistant.adapters import create_backend
+    from tests.api_harness import mcp_settings
+
+    settings = mcp_settings()
+    built = {
+        kind: create_backend(kind, **backend_options(kind, settings)).kind for kind in BACKENDS
+    }
+    assert built == {
+        "claude_sdk": "claude_sdk",
+        "codex_cli": "codex_cli",
+        "bedrock_responses": "bedrock_responses",
+    }
 
 
 def test_the_default_model_is_the_settings_default() -> None:
@@ -59,6 +79,10 @@ def test_codex_defaults_follow_the_sign_in() -> None:
     }
 
 
+def test_bedrock_starts_on_the_model_the_host_role_runs() -> None:
+    assert BACKENDS["bedrock_responses"].default_models == {"bedrock": "us.xai.grok-4.6"}
+
+
 def test_credential_slot_names_backend_and_mode() -> None:
     assert credential_slot("claude_sdk", "api_key") == "assistant:claude_sdk:api_key"
 
@@ -77,6 +101,7 @@ def test_a_minted_or_unknown_mode_stores_no_credential() -> None:
     assert stores_credential("claude_sdk", "api_key") is True
     assert stores_credential("codex_cli", "subscription") is True
     assert stores_credential("codex_cli", "bedrock") is False
+    assert stores_credential("bedrock_responses", "bedrock") is False
     assert stores_credential("gemini", "api_key") is False
 
 def test_settings_refuse_an_alias_and_an_unknown_backend() -> None:

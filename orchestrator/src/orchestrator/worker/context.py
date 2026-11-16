@@ -298,6 +298,14 @@ class ReconcileDeps:
     #: seen typing` (`sessions._settle_exit`). Process memory, like `parked_rechecks`, so a
     #: rolled-back tick does not restart `EXIT_GRACE`.
     exits_seen: dict[int, datetime] = field(default_factory=dict)
+    #: `step_run.id -> the newest step_approved id its parked re-check read`
+    #: (`agent_steps.recheck_parked`). Process memory, like `parked_rechecks`: an approval the
+    #: re-check has not read makes the run due at once, by identity, never by comparing clocks.
+    approvals_seen: dict[int, int] = field(default_factory=dict)
+    #: `step_approved.id -> when a parked re-check last tried it` (`agent_steps.recheck_parked`).
+    #: Process memory, like `parked_rechecks`: an approval a failed read left unjudged is tried
+    #: again `agent_steps.APPROVAL_RETRY` later, not on every tick.
+    approvals_tried: dict[int, datetime] = field(default_factory=dict)
     #: `ticket.id -> when its refused spawn was last asked again` (`agent_steps.spawn_cleared`),
     #: or None when the ticket's block is not a refused spawn. Process memory, as above.
     spawn_rechecks: dict[int, datetime | None] = field(default_factory=dict)

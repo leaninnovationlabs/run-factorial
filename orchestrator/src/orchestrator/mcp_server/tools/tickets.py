@@ -278,7 +278,7 @@ async def _admitted(
     question: str | None = None
     if current is not None:
         idle, parked = await session_waits(
-            tc.session, current, tc.settings.terminal.idle_park_after
+            tc.session, ticket, current, tc.settings.terminal.idle_park_after
         )
         asked = parked.question if parked is not None else idle.question if idle else None
         question = untrusted(asked, _QUESTION_CHARS) if asked else None

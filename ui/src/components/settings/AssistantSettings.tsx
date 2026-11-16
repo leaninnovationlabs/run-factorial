@@ -1,6 +1,6 @@
 /**
- * The assistant's section of Settings: what turns it on and bounds it, its credential, and a Test
- * that runs one real turn. The fields and their defaults are the spec's table; the server holds
+ * The assistant's section of Settings: what turns it on and bounds it, and its credential, with a
+ * check under it that runs one real turn — the runtime page's Credential check, in the same place. The fields and their defaults are the spec's table; the server holds
  * the rules (a concrete model id, the ranges), and its message for a refused field is drawn under
  * that field.
  */
@@ -33,6 +33,7 @@ import {
   SectionMessage,
   Select,
   TextField,
+  useDismissible,
 } from "../ui";
 import { CredentialField } from "./CredentialField";
 import { useConnectionTest } from "./useConnectionTest";
@@ -50,6 +51,9 @@ const CREDENTIAL_LABELS: Record<string, string> = {
   "codex_cli:api_key": "OpenAI API key",
   "codex_cli:subscription": "Codex auth.json",
 };
+
+/** Backends that report tokens and no cost, so no budget can stop them. */
+const REPORTS_NO_COST = new Set(["codex_cli", "bedrock_responses"]);
 
 const EFFORTS = [
   { value: "low", label: "Low" },
@@ -136,10 +140,9 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
       return { ...current, backend: kind, auth_mode, model };
     });
   }
-  const credentialLabel =
-    CREDENTIAL_LABELS[`${draft.backend}:${draft.auth_mode}`] ??
-    AUTH_LABELS[draft.auth_mode] ??
-    draft.auth_mode;
+  const labelOf = ({ backend, auth_mode }: { backend: string; auth_mode: string }) =>
+    CREDENTIAL_LABELS[`${backend}:${auth_mode}`] ?? AUTH_LABELS[auth_mode] ?? auth_mode;
+  const credentialLabel = labelOf(draft);
   const isSaved = (credential: AssistantStoredCredential) =>
     credential.backend === data.settings.backend &&
     credential.auth_mode === data.settings.auth_mode;
@@ -207,7 +210,7 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
                   If you switch to another sign-in, you can&apos;t switch back to this one.
                 </p>
               )}
-              {draft.auth_mode === "bedrock" && draft.backend === "codex_cli" ? (
+              {draft.auth_mode === "bedrock" ? (
                 <SectionMessage appearance="information">
                   Each reply uses a short-lived Bedrock token made from this host&apos;s AWS role.
                   Export credentials before starting the assistant process, as for agent runs on a
@@ -239,7 +242,7 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
                   }
                 />
               )}
-              {draft.backend === "codex_cli" && draft.auth_mode === "bedrock" && (
+              {draft.auth_mode === "bedrock" && (
                 <TextField
                   label="Bedrock region"
                   isMonospaced
@@ -265,6 +268,11 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
                   limits.
                 </SectionMessage>
               )}
+              <CredentialCheck
+                isDirty={isDirty}
+                credentialLabel={labelOf(data.settings)}
+                isHostRole={data.settings.auth_mode === "bedrock"}
+              />
               <OtherCredentials
                 credentials={data.credentials.filter((credential) => !isSaved(credential))}
                 backends={data.backends}
@@ -326,9 +334,10 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
                   errorMessage={errors.organization_daily_budget_usd}
                 />
               </div>
-              {draft.backend === "codex_cli" ? (
+              {REPORTS_NO_COST.has(draft.backend) ? (
                 <SectionMessage appearance="information">
-                  Codex reports no cost, so these budgets don't limit it.
+                  {backend?.label ?? draft.backend} reports no cost, so these budgets don't limit
+                  it.
                 </SectionMessage>
               ) : (
                 draft.auth_mode === "subscription" && (
@@ -359,7 +368,6 @@ function SettingsPanels({ data, save }: { data: AssistantSettingsOut; save: Save
           </div>
         </form>
       </Panel>
-      <TestPanel isDirty={isDirty} />
     </div>
   );
 }
@@ -451,43 +459,62 @@ function seconds(ms: number): string {
   return ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : formatElapsed(ms / 1000);
 }
 
-function TestPanel({ isDirty }: { isDirty: boolean }) {
+/** Proves the saved settings now, as the runtime page's Credential check does: one short message
+ *  in a conversation of its own, its reply and what it cost. It reads what is saved, so a change
+ *  not yet saved holds it back, and `credentialLabel` is the saved credential's: a result stays
+ *  on screen while the form is changed. A credential the provider refused is said in words, the
+ *  provider's own text behind Details. The host's role stores nothing to replace. */
+function CredentialCheck({
+  isDirty,
+  credentialLabel,
+  isHostRole,
+}: {
+  isDirty: boolean;
+  credentialLabel: string;
+  isHostRole: boolean;
+}) {
   const { state, run } = useConnectionTest();
+  const finished = state.phase === "finished" ? state : null;
+  const [reply, dismiss] = useDismissible(finished && !finished.failure ? finished : null);
   return (
-    <Panel
-      title="Test"
-      subtitle="Sends one short message with the saved settings and shows the reply."
-      actions={
-        <Button
-          isLoading={state.phase === "running"}
-          disabledReason={isDirty ? "Save your changes first." : undefined}
-          onClick={run}
-        >
-          Test
-        </Button>
-      }
-    >
-      {(state.phase === "failed" || state.phase === "finished") && (
-        <div className="space-y-2 p-4" aria-live="polite">
-          {state.phase === "failed" && <ActionError error={state.error} />}
-          {state.phase === "finished" && (
-            <>
-              {state.failure ? (
-                <ActionError error={new Error(state.failure)} />
-              ) : (
-                <p className="text-body text-default">
-                  <span className="text-subtle">Reply </span>
-                  {state.reply || "(empty)"}
-                </p>
-              )}
-              <p className="text-body-sm text-subtle">
-                Answered in {seconds(state.elapsedMs)} · Cost{" "}
-                {formatCost(state.costUsd, state.isEstimate)}
-              </p>
-            </>
-          )}
+    <div className="space-y-2" aria-live="polite">
+      <div className="space-y-1">
+        <span className="block text-body-sm font-semibold text-subtle">Credential check</span>
+        <div className="flex flex-wrap items-center gap-2 text-body text-default">
+          <span>Sends one short message with the saved settings and shows the reply.</span>
+          <Button
+            spacing="compact"
+            isLoading={state.phase === "running"}
+            disabledReason={isDirty ? "Save your changes first." : undefined}
+            onClick={run}
+          >
+            Test credential
+          </Button>
         </div>
+      </div>
+      {state.phase === "failed" && <ActionError error={state.error} />}
+      {finished?.failure &&
+        (finished.failureReason === "auth" ? (
+          <SectionMessage appearance="error" title={`The ${credentialLabel} was rejected`} isAlert>
+            {isHostRole
+              ? "The model provider refused the token made from this host's AWS role. Check the host's AWS credentials and the Bedrock region, then test again."
+              : "The model provider refused it. Replace it with a valid one, then test again."}
+            <ErrorDetails details={finished.failure} />
+          </SectionMessage>
+        ) : (
+          <SectionMessage appearance="error" title="The test reply failed" isAlert>
+            {finished.failure}
+          </SectionMessage>
+        ))}
+      {reply && (
+        <SectionMessage appearance="success" title="The assistant replied" onDismiss={dismiss}>
+          <p>{reply.reply || "(empty)"}</p>
+          <p className="text-body-sm text-subtle">
+            Answered in {seconds(reply.elapsedMs)} · Cost{" "}
+            {formatCost(reply.costUsd, reply.isEstimate)}
+          </p>
+        </SectionMessage>
       )}
-    </Panel>
+    </div>
   );
 }

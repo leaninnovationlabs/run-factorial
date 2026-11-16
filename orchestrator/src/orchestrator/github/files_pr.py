@@ -1,9 +1,10 @@
 """The config branch's two writes: seeding it, and committing a builder change to it (tech-stack
 decision 33, issue #248).
 
-`commit_config_files` writes exactly the paths it is handed. Containment is the caller's job: the
-config-commits route admits only paths that `assemble()` recomputes in the same request
-(design.md §7.7), and nothing here checks them again.
+`commit_config_files` writes exactly the paths it is handed, and deletes those handed with no
+body. Containment is the caller's job, and nothing here checks the paths again: the config-commits
+route admits only paths that `assemble()` proves in the same request (design.md §7.7), and a
+restore takes its paths from the two listings the server reads (tech-stack decision 93).
 """
 
 from __future__ import annotations
@@ -33,11 +34,12 @@ async def commit_config_files(
     repo: str,
     branch: str,
     base_sha: str,
-    files: Mapping[str, str],
+    files: Mapping[str, str | None],
     message: str,
     record: Callable[[str], Awaitable[None]],
 ) -> str:
-    """One commit adding `files` on `base_sha`, fast-forwarded onto `branch`. Returns its sha.
+    """One commit writing `files` on `base_sha`, fast-forwarded onto `branch`. Returns its sha.
+    A `None` body deletes the path.
 
     `record` gets the sha before the ref moves, so the branch never points at a commit the record
     does not name. Raises `ConfigBranchMoved` when `branch` is no longer at `base_sha`.
@@ -51,7 +53,10 @@ async def commit_config_files(
             name,
             base_tree=base_commit.tree.sha,
             tree=[
-                {"path": path, "mode": "100644", "type": "blob", "content": content}
+                # A null sha removes the path from the tree.
+                {"path": path, "mode": "100644", "type": "blob", "sha": None}
+                if content is None
+                else {"path": path, "mode": "100644", "type": "blob", "content": content}
                 for path, content in sorted(files.items())
             ],
         )

@@ -169,8 +169,7 @@ def propose(
         declared_skills: set[str] = set()
         declared_mcp: set[str] = set()
         for variant, meta in entry.variants.items():
-            # The variant-less shape (an MCP example's `""`) names no CLI, so it fits every forge.
-            if variant and meta.forge != forge:
+            if meta.forge not in (None, forge):
                 continue
             offered, default_on, reason = variant_fit(entry, variant, facts, config)
             # Only the lane-matching variant may write bodies (see `add`'s docstring); taking a

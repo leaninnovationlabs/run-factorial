@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from orchestrator.adapters.split import SourceForge, SourceTracker, views_from_source
 from orchestrator.adapters.state import (
@@ -23,6 +24,8 @@ from orchestrator.adapters.state import (
     ReviewState,
     ReviewVerdict,
     StateSource,
+    capped_text,
+    walks_a_dot_segment,
 )
 from orchestrator.gitlab.client import GitLabClient, GitLabError, quote_project
 from runtime.gitlab_delivery import gitlab_delivery_author
@@ -97,6 +100,7 @@ class GitLabStateSource(StateSource):
         self._branches = AsyncOnce(self._fetch_branches)
         self._mrs = AsyncOnce(self._fetch_mrs)
         self._mr_reviews = AsyncKeyedMemo(self._fetch_mr_reviews)
+        self._file_texts = AsyncKeyedMemo(self._fetch_file_text)
 
     @property
     def repo(self) -> str:
@@ -122,6 +126,9 @@ class GitLabStateSource(StateSource):
             and row.get("type") == "blob"
             and isinstance(row.get("path"), str)
         )
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return await self._file_texts.get((ref, path))
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         try:
@@ -243,6 +250,22 @@ class GitLabStateSource(StateSource):
         if not isinstance(payload, dict):
             raise GitLabError(f"issue {self._issue_number} in {self._repo} was not an object")
         return _issue_from(payload)
+
+    async def _fetch_file_text(self, key: tuple[str, str]) -> str | None:
+        """The raw endpoint, streamed so a file past the cap is never read whole. A 404 is an
+        absent file; every other failure propagates."""
+        ref, path = key
+        if walks_a_dot_segment(path):
+            return None
+        try:
+            async with self._client.stream(
+                f"/projects/{self._pid}/repository/files/{quote(path, safe='')}/raw", ref=ref
+            ) as response:
+                return await capped_text(response.aiter_bytes())
+        except GitLabError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
     async def _fetch_branches(self) -> tuple[BranchState, ...]:
         rows = await self._client.paginate(f"/projects/{self._pid}/repository/branches")

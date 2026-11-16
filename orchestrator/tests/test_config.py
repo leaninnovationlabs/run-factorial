@@ -246,7 +246,6 @@ def test_sample_test_step_shape(sample_process: ProcessConfig) -> None:
     assert test_step.workspace.branch == "impl/{ticket}-{slug}"
     assert test_step.postconditions is not None
     assert list(iter_conjunctive(test_step.postconditions)) == [
-        PredicateCall(name="ci_green", args=("impl/{ticket}-*",)),
         PredicateCall(name="pr_comment_contains", args=("impl/{ticket}-*", "## Test Verdict")),
     ]
     assert test_step.on_success is not None
@@ -839,6 +838,8 @@ def test_predicate_registry_is_the_closed_library() -> None:
         "ticket_has_assignee",
         "issue_comment_contains",
         "pr_comment_contains",
+        "request_approval",
+        "checklist_done",
     }
     assert PREDICATE_ARITY["pr_approved"] == (2, 3)
 
@@ -931,6 +932,51 @@ def test_rerun_step_must_exist(sample_raw: dict[str, Any]) -> None:
     assert "Step 'spec_review_gate': gate.onReject.rerunStep 'replan' is not a step." in str(
         excinfo.value
     )
+
+
+def _review_in_precondition(raw: dict[str, Any]) -> None:
+    raw["steps"][0]["preconditions"] = {"all": ["ticket_has_assignee()", "request_approval()"]}
+
+
+def _review_in_check_step(raw: dict[str, Any]) -> None:
+    raw["steps"][0]["next"] = "wait"
+    raw["steps"].insert(
+        1,
+        {
+            "name": "wait",
+            "kind": "check",
+            "next": "spec_review_gate",
+            "conditions": "request_approval()",
+        },
+    )
+
+
+def _review_in_entry(raw: dict[str, Any]) -> None:
+    raw["entry"]["when"] = {"all": ['ticket_label("factorial:new")', "request_approval()"]}
+
+
+def _review_negated(raw: dict[str, Any]) -> None:
+    raw["steps"][0]["postconditions"]["all"].append({"not": "request_approval()"})
+
+
+@pytest.mark.parametrize(
+    ("mutate", "where"),
+    [
+        (_review_in_precondition, "Step 'plan'"),
+        (_review_in_check_step, "Step 'wait'"),
+        (_review_in_entry, "entry.when"),
+        (_review_negated, "Step 'plan'"),
+    ],
+)
+def test_request_approval_only_loads_in_an_agent_steps_postconditions(
+    sample_raw: dict[str, Any], mutate: Any, where: str
+) -> None:
+    """Only acceptance feeds the predicate its facts, so anywhere else it would wait for ever,
+    and under `not` an approval would fail the step it approved."""
+    with pytest.raises(ValidationError) as excinfo:
+        ProcessConfig.model_validate(_mutated(sample_raw, mutate))
+    expected = f"{where}: request_approval() may appear only in an agent step's postconditions"
+    assert expected in str(excinfo.value)
 
 
 # ------------------------------------------------------------------------- previews
@@ -1727,6 +1773,19 @@ def test_parse_reports_malformed_yaml_against_the_origin() -> None:
         parse_process("steps: [\n", origin=REPO_ORIGIN)
     assert REPO_ORIGIN in str(excinfo.value)
     assert "not valid YAML" in str(excinfo.value)
+
+
+def test_a_yaml_error_gives_line_and_column_without_the_stream_name() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_agent("name: [\n", origin="x")
+    assert caught.value.detail.startswith("The file is not valid YAML at line 2, column 1: ")
+    assert "<unicode string>" not in caught.value.detail
+
+
+def test_a_file_of_comments_says_so_instead_of_naming_a_model() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_agent("# to be filled in\n", origin="x")
+    assert caught.value.detail == "The file is empty or holds only comments."
 
 
 def test_parse_agent_does_not_require_prompt_files_to_exist() -> None:

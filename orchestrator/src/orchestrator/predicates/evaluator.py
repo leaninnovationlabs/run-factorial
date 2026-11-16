@@ -27,6 +27,7 @@ from orchestrator.predicates.words import describe
 __all__ = [
     "EvalContext",
     "Evaluation",
+    "ReviewFacts",
     "UnknownPredicateError",
     "Unmet",
     "evaluate",
@@ -37,6 +38,15 @@ __all__ = [
 
 class UnknownPredicateError(LookupError):
     """A call reached the evaluator that the library cannot serve — a programming error."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewFacts:
+    """What `request_approval()` compares: the step's branch, as a glob, and the commit a person
+    approved for the run being accepted, None when nobody has."""
+
+    branch: str
+    approved_sha: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +61,9 @@ class EvalContext:
     #: evidence from a third party posting the same marker text. Empty when unset, which is also
     #: the fail-closed value — no GitHub login is the empty string, so nothing matches.
     bot_login: str = ""
+    #: Set only by an agent step's acceptance (`worker.acceptance.acceptance_verdict`). None is
+    #: the fail-closed value every other evaluation gets.
+    review: ReviewFacts | None = None
 
 
 @dataclass(frozen=True, slots=True)

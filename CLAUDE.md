@@ -55,10 +55,13 @@ the re-check accepts the run (decision 56).
 (`all` / `any` / `not`) of a closed predicate library implemented in orchestrator code
 (`branch_exists`, `file_exists`, `pr_open`, `pr_merged`, `pr_approved`, `pr_changes_requested`,
 `ci_green`, `ticket_label`, `ticket_has_assignee`, `issue_comment_contains`,
-`pr_comment_contains` — design.md §6). Config may only *reference* predicates; new ones require a
-code change. Postconditions double as the acceptance gate for agent output — the orchestrator
-trusts predicates, never the agent's self-report. The one exception is a person's dashboard
-Force complete, recorded as `step_run.forced_by` and never counted as a success (decision 78).
+`pr_comment_contains`, `request_approval`, `checklist_done` — design.md §6). Config may only
+*reference* predicates; new ones require a code change. Postconditions double as the acceptance
+gate for agent output — the orchestrator trusts predicates, never the agent's self-report. The
+one exception is a person's dashboard Force complete, recorded as `step_run.forced_by` and never
+counted as a success (decision 78). `request_approval()` reads a person's dashboard Approve from
+the event log, bound to the run and its branch's head; it is observed input, not a gate, and
+merges nothing (design.md §7.20).
 
 **Everything is an event.** The `event` table is append-only (no UPDATE/DELETE). The dashboard,
 audit trail, and cost-per-issue reporting are read models derived from it, never separately

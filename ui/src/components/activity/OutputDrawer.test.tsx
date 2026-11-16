@@ -209,14 +209,14 @@ describe("OutputDrawer", () => {
   });
 
   it.each([
-    ["terminal", ["Terminal"]],
-    ["preview", ["Terminal", "Preview"]],
-  ] as const)("expands what a link names: %s", async (named, open_) => {
+    ["terminal", ["Terminal", "bar Preview"]],
+    ["preview", ["bar Terminal", "Preview"]],
+  ] as const)("opens what a link names alone, the other as its bar: %s", async (named, shown) => {
     const drawer = await open(build("succeeded"), {
       hasPreview: true,
       named,
     });
-    expect(expanded(drawer)).toEqual(open_);
+    expect(layout(drawer)).toEqual(shown);
   });
 
   it("switches to the transcript and back, keeping the terminal connected", async () => {
@@ -279,6 +279,14 @@ describe("OutputDrawer", () => {
     await click(bar(drawer, "Terminal"));
     await click(collapse(drawer, "Preview"));
     expect(layout(drawer)).toEqual(["Terminal", "bar Preview"]);
+  });
+
+  it("draws a collapsed section as a flat bar, with no edge or corner of its own", async () => {
+    const drawer = await open(build("succeeded"), { hasPreview: true });
+    await click(collapse(drawer, "Terminal"));
+    const classes = bar(drawer, "Terminal")?.className.split(/\s+/) ?? [];
+    expect(classes).not.toContain("border");
+    expect(classes.filter((name) => name.startsWith("rounded"))).toEqual([]);
   });
 
   it("shows one section full width, collapsing the other", async () => {

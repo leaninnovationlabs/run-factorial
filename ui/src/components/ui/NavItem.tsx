@@ -1,7 +1,7 @@
 /**
- * A side-navigation row, after ADS's LinkItem and ButtonItem: an icon and a label, or — when the
+ * A navigation row, after ADS's LinkItem and ButtonItem: an icon and a label, or — when the
  * navigation is compact — the icon alone, named by its label and by a tooltip beside it. A link
- * goes somewhere; a button opens something, a menu at the navigation's foot.
+ * goes somewhere; a button opens something: a menu at the navigation's foot, say.
  *
  * A child row sits under a parent that groups it — a configuration page under Settings — indented,
  * any icon it has starting under the parent's label, and is not drawn when the navigation is
@@ -9,15 +9,14 @@
  * that shows or hides its children; the link still goes to the parent's page. A row's `trailing`
  * is a small fact at its right edge: a count, a state glyph.
  *
- * A button row can show something other than its label — the project's name, the organization's
- * — and is then named by its label, which says what pressing it does ("Switch project: widgets").
- * A prominent row, the project at the head of its navigation, is set in the heading weight; the
- * band it sits on is the navigation's.
+ * A button row can show something other than its label, and is then named by its label, which
+ * says what pressing it does. The place the top bar
+ * names is `NavPlace`: a link to its home and, beside it, the button of its menu.
  *
  * Selection is never the fill alone: a bar at the row's edge says "you are here" in shape as well.
  */
 
-import type { ComponentPropsWithRef, ReactNode } from "react";
+import type { ComponentPropsWithRef, ReactNode, Ref } from "react";
 import { Link } from "react-router-dom";
 import { cx } from "./cx";
 import { type Glyph, Icon } from "./icons";
@@ -29,7 +28,7 @@ function rowLook(
   isCompact: boolean,
   /** A child row, and whether it carries an icon. */
   child: "none" | "bare" | "icon",
-  state: "current" | "open" | "rest" | "prominent" | "prominent-open",
+  state: "current" | "open" | "rest",
 ): string {
   return cx(
     "focus-inset relative flex items-center gap-2 rounded-md transition-colors",
@@ -45,8 +44,6 @@ function rowLook(
     state === "current" && "bg-selected font-medium text-selected",
     state === "open" && "bg-neutral-subtle-pressed text-default",
     state === "rest" && "text-subtle hover:bg-neutral-subtle-hovered hover:text-default",
-    state === "prominent" && "font-semibold text-default hover:bg-neutral-subtle-hovered",
-    state === "prominent-open" && "bg-neutral-subtle-pressed font-semibold text-default",
   );
 }
 
@@ -127,13 +124,11 @@ export function NavButtonItem({
   isCompact = false,
   isChild = false,
   isOpen = false,
-  isProminent = false,
   trailing,
   children,
   ...rest
 }: Shared & {
   isOpen?: boolean;
-  isProminent?: boolean;
   trailing?: ReactNode;
   children?: ReactNode;
 } & Omit<ComponentPropsWithRef<"button">, "children" | "className" | "type">) {
@@ -142,11 +137,7 @@ export function NavButtonItem({
       {...rest}
       type="button"
       aria-label={isCompact || children !== undefined ? label : undefined}
-      className={rowLook(
-        isCompact,
-        childLook(isChild, icon),
-        isProminent ? (isOpen ? "prominent-open" : "prominent") : isOpen ? "open" : "rest",
-      )}
+      className={rowLook(isCompact, childLook(isChild, icon), isOpen ? "open" : "rest")}
     >
       {icon && <Icon glyph={icon} />}
       {!isCompact && <span className="min-w-0 flex-1 truncate">{children ?? label}</span>}
@@ -159,5 +150,90 @@ export function NavButtonItem({
     </Tooltip>
   ) : (
     button
+  );
+}
+
+/**
+ * The place the top bar names — the organization, the project — drawn as one button with two
+ * parts: the name, a link to the place's home, and the chevron at its end, the button of the menu
+ * that switches to another place. A hover fills the whole block, and the chevron's part a shade
+ * deeper, so the pair reads as one control while the pointer still shows which part a press
+ * reaches. Where there is no menu the block is the link alone.
+ */
+export function NavPlace({
+  ref,
+  isOpen = false,
+  children,
+}: {
+  /** What the menu hangs from: the whole block, not the chevron alone. */
+  ref?: Ref<HTMLDivElement>;
+  isOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      ref={ref}
+      className={cx(
+        "group/place flex w-full min-w-0 items-stretch rounded-md transition-colors hover:bg-neutral-subtle-hovered",
+        isOpen && "bg-neutral-subtle-hovered",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The name, cut short rather than wrapped; a tooltip says it in full when it is. */
+export function NavPlaceLink({
+  to,
+  icon,
+  name,
+  pending,
+  ...rest
+}: {
+  to: string;
+  icon: Glyph;
+  /** Undefined while it loads, when `pending` stands in its place. */
+  name: string | undefined;
+  pending?: ReactNode;
+} & Omit<ComponentPropsWithRef<typeof Link>, "to" | "children" | "className">) {
+  return (
+    <Tooltip content={name ?? ""} position="bottom-start" onlyIfTruncated>
+      <Link
+        {...rest}
+        to={to}
+        className="focus-inset flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 pl-3 text-body font-semibold text-default"
+      >
+        <Icon glyph={icon} />
+        <span className="min-w-0 flex-1 truncate">{name ?? pending}</span>
+      </Link>
+    </Tooltip>
+  );
+}
+
+/** The chevron that opens the place's menu, named by what it does ("Switch project: widgets").
+ *  Its fill sits over the block's, which is translucent, so it is always the deeper of the two. */
+export function NavPlaceMenuButton({
+  label,
+  isOpen = false,
+  ...rest
+}: { label: string; isOpen?: boolean } & Omit<
+  ComponentPropsWithRef<"button">,
+  "children" | "className" | "type"
+>) {
+  return (
+    <button
+      {...rest}
+      type="button"
+      aria-label={label}
+      className={cx(
+        "focus-inset flex w-7 shrink-0 items-center justify-center rounded-r-md transition-colors",
+        isOpen
+          ? "bg-neutral-hovered text-default"
+          : "text-icon-subtle group-hover/place:bg-neutral-subtle-pressed group-hover/place:text-default hover:bg-neutral-hovered",
+      )}
+    >
+      <Icon glyph="chevron-down" size="small" />
+    </button>
   );
 }

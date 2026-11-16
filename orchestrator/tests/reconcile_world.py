@@ -951,6 +951,10 @@ class _CountedIssue:
         self._repo_read()
         return await self.inner.files(ref)
 
+    async def file_text(self, ref: str, path: str) -> str | None:
+        self._repo_read()
+        return await self.inner.file_text(ref, path)
+
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         self._repo_read()
         return await self.inner.check_runs(sha)
@@ -2023,6 +2027,10 @@ class _RaisingStateSource:
     async def files(self, ref: str) -> Sequence[str]:
         self._trip("files")
         return await self.inner.files(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        self._trip("file_text")
+        return await self.inner.file_text(ref, path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         self._trip("check_runs")

@@ -17,8 +17,8 @@ brief. For each point, pick the smallest view that makes it clear.
 
 - **The change in one paragraph.** What the ticket asked for and what the spec proposes.
 - **Risks and open questions.** What the reviewer should look at first.
-- **Links.** The spec files on GitHub, on the branch you push. On a rework, the spec pull request
-  too: it does not exist yet when you first write the page.
+- **Links.** The spec files on the forge (GitHub or GitLab), on the branch you push. On a
+  rework, the spec pull request too: it does not exist yet when you first write the page.
 
 Everything else is a view, placed next to the short text it supports.
 

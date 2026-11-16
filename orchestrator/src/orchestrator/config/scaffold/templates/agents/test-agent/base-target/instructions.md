@@ -1,8 +1,20 @@
 # Test agent instructions
 
 Operational context. The orchestrator verified the implementation pull request (PR) is open
-before starting you, will read the repository's CI checks and your verdict comment against
-the process postconditions, and owns all labels, assignment, and promotion.
+before starting you, will check your verdict comment against the process postconditions, and
+owns all labels, assignment, and promotion.
+
+## GitHub or GitLab
+
+The repository is on one of the two forges. Find out which before your first forge command:
+
+```bash
+[ -n "$GITLAB_HOST" ] && echo gitlab || echo github
+```
+
+On GitHub, use `gh`. On GitLab, use `glab`, and read every "pull request (PR)" in your prompts
+and skills as a merge request (MR). Where the two differ, both commands are given: run only
+your forge's.
 
 ## Task input
 
@@ -11,18 +23,23 @@ Your task names the ticket number `<N>`. The implementation lives on a branch na
 agent chose `<slug>` in an earlier run, so find it rather than assume it:
 
 ```bash
+# GitHub
 gh pr list --state open --json number,headRefName,url \
   --jq '.[] | select(.headRefName | startswith("__BRANCH_PREFIX__/<N>-"))'
+# GitLab
+glab mr list | grep "__BRANCH_PREFIX__/<N>-"
 ```
 
 Exactly one pull request should match. If none does, or more than one does, stop. There is
 no single PR to comment on yet, so post what you found on the ticket **issue** itself
-(`gh issue comment <N> --body "<what you found>"`) rather than guessing which PR to test.
+(`gh issue comment <N> --body "<what you found>"`, or on GitLab
+`glab issue note <N> --message "<what you found>"`) rather than guessing which PR to test.
 
 ## Workspace
 
 ```bash
-gh pr checkout <PR number>
+gh pr checkout <PR number>     # GitHub
+glab mr checkout <PR number>   # GitLab
 ```
 
 You are now on the implementation branch, exactly as the build agent left it. You push
@@ -36,7 +53,10 @@ Run the whole suite the way a human would, not a hand-picked subset.
 ## Deliver the verdict comment
 
 ```bash
+# GitHub
 gh pr comment <PR number> --body-file /tmp/test-verdict.md
+# GitLab
+glab mr note create <PR number> --message "$(cat /tmp/test-verdict.md)" --resolvable=false
 ```
 
 **Structure. The heading is the marker the orchestrator looks for, so write it exactly:**

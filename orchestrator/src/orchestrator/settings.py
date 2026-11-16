@@ -726,7 +726,9 @@ class Settings(BaseSettings):
             if self.assistant.offered is not None
             else frozenset({"claude_sdk:api_key", "codex_cli:api_key"})
         )
-        return offered - {"codex_cli:bedrock"} if self.multi_org.enabled else offered
+        if not self.multi_org.enabled:
+            return offered
+        return frozenset(offer for offer in offered if not offer.endswith(":bedrock"))
 
     @property
     def offers(self) -> frozenset[str]:
@@ -788,7 +790,7 @@ class Settings(BaseSettings):
         if not self.assistant_offers:
             raise ValueError(
                 "FACTORIAL_ASSISTANT__OFFERED leaves the assistant no sign-in here: multi-org "
-                "never offers codex_cli:bedrock, so list another entry"
+                "never offers a bedrock sign-in, so list another entry"
             )
         return self
 

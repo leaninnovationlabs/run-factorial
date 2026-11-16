@@ -1,16 +1,25 @@
 """A step's declared files (tech-stack decision 71): what each run of a step that declares
-`preview.files` changed on its branch, recorded once per run as `run_outputs_observed`.
+`preview.files` changed on its branch, recorded once per run as `run_outputs_observed`. A step
+that awaits review (`request_approval()`) is read while it waits: its run is recorded again at
+each idle spell with its postconditions unmet, whenever its branch moves off the commit the
+latest record read (on an idle tick, or a parked run's re-check), and once more at its end, and
+the reader takes the latest. A spell GitHub would not answer for is asked again on each later
+tick of that spell (`observe_waiting_outputs`); an end it would not answer for keeps the last
+spell's record, since the later ticks ask only for a run with no record. A failed look-up that
+found the branch keeps its `commit`, so the same answer is not asked for again until it moves.
 
 The record is the step's footprint, wider than what it declares: every file this generation's
-attempts changed on the run's branch, read at the run's end commit. The API selects the declared
+attempts changed on the run's branch, read at the branch's head when recorded: the run's end
+commit, or where a waiting review run's branch stood when it stopped. The API selects the declared
 files from it (`events/outputs.py`), so showing every file later needs nothing new here. A run's
 changes start where its branch stood at spawn (`agent_spawned`'s `branch_heads`), else at the
 base: a step working on a branch another step pushed is not credited with that step's files.
 
 The agent pushes; this module only looks: `_poll_run` asks as soon as a run ends,
-`observe_pending_outputs` asks again on later ticks, and once the step's next attempt exists a run
-GitHub would not answer for is recorded `lookup_failed`. Like every preview, the record is
-informational: nothing here raises into the ticket's pass or holds up acceptance.
+`observe_pending_outputs` asks again on later ticks for a run with no record at all, and once the
+step's next attempt exists a run GitHub would not answer for is recorded `lookup_failed`. Like
+every preview, the record is informational: nothing here raises into the ticket's pass or holds up
+acceptance.
 """
 
 from __future__ import annotations
@@ -19,11 +28,13 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from orchestrator.config import AgentStep
+from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import Event, StepRun, current_runs
 from orchestrator.events import EventType
+from orchestrator.events.outputs import outputs_observation, spawn_heads
 from orchestrator.events.read_models import latest_run_event
 from orchestrator.github import TreeEntry
 from orchestrator.github.contents import ComparedFile, ContentsNotFound, TreeTruncated
@@ -37,12 +48,12 @@ from orchestrator.worker.branches import (
     run_slug,
     unrecorded_runs,
 )
-from orchestrator.worker.templates import _glob
+from orchestrator.worker.templates import _glob, _slug_between, _slug_shape
 from orchestrator.worker.tick_context import _Tick
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["FOOTPRINT_MAX", "observe_outputs", "observe_pending_outputs"]
+__all__ = ["FOOTPRINT_MAX", "observe_outputs", "observe_pending_outputs", "observe_waiting_outputs"]
 
 #: The most paths one record keeps, GitHub's own limit on a comparison. A declared file is never
 #: the one dropped, and a pattern's files go before undeclared ones.
@@ -50,12 +61,17 @@ FOOTPRINT_MAX: Final = 300
 
 
 async def observe_outputs(tick: _Tick, step: AgentStep, run: StepRun) -> None:
-    """Record what `run` changed, unless that is already recorded. A GitHub error records nothing,
-    so a later tick asks again."""
+    """Record what `run` changed, unless that is already recorded and the step does not await
+    review, whose every record replaces the last. A GitHub error records nothing: a later tick
+    asks again for a run with no record, or for a waiting review run's spell
+    (`observe_waiting_outputs`), and never for a review run's end."""
     if (
         not declares_files(step)
         or tick.bindings is None
-        or await recorded(tick, run, EventType.RUN_OUTPUTS_OBSERVED)
+        or (
+            not awaits_review(step.postconditions)
+            and await recorded(tick, run, EventType.RUN_OUTPUTS_OBSERVED)
+        )
     ):
         return
     try:
@@ -75,6 +91,49 @@ async def observe_outputs(tick: _Tick, step: AgentStep, run: StepRun) -> None:
             run.id,
             exc_info=True,
         )
+
+
+async def observe_waiting_outputs(tick: _Tick, step: AgentStep, run: StepRun) -> None:
+    """Record a review run waiting at its prompt, unless its latest record is newer than its
+    latest `agent_idle` and its branch still ends where that record read it: once per spell and
+    again whenever the branch moves in it, asked again on each tick until GitHub answers."""
+    if not declares_files(step):
+        return
+    idle, observed = (
+        await tick.session.execute(
+            select(
+                *(
+                    latest_run_event(run.ticket_id, run.id, [kind], Event.id).scalar_subquery()
+                    for kind in (EventType.AGENT_IDLE, EventType.RUN_OUTPUTS_OBSERVED)
+                )
+            )
+        )
+    ).one()
+    if observed is None or (idle is not None and observed < idle) or await _moved(tick, step, run):
+        await observe_outputs(tick, step, run)
+
+
+async def _moved(tick: _Tick, step: AgentStep, run: StepRun) -> bool:
+    """Does the run's branch end on another commit than its latest record read? A push, a bot or
+    "Update branch" can move it while the person reads the files. The tick's branch listing is
+    memoized and the run's postconditions already read it, so this asks the forge nothing new."""
+    if tick.bindings is None:
+        return False
+    try:
+        branches = await tick.source.branches()
+    except Exception:
+        logger.warning(
+            "ticket %s run %s: the branch listing failed; the files stay as recorded",
+            tick.ticket.external_key,
+            run.id,
+            exc_info=True,
+        )
+        return False
+    found = named_branches(
+        branches, step.workspace.branch, tick.values, await run_slug(tick, step, run)
+    )
+    head = found[0].sha if len(found) == 1 else None
+    return head != (await outputs_observation(tick.session, run) or {}).get("commit")
 
 
 async def observe_pending_outputs(tick: _Tick) -> None:
@@ -120,8 +179,12 @@ async def _look_up(tick: _Tick, step: AgentStep, run: StepRun) -> dict[str, Any]
     if len(found) > 1:
         return {"status": "ambiguous", "matches": sorted(branch.name for branch in found)}
     (branch,) = found
+    if slug is None and (shape := _slug_shape(step.workspace.branch, tick.values)) is not None:
+        # The one branch the glob found names the slug: a run that has delivered no branch yet,
+        # such as one waiting for review, still resolves `{slug}` in its declared files.
+        slug = _slug_between(branch.name, shape)
 
-    start = (await _spawn_heads(tick, run)).get(branch.name)
+    start = (await spawn_heads(tick.session, run)).get(branch.name)
     at_spawn = start is not None
     if start is None:
         bases = named_branches(branches, step.workspace.base, tick.values, tick.values.get("slug"))
@@ -129,6 +192,7 @@ async def _look_up(tick: _Tick, step: AgentStep, run: StepRun) -> dict[str, Any]
             base = ref(_glob(step.workspace.base, tick.values))
             return {
                 "status": "lookup_failed",
+                "commit": branch.sha,
                 "reason": f"the base branch {base} doesn't exist"
                 if not bases
                 else f"{len(bases)} branches match the base branch {base}",
@@ -149,7 +213,7 @@ async def _look_up(tick: _Tick, step: AgentStep, run: StepRun) -> dict[str, Any]
             tree = None
     except ContentsNotFound as exc:
         # GitHub's answer, not an outage: asking again on every tick gets the same one.
-        return {"status": "lookup_failed", "reason": str(exc)}
+        return {"status": "lookup_failed", "commit": branch.sha, "reason": str(exc)}
 
     earlier = await _earlier_files(tick, run, branch.name)
     preview = step.preview
@@ -226,48 +290,29 @@ def _entry(
     return {"path": path, "blob": blob, "size": size, "changed": changed}
 
 
-async def _spawn_heads(tick: _Tick, run: StepRun) -> Mapping[str, str]:
-    """The `branch_heads` this run's spawn recorded; empty for a spawn that recorded none."""
-    spawned = (
-        await tick.session.execute(
-            latest_run_event(run.ticket_id, run.id, [EventType.AGENT_SPAWNED], Event.details)
-        )
-    ).scalar_one_or_none()
-    return heads_by_name((spawned or {}).get("branch_heads"))
-
-
-def heads_by_name(value: object) -> dict[str, str]:
-    """`branch_heads` as name -> sha: a list of `{name, sha}`, or the map events before it wrote."""
-    if isinstance(value, dict):
-        return {str(name): str(sha) for name, sha in value.items()}
-    if isinstance(value, list):
-        return {
-            str(item["name"]): str(item["sha"])
-            for item in value
-            if isinstance(item, dict) and "name" in item and "sha" in item
-        }
-    return {}
-
-
 async def _earlier_files(tick: _Tick, run: StepRun, branch: str) -> list[Mapping[str, Any]]:
-    """The files of each earlier current attempt of this step on `branch`, oldest first. An
-    attempt on another branch changed nothing here: a rework that chose a new slug starts its
-    footprint again."""
-    rows = await tick.session.scalars(
-        select(Event.details)
+    """The files of each earlier current attempt of this step on `branch`, oldest first, from
+    each attempt's latest record. An attempt on another branch changed nothing here: a rework
+    that chose a new slug starts its footprint again."""
+    newest = (
+        select(func.max(Event.id))
         .join(StepRun, Event.step_run_id == StepRun.id)
         .where(
+            Event.ticket_id == run.ticket_id,
             StepRun.ticket_id == run.ticket_id,
             StepRun.step_name == run.step_name,
             current_runs(run.generation),
             StepRun.id < run.id,
             Event.type == EventType.RUN_OUTPUTS_OBSERVED,
         )
-        .order_by(StepRun.id)
+        .group_by(Event.step_run_id)
+    )
+    records = await tick.session.scalars(
+        select(Event.details).where(Event.id.in_(newest)).order_by(Event.step_run_id)
     )
     return [
         item
-        for details in rows
+        for details in records
         if details.get("status") == "observed" and details.get("branch") == branch
         for item in details.get("files") or []
     ]

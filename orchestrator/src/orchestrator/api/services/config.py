@@ -5,7 +5,7 @@ by the dashboard routes and the MCP config tools (design.md §7.7, §7.17).
 would. On every surface but the dashboard (the MCP server, and the assistant's approved
 proposals) it also refuses what a model must not rewrite: any file the commit would write or edit
 under `agents/`, where the prompt-level prohibitions live, or under `skills/`, which load into
-agents' context the same way, and any change to who approves a gate
+agents' context the same way, any new file, any deletion, and any change to who approves a gate
 (`_refuse_approver_changes`). Those stay behind a person.
 """
 
@@ -66,6 +66,7 @@ from orchestrator.config.scaffold import ScaffoldBundle
 from orchestrator.config.scaffold.assemble import (
     CONFIG_DIR,
     EditConflict,
+    FileDelete,
     FileEdit,
     SelectionError,
     assemble,
@@ -91,6 +92,7 @@ from orchestrator.factorial.registry import (
     RuntimeBindingInvalid,
     check_folder_runtime_bindings,
     check_runtime_binding,
+    check_runtime_bindings,
     is_known_commit,
     known_base,
     latest_process_versions,
@@ -104,19 +106,23 @@ __all__ = [
     "ConfigCheck",
     "ConfigCommitResult",
     "ConfigDraft",
+    "ConfigProblem",
     "ConfigRead",
     "FileText",
     "LaneConfig",
     "LaneRef",
     "NewFile",
     "PlannedWrite",
+    "RestorePlan",
     "Surface",
     "SyncedConfig",
     "check_config",
     "commit_config",
     "git_blob_sha",
+    "plan_restore",
     "preview_config",
     "read_config",
+    "restore_config",
     "sync_config",
 ]
 
@@ -151,6 +157,8 @@ class ConfigDraft:
     edits: list[FileEdit] = field(default_factory=list)
     #: Files the operator created, by path. Dashboard-only, like the agent files.
     created: dict[str, str] = field(default_factory=dict)
+    #: Files the operator removed. Dashboard-only.
+    deleted: list[FileDelete] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,16 +168,27 @@ class PlannedWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class ConfigProblem:
+    message: str
+    #: The config file the problem is in, when it is in one.
+    path: str | None = None
+    hint: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ConfigCheck:
     """`valid` means a commit of this draft would be made. `errors` are the parser's; `blockers`
-    are the refusals a commit would answer with."""
+    are the refusals a commit would answer with. `problems` is both, each with its file, for a
+    reader that opens the file."""
 
     valid: bool
     errors: list[str] = field(default_factory=list)
+    problems: list[ConfigProblem] = field(default_factory=list)
     warnings: list[LintWarning] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
     base_sha: str | None = None
     would_write: list[PlannedWrite] = field(default_factory=list)
+    would_delete: list[str] = field(default_factory=list)
     offered: list[str] = field(default_factory=list)
 
 
@@ -190,6 +209,7 @@ class ConfigCommitResult:
     written: list[str]
     sync: SyncedConfig | None
     sync_error: str | None
+    deleted: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,8 +371,9 @@ async def _read_files(
             return await source.read_file(repo, path, sha)
         except ValueError as exc:  # not UTF-8, or over the contents API's size limit
             raise Invalid(
-                f"{path} cannot be read as text, so the config cannot be checked: "
-                f"{as_sentence(str(exc))}"
+                "The file cannot be read as text, so the config cannot be checked: "
+                f"{as_sentence(str(exc))}",
+                path=path,
             ) from exc
 
     try:
@@ -451,6 +472,36 @@ async def _refuse_approver_changes(
             )
 
 
+_PROPOSAL_MOVED: Final = (
+    f"The {CONFIG_BRANCH} branch moved since this was proposed. "
+    "Ask the assistant to read it again and propose again."
+)
+
+
+async def _known_head(
+    session: AsyncSession,
+    source: RepoConfigSource,
+    project: Project,
+    expected_head: str | None,
+    *,
+    moved: str,
+) -> str:
+    """The config branch's head, refused when it is not the one the caller saw (`moved` says so),
+    or not one this install vouches for."""
+    head = await _branch_head(source, project)
+    if expected_head is not None and head != expected_head:
+        raise Conflict(moved)
+    # Building on an agent's push would carry it into a commit the event then vouches for.
+    if not await is_known_commit(session, source, project, head):
+        known = await known_base(session, source, project, head)
+        detail = unknown_head_detail(head, known)
+        raise Conflict(
+            detail if known is None else f"{detail}\n  {reset_command(known)}",
+            code="unknown_head",
+        )
+    return head
+
+
 async def _prepare(
     session: AsyncSession,
     source: RepoConfigSource,
@@ -473,23 +524,16 @@ async def _prepare(
                 "because a person names every path the commit invents.",
                 hint="Drop it, and create files from the dashboard's config editor.",
             )
+        if draft.deleted:
+            raise Invalid(
+                f"{min(d.path for d in draft.deleted)} is a deletion, and deletions are "
+                "dashboard-only, because a person decides what leaves the config.",
+                hint="Drop it, and delete files from the dashboard's config editor.",
+            )
 
     repo = project.github_repo
     # One sha for every read and the commit's parent: they must never see different states.
-    base_sha = await _branch_head(source, project)
-    if expected_head is not None and base_sha != expected_head:
-        raise Conflict(
-            f"The {CONFIG_BRANCH} branch moved since this was proposed. "
-            "Ask the assistant to read it again and propose again."
-        )
-    # Building on an agent's push would carry it into a commit the event then vouches for.
-    if not await is_known_commit(session, source, project, base_sha):
-        known = await known_base(session, source, project, base_sha)
-        detail = unknown_head_detail(base_sha, known)
-        raise Conflict(
-            detail if known is None else f"{detail}\n  {reset_command(known)}",
-            code="unknown_head",
-        )
+    base_sha = await _known_head(session, source, project, expected_head, moved=_PROPOSAL_MOVED)
     await _refuse_legacy_layout(source, project, base_sha)
     forge = forge_of(await ticket_source(session, project.id))
     proposal = await _propose_at(source, project, config, base_sha, forge=forge)
@@ -507,16 +551,21 @@ async def _prepare(
             proposal,
             edits=draft.edits,
             created=draft.created,
+            deleted=draft.deleted,
             repo_blobs=blobs,
         )
-        # Edits and new files change the folder beside the lane, so the whole of it is checked.
-        whole = bool(draft.edits or draft.created)
+        # Edits, new files and deletions change the folder beside the lane, so the whole of it
+        # is checked.
+        whole = bool(draft.edits or draft.created or draft.deleted)
         base_files = await _read_files(source, repo, base_sha, listing) if whole else None
         loaded = validate_bundle(bundle, base_files=base_files)
     except EditConflict as exc:
         raise Conflict(exc.detail) from exc
-    except (SelectionError, ConfigError) as exc:
+    except SelectionError as exc:
         raise Invalid(exc.detail) from exc
+    except ConfigError as exc:
+        in_folder = exc.origin.startswith(f"{CONFIG_DIR}/")
+        raise Invalid(exc.detail, path=exc.origin if in_folder else None) from exc
     if surface != "dashboard" and bundle.stub_paths:
         # The stubs `assemble` adds for a newly named agent are writes under agents/ too.
         stub = min(bundle.stub_paths)
@@ -590,17 +639,25 @@ async def check_config(
     try:
         config = _parse_draft(draft.content, project)
     except Invalid as exc:
-        return ConfigCheck(valid=False, errors=[exc.message])
+        return ConfigCheck(
+            valid=False, errors=[exc.message], problems=[ConfigProblem(exc.message)]
+        )
     warnings = lint_process(config)
     try:
         prepared = await _prepare(session, source, project, draft, surface=surface)
     except (Conflict, Invalid) as exc:
-        return ConfigCheck(valid=False, warnings=warnings, blockers=[render(exc)])
+        return ConfigCheck(
+            valid=False,
+            warnings=warnings,
+            blockers=[render(exc)],
+            problems=[ConfigProblem(exc.message, path=exc.path, hint=exc.hint)],
+        )
     return ConfigCheck(
         valid=True,
         warnings=warnings,
         base_sha=prepared.base_sha,
         would_write=_planned(prepared, draft),
+        would_delete=sorted(prepared.bundle.deleted),
         offered=_offered(prepared.proposal, surface),
     )
 
@@ -673,13 +730,63 @@ _THROUGH: Final[Mapping[RequestedVia, str]] = {
 }
 
 
-def _commit_message(process: str, actor: Actor, message: str | None) -> str:
+def _commit_message(
+    process: str, actor: Actor, message: str | None, *, retiring: bool = False
+) -> str:
     if actor.via is RequestedVia.DASHBOARD:
-        return f"Update the {process} process from the Factorial dashboard"
+        verb = "Delete" if retiring else "Update"
+        return f"{verb} the {process} process from the Factorial dashboard"
     through = _THROUGH[actor.via]
     if subject := " ".join((message or "").split()):
         return f"{subject}\n\nRequested by {actor.by} through {through}"
     return f"Update the {process} process through {through}\n\nRequested by {actor.by}"
+
+
+async def _write_and_sync(
+    session: AsyncSession,
+    source: RepoConfigSource,
+    writer: ConfigCommitWriter,
+    project: Project,
+    base_sha: str,
+    files: Mapping[str, str | None],
+    message: str,
+    details: Mapping[str, Any],
+) -> tuple[str, SyncedConfig | None, str | None]:
+    """One commit on `base_sha`, its event written before the ref moves (decision 53), then the
+    sync of exactly that commit. Returns the sha, the sync, and why the sync failed when it did:
+    the commit has landed by then, so that is an answer and not a refusal."""
+    repo = project.github_repo
+
+    async def record(sha: str) -> None:
+        await append(
+            session,
+            type=EventType.CONFIG_COMMITTED,
+            project_id=project.id,
+            branch=CONFIG_BRANCH,
+            sha=sha,
+            **details,
+        )
+        await session.commit()
+
+    try:
+        sha = await writer(repo, CONFIG_BRANCH, base_sha, files, message, record)
+    except ConfigBranchMoved as exc:
+        raise Conflict(f"The {CONFIG_BRANCH} branch moved during the commit. Try again.") from exc
+    except RequestFailed as exc:
+        raise Conflict(
+            f"GitHub refused the config commit: {as_sentence(refusal_reason(exc))}"
+        ) from exc
+    except GitLabError as exc:
+        raise Conflict(f"GitLab refused the config commit: {as_sentence(str(exc))}") from exc
+
+    try:
+        # A savepoint, so a failed sync leaves nothing half-written beside the committed event.
+        async with session.begin_nested():
+            result = await register_process_versions(session, source, project, sha=sha)
+        return sha, await _synced(result, source, repo), None
+    except Exception as exc:  # the commit landed; the operator can press Sync once it is fixed
+        log.warning("config commit %s on %s did not sync: %s", sha[:7], repo, exc)
+        return sha, None, exc.detail if isinstance(exc, ConfigError) else str(exc) or repr(exc)
 
 
 async def commit_config(
@@ -715,7 +822,11 @@ async def commit_config(
     ticket_source = (
         await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
     ).scalar_one_or_none()
-    if all(prepared.blobs.get(path) == git_blob_sha(text) for path, text in bundle.files.items()):
+    removed = sorted(bundle.deleted)
+    held = all(
+        prepared.blobs.get(path) == git_blob_sha(text) for path, text in bundle.files.items()
+    )
+    if held and not removed:
         synced = await sync_config(session, source, project, sha=prepared.base_sha)
         return ConfigCommitResult(
             sha=prepared.base_sha,
@@ -727,44 +838,25 @@ async def commit_config(
             sync_error=None,
         )
 
-    async def record(sha: str) -> None:
-        details: dict[str, Any] = {
-            "branch": CONFIG_BRANCH,
-            "sha": sha,
+    sha, sync, sync_error = await _write_and_sync(
+        session,
+        source,
+        writer,
+        project,
+        prepared.base_sha,
+        {**bundle.files, **dict.fromkeys(removed)},
+        _commit_message(
+            config.name,
+            actor,
+            message,
+            retiring=process_bundle_path(config.name) in bundle.deleted,
+        ),
+        {
             "process": config.name,
+            **({"deleted": removed} if removed else {}),
             **actor.fields(),
-        }
-        await append(session, type=EventType.CONFIG_COMMITTED, project_id=project.id, **details)
-        await session.commit()
-
-    try:
-        sha = await writer(
-            repo,
-            CONFIG_BRANCH,
-            prepared.base_sha,
-            bundle.files,
-            _commit_message(config.name, actor, message),
-            record,
-        )
-    except ConfigBranchMoved as exc:
-        raise Conflict(f"The {CONFIG_BRANCH} branch moved during the commit. Try again.") from exc
-    except RequestFailed as exc:
-        raise Conflict(
-            f"GitHub refused the config commit: {as_sentence(refusal_reason(exc))}"
-        ) from exc
-    except GitLabError as exc:
-        raise Conflict(f"GitLab refused the config commit: {as_sentence(str(exc))}") from exc
-
-    sync: SyncedConfig | None = None
-    sync_error: str | None = None
-    try:
-        # A savepoint, so a failed sync leaves nothing half-written beside the committed event.
-        async with session.begin_nested():
-            result = await register_process_versions(session, source, project, sha=sha)
-        sync = await _synced(result, source, repo)
-    except Exception as exc:  # the commit landed; the operator can press Sync once it is fixed
-        log.warning("config commit %s on %s did not sync: %s", sha[:7], repo, exc)
-        sync_error = exc.detail if isinstance(exc, ConfigError) else str(exc) or repr(exc)
+        },
+    )
     return ConfigCommitResult(
         sha=sha,
         url=_commit_url(repo, sha, project=project, source=ticket_source),
@@ -773,6 +865,148 @@ async def commit_config(
         written=sorted(bundle.files),
         sync=sync,
         sync_error=sync_error,
+        deleted=removed,
+    )
+
+
+_HISTORY_MOVED: Final = (
+    f"The {CONFIG_BRANCH} branch moved since you opened the history. Open it again."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RestorePlan:
+    """What putting the config folder back to a synced version does to the branch head."""
+
+    target_sha: str
+    head_sha: str
+    #: Paths whose text differs from the head's, or that the head lacks.
+    writes: list[str]
+    #: Paths the head has and the version does not.
+    deletes: list[str]
+    #: Processes the head offers and the version does not: the sync retires them.
+    retires: list[str]
+
+    @property
+    def unchanged(self) -> bool:
+        return not self.writes and not self.deletes
+
+
+async def plan_restore(
+    session: AsyncSession,
+    source: RepoConfigSource,
+    project: Project,
+    version_id: int,
+    *,
+    expected_head: str | None = None,
+) -> RestorePlan:
+    """The difference between a synced version's folder and the branch head. Writes nothing.
+
+    The caller names a version row and nothing else: the commit, and every path read, come from
+    that row and from the two listings read here.
+    """
+    repo = project.github_repo
+    row = await session.get(ProcessVersion, version_id)
+    if row is None or row.project_id != project.id or row.source_repo != repo:
+        raise NotFound(f"{project.name} has no version {version_id} synced from {repo}.")
+    target = row.source_commit_sha
+    head = await _known_head(session, source, project, expected_head, moved=_HISTORY_MOVED)
+    root, head_root = await asyncio.gather(
+        source.resolve_dir(repo, target), source.resolve_dir(repo, head)
+    )
+    wanted = {entry.path: entry.sha for entry in await source.list_files(repo, target)}
+    held = {entry.path: entry.sha for entry in await source.list_files(repo, head)}
+    # The root file is read for ever and never written again (decision 37).
+    if root != head_root or f"{root}/{PROCESS_FILE}" in wanted:
+        raise Invalid(
+            "That version keeps its config in a layout the editor no longer writes, so the "
+            "dashboard cannot restore it."
+        )
+    then, now = await asyncio.gather(
+        source.process_names(repo, target), source.process_names(repo, head)
+    )
+    return RestorePlan(
+        target_sha=target,
+        head_sha=head,
+        writes=sorted(path for path, blob in wanted.items() if held.get(path) != blob),
+        deletes=sorted(set(held) - set(wanted)),
+        retires=sorted(set(now) - set(then)),
+    )
+
+
+async def restore_config(
+    session: AsyncSession,
+    source: RepoConfigSource,
+    writer: ConfigCommitWriter,
+    project: Project,
+    version_id: int,
+    *,
+    actor: Actor,
+    expected_head: str,
+) -> ConfigCommitResult:
+    """Commit the config folder back to a synced version's, then sync that commit.
+
+    A commit and not a re-sync of the old one (decision 93): re-syncing leaves the branch ahead
+    of what runs, and the next sync brings the changes back. `expected_head` is the head the
+    person's preview was drawn against. Everything that can refuse does so before the write.
+    """
+    plan = await plan_restore(session, source, project, version_id, expected_head=expected_head)
+    repo = project.github_repo
+    ticket_source = (
+        await session.execute(select(TicketSource).where(TicketSource.project_id == project.id))
+    ).scalar_one_or_none()
+    if plan.unchanged:
+        synced = await sync_config(session, source, project, sha=plan.head_sha)
+        return ConfigCommitResult(
+            sha=plan.head_sha,
+            url=_commit_url(repo, plan.head_sha, project=project, source=ticket_source),
+            committed=False,
+            components=(),
+            written=[],
+            sync=synced,
+            sync_error=None,
+        )
+    try:
+        await check_runtime_bindings(
+            session, project.organization_id, await source.load_processes(repo, plan.target_sha)
+        )
+    except RuntimeBindingInvalid as exc:
+        raise Invalid(as_sentence(str(exc))) from exc
+    except ConfigError as exc:
+        raise Invalid(f"That version no longer loads. {exc.detail}") from exc
+
+    async def read(path: str) -> str:
+        try:
+            return await source.read_file(repo, path, plan.target_sha)
+        except ValueError as exc:  # not UTF-8, or over the contents API's size limit
+            raise Invalid(
+                f"The file is not text at {plan.target_sha[:7]}, so the dashboard cannot "
+                "restore it.",
+                path=path,
+            ) from exc
+        except ContentsNotFound as exc:
+            raise UpstreamFailed(f"{as_sentence(str(exc))} Try again.") from exc
+
+    bodies = await asyncio.gather(*(read(path) for path in plan.writes))
+    sha, sync, sync_error = await _write_and_sync(
+        session,
+        source,
+        writer,
+        project,
+        plan.head_sha,
+        {**dict(zip(plan.writes, bodies, strict=True)), **dict.fromkeys(plan.deletes)},
+        f"Restore the config to {plan.target_sha[:7]} from the Factorial dashboard",
+        {"restored_from": plan.target_sha, **actor.fields()},
+    )
+    return ConfigCommitResult(
+        sha=sha,
+        url=_commit_url(repo, sha, project=project, source=ticket_source),
+        committed=True,
+        components=(),
+        written=plan.writes,
+        sync=sync,
+        sync_error=sync_error,
+        deleted=plan.deletes,
     )
 
 

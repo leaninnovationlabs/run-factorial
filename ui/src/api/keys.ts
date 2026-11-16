@@ -38,6 +38,11 @@ export const keys = {
   /** Derived from the pinned config, so a sync that pins a new version changes it — and clears a
    *  cached "no config yet" 409. */
   projectLabels: (id: number) => ["projects", id, "labels"] as const,
+  /** Every synced snapshot, and what restoring to one would do. Under the project's prefix: a
+   *  commit, a sync or a restore adds a snapshot and moves the head both are read against. */
+  processVersions: (id: number) => ["projects", id, "process-versions"] as const,
+  restorePreview: (id: number, versionId: number | null) =>
+    ["projects", id, "restore-preview", versionId] as const,
   /** A pinned version's reads, by the version ROW's id: two lanes may both be at v1, so the
    *  number alone would serve one lane's snapshot for the other's. Outside the project's prefix
    *  on purpose — a version never changes, most of these cost GitHub reads, and a sync or a
@@ -65,6 +70,7 @@ export const keys = {
   runPreview: (stepRunId: number) => ["step-runs", stepRunId, "preview"] as const,
   runOutputs: (stepRunId: number) => ["step-runs", stepRunId, "outputs"] as const,
   runTerminal: (stepRunId: number) => ["step-runs", stepRunId, "terminal"] as const,
+  runReview: (stepRunId: number) => ["step-runs", stepRunId, "review"] as const,
   completion: (stepRunId: number, requestId: number) =>
     ["step-runs", stepRunId, "completion", requestId] as const,
   overview: ["overview"] as const,

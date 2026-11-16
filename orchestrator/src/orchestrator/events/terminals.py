@@ -269,14 +269,21 @@ def question_parks_now(expires_at: object, typed: datetime | None, since: dateti
 
 
 async def waits_for_a_person(
-    session: AsyncSession, run: StepRun, reason: str | None, typed: datetime | None
+    session: AsyncSession,
+    run: StepRun,
+    reason: str | None,
+    typed: datetime | None,
+    *,
+    review: bool,
 ) -> tuple[bool, dict[str, Any] | None]:
     """Does an unmet stop park for a person rather than end and retry (decision 56)? It does
-    when the agent asked, or its turn failed, this spell (`reason`) or earlier in the stretch,
-    or a person worked with the session. `typed` is the run's `last_terminal_input`.
+    when the step awaits review (`review`, `awaits_review` of its postconditions), when the
+    agent asked, or its turn failed, this spell (`reason`) or earlier in the stretch, or when a
+    person worked with the session. `typed` is the run's `last_terminal_input`.
 
-    Also `ask_this_stretch` when it was read: None when the spell's own reason decided."""
-    if reason in (IdleReason.QUESTION, IdleReason.TURN_ERROR):
+    Also `ask_this_stretch` when it was read: None when `review` or the spell's own reason
+    decided."""
+    if review or reason in (IdleReason.QUESTION, IdleReason.TURN_ERROR):
         return True, None
     ask = await ask_this_stretch(session, run)
     if ask is not None:

@@ -111,6 +111,14 @@ _WORDS: Final[Mapping[str, Callable[..., tuple[str, str]]]] = MappingProxyType(
             f'a comment containing "{marker}" on the pull request from {_branch(head)}',
             f'no comment containing "{marker}" on the pull request from {_branch(head)}',
         ),
+        "request_approval": lambda: (
+            "a person's approval of this step in the dashboard",
+            "no approval of this step in the dashboard",
+        ),
+        "checklist_done": lambda path, branch: (
+            f"every task ticked in {_file(path)} on {_branch(branch)}",
+            f"an open task in {_file(path)} on {_branch(branch)}",
+        ),
     }
 )
 

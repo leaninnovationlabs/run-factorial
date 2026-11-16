@@ -10,9 +10,9 @@ Nothing here decides anything. Glob matching (`branch_exists("spec/{ticket}-*")`
 lives in the predicate layer, so every method takes a **concrete** ref or sha and returns a raw
 enumeration.
 
-`files(ref)` and `check_runs(sha)` are lazy: a recursive tree listing is the most expensive call
-in the loop and most conditions never need it. Implementations memoize per snapshot — one
-`StateSource` instance is one reconciliation tick.
+`files(ref)`, `file_text(ref, path)` and `check_runs(sha)` are lazy: a recursive tree listing is
+the most expensive call in the loop and most conditions never need it. Implementations memoize
+per snapshot — one `StateSource` instance is one reconciliation tick.
 
 Review verdicts are lazy too: `pull_requests()` returns the listing shape only, and
 `pr_review_verdict(number)` is the per-PR seam a gate or predicate calls for the one PR it
@@ -22,13 +22,14 @@ selected. Cost accounting lives in `observer.py`'s module docstring.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 __all__ = [
+    "FILE_TEXT_BYTES",
     "AsyncKeyedMemo",
     "AsyncOnce",
     "BranchState",
@@ -42,7 +43,9 @@ __all__ = [
     "SeededIssue",
     "SnapshotState",
     "StateSource",
+    "capped_text",
     "permission_meets",
+    "walks_a_dot_segment",
 ]
 
 
@@ -179,6 +182,8 @@ class StateSource(Protocol):
     async def branches(self) -> Sequence[BranchState]: ...
     async def pull_requests(self) -> Sequence[PullRequestState]: ...
     async def files(self, ref: str) -> Sequence[str]: ...  # paths at a CONCRETE ref
+    #: One file's text at a CONCRETE ref: None when absent, not UTF-8, or over `FILE_TEXT_BYTES`.
+    async def file_text(self, ref: str, path: str) -> str | None: ...
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]: ...
     async def issue_comments(self) -> Sequence[CommentState]: ...  # the ticket's own conversation
     async def pr_comments(self, number: int) -> Sequence[CommentState]: ...  # one PR's
@@ -189,6 +194,30 @@ class StateSource(Protocol):
     #: `login`'s role on this repository, as GitHub reports it now — lazy and keyed, like
     #: `files`: only a reviewer a gate must weigh costs the lookup.
     async def repo_permission(self, login: str) -> RepoPermission: ...
+
+
+#: A file larger than this reads as None: a predicate scans a plan, not whatever a branch holds.
+FILE_TEXT_BYTES: Final = 1024 * 1024
+
+
+async def capped_text(chunks: AsyncIterable[bytes]) -> str | None:
+    """A body read as it arrives: its UTF-8 text, or None once it passes `FILE_TEXT_BYTES`
+    (the rest is never read) or when it does not decode."""
+    body = bytearray()
+    async for chunk in chunks:
+        body += chunk
+        if len(body) > FILE_TEXT_BYTES:
+            return None
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def walks_a_dot_segment(path: str) -> bool:
+    """A `.` or `..` segment, which a forge may resolve to a different file than the one named.
+    Git never lists one, so `file_text` reads such a path as None."""
+    return any(segment in (".", "..") for segment in path.split("/"))
 
 
 # --- memoization primitives -------------------------------------------------------------------
@@ -257,6 +286,8 @@ class SnapshotState:
     branch_states: tuple[BranchState, ...] = ()
     pull_request_states: tuple[PullRequestState, ...] = ()
     files_by_ref: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    #: ref -> path -> text. A path `files_by_ref` lists without one reads as no text.
+    file_texts_by_ref: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     check_runs_by_sha: Mapping[str, Sequence[CheckRunState]] = field(default_factory=dict)
     issue_comment_states: tuple[CommentState, ...] = ()
     pr_comment_states_by_number: Mapping[int, Sequence[CommentState]] = field(default_factory=dict)
@@ -275,6 +306,9 @@ class SnapshotState:
 
     async def files(self, ref: str) -> Sequence[str]:
         return self.files_by_ref.get(ref, ())
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return self.file_texts_by_ref.get(ref, {}).get(path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         return self.check_runs_by_sha.get(sha, ())
@@ -338,6 +372,9 @@ class SeededIssue:
 
     async def files(self, ref: str) -> Sequence[str]:
         return await self.inner.files(ref)
+
+    async def file_text(self, ref: str, path: str) -> str | None:
+        return await self.inner.file_text(ref, path)
 
     async def check_runs(self, sha: str) -> Sequence[CheckRunState]:
         return await self.inner.check_runs(sha)

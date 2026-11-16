@@ -73,6 +73,7 @@ const BODIES: Record<SectionSlug, ComponentType<BodyProps>> = {
     <ProcessSection
       project={project}
       branch={branch}
+      notConnected={githubNotConnected(project)}
       onFullPage={onFullPage}
       actionsSlot={actionsSlot}
     />
@@ -189,7 +190,10 @@ export function ProjectConfigurationSectionPage() {
           rows={rows.filter(
             (own) =>
               !section.saidInBody?.includes(own.key) &&
-              !(own.key === "process_config" && saysHeadReview(branch)),
+              !(own.key === "process_config" && saysHeadReview(branch)) &&
+              // With no GitHub connection the section says that cause, with its fix, in place of
+              // "never synced", whose advice to sync cannot be taken yet.
+              !(own.key === "process_config" && githubNotConnected(project)),
           )}
         />
       </div>
@@ -204,6 +208,13 @@ export function ProjectConfigurationSectionPage() {
         />
       </Panel>
     </div>
+  );
+}
+
+/** No GitHub connection, by the project's own row: a GitLab project has none to hold. */
+function githubNotConnected(project: ProjectDetail): boolean {
+  return project.readiness.some(
+    (own) => own.key === "github_connection" && own.state === "blocked",
   );
 }
 

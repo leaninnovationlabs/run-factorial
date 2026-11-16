@@ -24,9 +24,10 @@ export function RunRuntime({
   planned?: boolean;
   withAgent?: boolean;
 }) {
-  if (!spawn && !model) return null;
   const agent = withAgent ? spawn?.agent : null;
   const slug = spawn?.runtimeSlug;
+  // An empty span would still take a gap in the row it sits in.
+  if (!agent && !slug && !model) return null;
   return (
     <span className="text-body-sm text-subtlest">
       {agent && `${agent} · `}

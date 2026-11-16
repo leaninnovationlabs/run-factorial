@@ -78,6 +78,7 @@ export const HUMANISED: Record<string, string> = {
   completion_refused: "Not completed",
   step_accepted_on_request: "Accepted on request",
   step_forced: "Forced complete",
+  step_approved: "Step approved",
   next_step_waiting: "Next step waiting",
   step_retry_requested: "Retry requested",
   step_retry_refused: "Retry refused",

@@ -11,6 +11,7 @@ from __future__ import annotations
 from orchestrator.predicates.evaluator import (
     EvalContext,
     Evaluation,
+    ReviewFacts,
     UnknownPredicateError,
     Unmet,
     evaluate,
@@ -24,6 +25,7 @@ __all__ = [
     "EvalContext",
     "Evaluation",
     "Predicate",
+    "ReviewFacts",
     "UnknownPredicateError",
     "Unmet",
     "evaluate",

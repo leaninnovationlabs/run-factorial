@@ -7,6 +7,9 @@ requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk==0.2.174",
     "e2b>=2.51,<3",
+    # The assistant's Bedrock backend streams from it (tech-stack decision 63); e2b already
+    # brings it, and it is declared because it is used directly (decision 14).
+    "httpx>=0.28",
     "pydantic>=2.10",
 ]
 

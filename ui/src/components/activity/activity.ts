@@ -16,7 +16,7 @@
  *    own the page.
  */
 
-export { currentRows, type EventFacts, factsFor, type LongContent } from "./facts";
+export { currentRows, type EventFacts, factsFor, isRoutine, type LongContent } from "./facts";
 export {
   type EventLink,
   gatePullNumber,

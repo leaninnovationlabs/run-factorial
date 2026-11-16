@@ -415,6 +415,45 @@ export interface ConfigEdit {
   base_sha: string;
 }
 
+/** What restoring the config folder to a synced version would do to the branch head
+ *  (`api.schemas.RestorePreviewOut`). */
+export interface RestorePreview {
+  target_sha: string;
+  /** The head the preview was read against; a restore sends it back. */
+  head_sha: string;
+  writes: string[];
+  deletes: string[];
+  /** Processes the head offers and the version does not: the sync retires them. */
+  retires: string[];
+  /** The head already holds the version's folder. */
+  unchanged: boolean;
+}
+
+/** One thing a commit of the draft would be refused for (`api.schemas.DraftProblemOut`). */
+export interface DraftProblem {
+  /** The config file it is in; null for the process text itself, or for a refusal about the
+   *  branch. */
+  path: string | null;
+  message: string;
+  hint: string | null;
+}
+
+/** A commit's own checks on a draft, as a verdict (`api.schemas.DraftCheckOut`). */
+export interface DraftCheck {
+  valid: boolean;
+  problems: DraftProblem[];
+  warnings: LintWarning[];
+  would_write: string[];
+  would_delete: string[];
+}
+
+/** A file the `factorial` branch has, removed by the operator (`api.schemas.ConfigDeleteIn`). */
+export interface ConfigDelete {
+  path: string;
+  /** The git blob the operator saw. */
+  base_sha: string;
+}
+
 export interface ConfigCommitResult {
   sha: string;
   /** The commit on GitHub. */
@@ -426,6 +465,8 @@ export interface ConfigCommitResult {
   components: ComponentProposal[];
   /** Every path the commit wrote, stubs included. */
   written: string[];
+  /** Every path the commit removed. Absent from a server older than this client. */
+  deleted?: string[];
   /** Null when the sync failed after the commit landed; `sync_error` then says why. */
   sync: ProcessSync | null;
   sync_error: string | null;
@@ -1562,6 +1603,31 @@ export interface CompletionResult extends RequestResult {
   overridable: boolean;
 }
 
+/** A run's latest dashboard approval, at the commit it was given on (`api.schemas.ApprovalOut`). */
+export interface Approval {
+  approved_by: string;
+  at: string;
+  head_sha: string;
+}
+
+/** `GET /step-runs/{id}/review` (`api.schemas.ReviewOut`): what Approve would approve, read live
+ *  off the forge. `offered` when Approve applies to the run at all, and `refusal` when a press now
+ *  would be refused, null when it would be accepted. A step whose postconditions do not call
+ *  `request_approval()` reads `awaits_review: false` and nothing else. `head_sha` and `branch` are
+ *  null, and `pushed` false, when Approve is not offered or a refusal was decided without the
+ *  forge. */
+export interface Review {
+  awaits_review: boolean;
+  branch: string | null;
+  head_sha: string | null;
+  /** This run moved the step's branch since it was spawned. On a lane whose steps share a branch,
+   *  a head alone may be the earlier step's. Wording only: it never refuses a press. */
+  pushed: boolean;
+  approval: Approval | null;
+  offered: boolean;
+  refusal: string | null;
+}
+
 export interface RunActivityResponse {
   step_run_id: number;
   runtime_run_id: string;
@@ -1795,6 +1861,8 @@ export interface AssistantReadyOut {
   /** Changes with the credential, so a chat holding a refusal sees the fix. */
   credential_updated_at: string | null;
   ready_to_send: boolean;
+  /** The sentence a send would be refused with. Absent from an API older than the field. */
+  refusal?: string | null;
 }
 
 export interface ChatItem {

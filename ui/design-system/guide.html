@@ -1721,6 +1721,11 @@ up out of it with the button&#x27;s edge and shadow.</li>
 <li><strong>A message is not a block of colour.</strong> A <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">SectionMessage</code> is on the plain surface, with a
 grey edge and a bar down its left edge in its role&#x27;s colour. Its actions are default buttons. A
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">Banner</code> keeps the bold fill, because it tells you something that is true on every page.</li>
+<li><strong>Only a success message closes.</strong> A success message that tells the result of an action (a
+sync, a commit, a check) has a close button (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">onDismiss</code>, with <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">useDismissible</code>). The next
+result shows again. A warning or an error stays, because you can still need it. An
+information message stays, because it tells the state of the page. A success message that is
+the whole page, such as &quot;Check your email&quot;, does not close.</li>
 <li><strong>There is no subtle button.</strong> ADS has a white default button and a subtle button with no
 fill, and a row of subtle buttons looked like text. Here <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">default</code> is the one everyday button,
 on a light wash of its own (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">--button-fill</code>, lighter than ADS&#x27;s neutral in light mode). <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ghost</code> has no fill: an icon button is <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ghost</code> unless you set another
@@ -1805,6 +1810,19 @@ the page, never shifts the layout.</li>
 makes everything under it <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">inert</code>, which contains focus without a Tab trap. Do not build a
 second overlay mechanism, and do not add a headless component library (deferred in
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">tech-stack.md</code> §5).</li>
+<li><strong>A right-click menu is <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ContextMenu</code></strong>, and a button on the same row opens the same entries
+in a <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">DropdownMenu</code>. A right-click has no keyboard equivalent and no touch equivalent, so the
+button is the control and the right-click is a shortcut to it. <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ContextMenu</code> is not an ADS
+name: ADS has no menu at a pointer. It uses the <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">DropdownMenu</code> surface, layer and menu list.
+A menu item may carry an <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">icon</code> before its label, and a group&#x27;s name is the heading over its
+items (&quot;Add new&quot;).</li>
+<li><strong>A question that belongs where the person pressed opens in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">PopupAt</code></strong>: the popup&#x27;s surface
+at a point, with no button of its own. The config explorer asks for a new file&#x27;s name there.</li>
+<li><strong>Figures that do not need room in a row go behind an icon in a <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">HoverCard</code></strong>: a run&#x27;s model,
+duration, tokens and cost on its attempt&#x27;s header. A mouse on the icon, keyboard focus or a
+press opens the card, and a press is how a phone opens it. The card describes the icon and
+never takes the focus, so it holds text only. <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">HoverCard</code> is not an ADS name: ADS has no card
+that opens on hover. It uses the layer stack and a popup&#x27;s surface.</li>
 <li><strong>Action feedback</strong> goes through <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">useActionFeedback</code> / <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">showFlag</code>. A slow action says so after
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">SLOW_AFTER_MS</code>.</li>
 <li><strong>Data loading</strong> wraps a query in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">QueryBoundary</code>, with a skeleton shaped like the content, not
@@ -1818,7 +1836,9 @@ decision 50.</p>
 <ul class="list-disc space-y-1.5 pl-5">
 <li><strong>The tab bar</strong> (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">shell/TabBar.tsx</code>) is at the foot of the window: Tickets, Assistant and Menu.
 Tickets shows only in a project, and goes to the tickets of that project. Menu opens the side
-navigation over the page. The top bar has no menu button on a phone.</li>
+navigation over the page, with the organization and project menus at its top. The top bar has
+no menu button on a phone. It shows the organization and the project as names only, because
+a name in the bar is too small to press.</li>
 <li><strong>A layout change in script</strong> uses <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">useIsPhone()</code> (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">components/ui/media.ts</code>). Use it only when
 the phone draws a different thing, for example a list in place of a board. When only the
 layout changes, use a <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">max-md:</code> or <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">md:</code> class.</li>

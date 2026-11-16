@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 /**
- * The per-secret choice of how a cloud sandbox run receives a key: what the form sends.
+ * The Secrets table's editing: a missing key's row opened for a value, a row added, a stored row
+ * changed in place, and what each sends.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -65,55 +66,45 @@ async function mounted(detail: ProjectDetail): Promise<HTMLElement> {
   return view.container;
 }
 
-async function show(): Promise<HTMLElement> {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  holding(qc);
-  view = await mount(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter>
-        <SecretsBody project={project()} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-  const form = view.container.querySelector<HTMLElement>(`[data-store-for="${KEY}"]`);
-  if (!form) throw new Error("no store form for the key");
-  return form;
+/** The page with the missing KEY's row open for a value, as its Set value opens it. */
+async function show(detail: ProjectDetail = project()): Promise<HTMLElement> {
+  const page = await mounted(detail);
+  await click(page.querySelector(`[data-set-value="${KEY}"]`));
+  if (!page.querySelector("[data-editor]")) throw new Error("no editor on the key's row");
+  return page;
 }
 
-function field(form: HTMLElement, selector: string): HTMLInputElement | HTMLSelectElement {
-  const found = form.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
+function field(scope: HTMLElement, selector: string): HTMLInputElement | HTMLSelectElement {
+  const found = scope.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
   if (!found) throw new Error(`no ${selector}`);
   return found;
 }
 
 describe("the sandbox delivery choice", () => {
   it("supplies every secret, as an environment variable unless a header is chosen", async () => {
-    const form = await show();
-    const delivery = field(form, "select[data-delivery]");
+    const page = await show();
+    const delivery = field(page, "select[data-delivery]");
     expect([...delivery.querySelectorAll("option")].map((o) => o.value)).toEqual(["env", "header"]);
     expect(delivery.value).toBe("env");
-    expect(form.textContent).toContain("The agent can read this value");
-    await choose(delivery, "header");
-    expect(form.textContent).toContain("the agent sees a placeholder");
   });
 
   it("offers no vendor presets, only the project's own egress hosts", async () => {
-    const form = await show();
-    await choose(field(form, "select[data-delivery]"), "header");
-    expect(form.querySelector("select[data-preset]")).toBeNull();
-    const hosts = [...field(form, "[data-egress-host]").querySelectorAll("option")];
+    const page = await show();
+    await choose(field(page, "select[data-delivery]"), "header");
+    expect(page.querySelector("select[data-preset]")).toBeNull();
+    const hosts = [...field(page, "[data-egress-host]").querySelectorAll("option")];
     expect(hosts.map((option) => option.value)).toEqual(["", "api.example.com"]);
   });
 
   it("sends a header delivery's host and header with the value", async () => {
     const put = vi.spyOn(api, "putSecret").mockResolvedValue({ name: KEY });
-    const form = await show();
-    await type(field(form, 'input[type="password"]'), "rw-token");
-    await choose(field(form, "select[data-delivery]"), "header");
-    await choose(field(form, "[data-egress-host]"), "api.example.com");
-    await type(field(form, "[data-egress-header]"), "project-access-token");
+    const page = await show();
+    await type(field(page, 'input[type="password"]'), "rw-token");
+    await choose(field(page, "select[data-delivery]"), "header");
+    await choose(field(page, "[data-egress-host]"), "api.example.com");
+    await type(field(page, "[data-egress-header]"), "project-access-token");
 
-    await click(byText(form, "button", "Save"));
+    await click(byText(page, "button", "Save"));
     expect(put).toHaveBeenCalledWith(9042, KEY, {
       value: "rw-token",
       sandbox_delivery: "header",
@@ -125,77 +116,117 @@ describe("the sandbox delivery choice", () => {
   it("shows the server's host refusal on the Egress host field", async () => {
     const refusal = "sentry.io is not one of this project's egress hosts: add it first";
     vi.spyOn(api, "putSecret").mockRejectedValue(new ApiError(422, refusal, "egress_host"));
-    const form = await show();
-    await type(field(form, 'input[type="password"]'), "rw-token");
-    await choose(field(form, "select[data-delivery]"), "header");
-    await choose(field(form, "[data-egress-host]"), "api.example.com");
-    await type(field(form, "[data-egress-header]"), "project-access-token");
-    await click(byText(form, "button", "Save"));
+    const page = await show();
+    await type(field(page, 'input[type="password"]'), "rw-token");
+    await choose(field(page, "select[data-delivery]"), "header");
+    await choose(field(page, "[data-egress-host]"), "api.example.com");
+    await type(field(page, "[data-egress-header]"), "project-access-token");
+    await click(byText(page, "button", "Save"));
     await settle(); // the rejected mutation re-renders a tick later
 
-    const host = field(form, "[data-egress-host]");
+    const host = field(page, "[data-egress-host]");
     expect(host.getAttribute("aria-invalid")).toBe("true");
     const described = document.getElementById(host.getAttribute("aria-describedby") ?? "");
     expect(described?.textContent).toContain(refusal);
-    expect(form.textContent?.split(refusal).length).toBe(2);
+    expect(page.textContent?.split(refusal).length).toBe(2);
   });
 
   it("sends an environment variable when nothing else is chosen", async () => {
     const put = vi.spyOn(api, "putSecret").mockResolvedValue({ name: KEY });
-    const form = await show();
-    await type(field(form, 'input[type="password"]'), "rw-token");
-    await click(byText(form, "button", "Save"));
+    const page = await show();
+    await type(field(page, 'input[type="password"]'), "rw-token");
+    await click(byText(page, "button", "Save"));
     expect(put).toHaveBeenCalledWith(9042, KEY, { value: "rw-token", sandbox_delivery: "env" });
   });
 
-  it("sends an environment variable choice with no host or header", async () => {
+  it("refuses a missing key's row without a value, and sends nothing", async () => {
+    const put = vi.spyOn(api, "putSecret");
+    const page = await show();
+    await click(byText(page, "button", "Save"));
+    expect(page.textContent).toContain("Enter a value to store.");
+    expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("the choice without an egress host", () => {
+  it("offers no choice, only the value, and sends an environment variable", async () => {
     const put = vi.spyOn(api, "putSecret").mockResolvedValue({ name: KEY });
-    const form = await show();
-    await type(field(form, 'input[type="password"]'), "db-password");
-    await choose(field(form, "select[data-delivery]"), "env");
-    expect(form.textContent).toContain("The agent can read this value");
-    await click(byText(form, "button", "Save"));
-    expect(put).toHaveBeenCalledWith(9042, KEY, { value: "db-password", sandbox_delivery: "env" });
+    const page = await show(project({ settings: {} }));
+    expect(page.querySelector("select[data-delivery]")).toBeNull();
+    expect(page.querySelector('[data-editor] [data-supplied-as="env"]')).not.toBeNull();
+    await type(field(page, 'input[type="password"]'), "rw-token");
+    await click(byText(page, "button", "Save"));
+    expect(put).toHaveBeenCalledWith(9042, KEY, { value: "rw-token", sandbox_delivery: "env" });
+  });
+
+  it("keeps the choice for a saved header, so it can be moved back", async () => {
+    const page = await mounted(project({ ...ROUTED, settings: {} }));
+    await click(page.querySelector(`[data-edit="${KEY}"]`));
+    expect(field(page, "select[data-delivery]").value).toBe("header");
   });
 });
 
-describe("the dropdown's guidance", () => {
-  it("offers the header only once the project has an egress host", async () => {
-    const page = await mounted(project({ settings: {} }));
-    const header = page.querySelector<HTMLOptionElement>(
-      `[data-store-for="${KEY}"] select[data-delivery] option[value="header"]`,
-    );
-    expect(header?.disabled).toBe(true);
-    expect(header?.textContent).toContain("add an egress host first");
-  });
-
+describe("the choice with an egress host", () => {
   it("picks the project's only egress host for a header", async () => {
-    const form = await show();
-    await choose(field(form, "select[data-delivery]"), "header");
-    expect(field(form, "[data-egress-host]").value).toBe("api.example.com");
-  });
-
-  it("marks the environment variable's consequence as a warning", async () => {
-    const form = await show();
-    const note = form.querySelector('[data-tone="warning"]');
-    expect(note?.textContent).toContain("The agent can read this value");
+    const page = await show();
+    await choose(field(page, "select[data-delivery]"), "header");
+    expect(field(page, "[data-egress-host]").value).toBe("api.example.com");
   });
 });
 
-describe("a stored secret's delivery", () => {
+describe("adding a secret", () => {
+  it("adds a row for a new key and sends its trimmed name, value and delivery", async () => {
+    const put = vi.spyOn(api, "putSecret").mockResolvedValue({ name: "DOCS_TOKEN" });
+    const page = await mounted(project());
+    await click(byText(page, "button", "Add secret"));
+    await type(field(page, '[data-editor] input[autocomplete="off"]'), " DOCS_TOKEN ");
+    await type(field(page, 'input[type="password"]'), "docs-token");
+    await click(byText(page, "button", "Save"));
+    expect(put).toHaveBeenCalledWith(9042, "DOCS_TOKEN", {
+      value: "docs-token",
+      sandbox_delivery: "env",
+    });
+  });
+
+  it("refuses a name already in the table, and sends nothing", async () => {
+    const put = vi.spyOn(api, "putSecret");
+    const page = await mounted(project());
+    await click(byText(page, "button", "Add secret"));
+    await type(field(page, '[data-editor] input[autocomplete="off"]'), KEY);
+    await type(field(page, 'input[type="password"]'), "again");
+    await click(byText(page, "button", "Save"));
+    expect(page.textContent).toContain("That key is already in the table");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("closes the new row on Cancel, sending nothing", async () => {
+    const put = vi.spyOn(api, "putSecret");
+    const page = await mounted(project());
+    await click(byText(page, "button", "Add secret"));
+    await click(byText(page, "button", "Cancel"));
+    expect(page.querySelector("[data-editor]")).toBeNull();
+    expect(byText(page, "button", "Add secret")).not.toBeNull();
+    expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("a stored secret's row", () => {
+  async function edit(detail: ProjectDetail): Promise<HTMLElement> {
+    const page = await mounted(detail);
+    expect(page.querySelector("[data-editor]")).toBeNull();
+    await click(page.querySelector(`[data-edit="${KEY}"]`));
+    return page;
+  }
+
   it("changes to a header without writing the value again", async () => {
     const patch = vi
       .spyOn(api, "patchSecretDelivery")
       .mockResolvedValue({ name: KEY, mode: "header", host: "h", header: "x" });
     const put = vi.spyOn(api, "putSecret");
-    const page = await mounted(project(STORED));
-    const row = page.querySelector<HTMLElement>(`[data-delivery-for="${KEY}"]`);
-    if (!row) throw new Error("no delivery editor on the stored row");
-    expect(page.querySelector(`[data-store-for="${KEY}"]`)).toBeNull();
-
-    await choose(field(row, "select[data-delivery]"), "header");
-    await type(field(row, "[data-egress-header]"), "project-access-token");
-    await click(byText(row, "button", "Save"));
+    const page = await edit(project(STORED));
+    await choose(field(page, "select[data-delivery]"), "header");
+    await type(field(page, "[data-egress-header]"), "project-access-token");
+    await click(byText(page, "button", "Save"));
 
     expect(patch).toHaveBeenCalledWith(9042, KEY, {
       sandbox_delivery: "header",
@@ -205,26 +236,23 @@ describe("a stored secret's delivery", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("goes back to an environment variable as soon as it is chosen", async () => {
+  it("goes back to an environment variable without writing the value again", async () => {
     const patch = vi
       .spyOn(api, "patchSecretDelivery")
       .mockResolvedValue({ name: KEY, mode: "env", host: null, header: null });
-    const page = await mounted(project(ROUTED));
-    const row = page.querySelector<HTMLElement>(`[data-delivery-for="${KEY}"]`);
-    if (!row) throw new Error("no delivery editor on the stored row");
-    await choose(field(row, "select[data-delivery]"), "env");
+    const put = vi.spyOn(api, "putSecret");
+    const page = await edit(project(ROUTED));
+    await choose(field(page, "select[data-delivery]"), "env");
+    await click(byText(page, "button", "Save"));
     expect(patch).toHaveBeenCalledWith(9042, KEY, { sandbox_delivery: "env" });
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("keeps the delivery when only the value is replaced", async () => {
     const put = vi.spyOn(api, "putSecret").mockResolvedValue({ name: KEY });
-    const page = await mounted(project(ROUTED));
-    await click(byText(page, "button", "Replace value"));
-    const form = page.querySelector<HTMLElement>(`[data-store-for="${KEY}"]`);
-    if (!form) throw new Error("no value form");
-    expect(form.querySelector("select[data-delivery]")).toBeNull();
-    await type(field(form, 'input[type="password"]'), "rw-rotated");
-    await click(byText(form, "button", "Save"));
+    const page = await edit(project(ROUTED));
+    await type(field(page, 'input[type="password"]'), "rw-rotated");
+    await click(byText(page, "button", "Save"));
     expect(put).toHaveBeenCalledWith(9042, KEY, {
       value: "rw-rotated",
       sandbox_delivery: "header",
@@ -232,13 +260,23 @@ describe("a stored secret's delivery", () => {
       egress_header: "project-access-token",
     });
   });
+
+  it("sends nothing when Save is pressed with nothing changed", async () => {
+    const put = vi.spyOn(api, "putSecret");
+    const patch = vi.spyOn(api, "patchSecretDelivery");
+    const page = await edit(project(STORED));
+    await click(byText(page, "button", "Save"));
+    expect(put).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+    expect(page.querySelector("[data-editor]")).toBeNull();
+  });
 });
 
 describe("removing a stored secret", () => {
   it("deletes it once the dialog is confirmed", async () => {
     const remove = vi.spyOn(api, "deleteSecret").mockResolvedValue(undefined);
     const page = await mounted(project(STORED));
-    await click(byText(page, "button", "Remove"));
+    await click(page.querySelector(`[data-remove="${KEY}"]`));
     await settle(20);
     expect(remove).not.toHaveBeenCalled();
     const dialog = document.querySelector('[role="dialog"]');

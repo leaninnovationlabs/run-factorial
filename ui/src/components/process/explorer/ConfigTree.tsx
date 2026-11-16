@@ -12,11 +12,24 @@
  * replaces with its stub template — never derived from a variant's `offered`/`default_on`, which
  * says what the catalog COULD write, not what this selection will.
  *
+ * A file staged for deletion stays in the tree, struck through, with the way to put it back: a
+ * row that vanished would leave nothing to restore until the commit had already been made.
+ *
  * The retired `agents` readiness row lived as one paragraph of prose about every agent at once.
  * Its verdict is now `ConfigFile.warning`, drawn on the manifest it is about.
  */
 
-import { Button, Checkbox, cx, Icon, IconButton, InlineMessage } from "../../ui";
+import {
+  Button,
+  Checkbox,
+  cx,
+  DropdownMenu,
+  Icon,
+  IconButton,
+  InlineMessage,
+  type MenuEntry,
+  Tooltip,
+} from "../../ui";
 import { repoLockReason } from "./repoEdits";
 import {
   buildTree,
@@ -43,12 +56,23 @@ export interface ConfigTreeProps {
   created?: Set<string>;
   /** Folders made in the editor that hold no file yet. */
   folders?: string[];
+  /** Files staged for deletion: the next commit removes them. */
+  deleted?: Set<string>;
+  /** Files a Delete may take (`deletablePaths`). */
+  deletable?: Set<string>;
   /** The path whose body the right pane is showing. */
   openPath: string | null;
   /** Absent in the read-only drawer, where nothing is tickable and no commit is coming. */
   onToggle?: (paths: string[], on: boolean) => void;
   onExpand: (path: string, open: boolean) => void;
   onOpen: (path: string) => void;
+  /** Absent in the read-only drawer. */
+  onDelete?: (paths: string[]) => void;
+  onRestore?: (paths: string[]) => void;
+  /** The entries of a folder row's menu; a folder with none draws no menu. */
+  menuFor?: (node: TreeNode) => MenuEntry[];
+  /** A right-click on a folder row that has a menu, with the pointer's place in the window. */
+  onContextMenu?: (node: TreeNode, at: { x: number; y: number }) => void;
 }
 
 function isAgentManifest(file: ExplorerFile): boolean {
@@ -73,10 +97,16 @@ export function ConfigTree({
   modified = EMPTY,
   created = EMPTY,
   folders = [],
+  deleted = EMPTY,
+  deletable = EMPTY,
   openPath,
   onToggle,
   onExpand,
   onOpen,
+  onDelete,
+  onRestore,
+  menuFor,
+  onContextMenu,
 }: ConfigTreeProps) {
   const roots = buildTree(files, folders);
   return (
@@ -93,10 +123,16 @@ export function ConfigTree({
             stale={stale}
             modified={modified}
             created={created}
+            deleted={deleted}
+            deletable={deletable}
             openPath={openPath}
             onToggle={onToggle}
             onExpand={onExpand}
             onOpen={onOpen}
+            onDelete={onDelete}
+            onRestore={onRestore}
+            menuFor={menuFor}
+            onContextMenu={onContextMenu}
           />
         ))}
       </ul>
@@ -105,12 +141,13 @@ export function ConfigTree({
 }
 
 /** What the commit will do to a row, in ink: success creates, information changes
- *  something already there — the two outcomes worth telling apart at a glance before pressing the
- *  button. Neither is warning: the warning ink is for the unusable-manifest and drift marks, which
- *  are problems to fix, and a file the operator deliberately edited is not one. */
+ *  something already there, danger removes — the outcomes worth telling apart at a glance before
+ *  pressing the button. None is warning: the warning ink is for the unusable-manifest and drift
+ *  marks, which are problems to fix, and a file the operator deliberately changed is not one. */
 const CHANGE_INK: Record<ChangeKind, string> = {
   added: "text-success",
   modified: "text-information",
+  deleted: "text-danger",
 };
 
 /** The row the right pane is showing: the finesse selected ground, a bar, and medium weight —
@@ -127,10 +164,16 @@ interface RowProps {
   stale: Set<string>;
   modified: Set<string>;
   created: Set<string>;
+  deleted: Set<string>;
+  deletable: Set<string>;
   openPath: string | null;
   onToggle?: (paths: string[], on: boolean) => void;
   onExpand: (path: string, open: boolean) => void;
   onOpen: (path: string) => void;
+  onDelete?: (paths: string[]) => void;
+  onRestore?: (paths: string[]) => void;
+  menuFor?: (node: TreeNode) => MenuEntry[];
+  onContextMenu?: (node: TreeNode, at: { x: number; y: number }) => void;
 }
 
 function TreeRow(props: RowProps) {
@@ -138,17 +181,28 @@ function TreeRow(props: RowProps) {
 }
 
 function DirRow(props: RowProps) {
-  const { node, depth, expanded, selected, modified, created, onToggle, onExpand } = props;
+  const { node, depth, expanded, selected, modified, created, deleted, onToggle, onExpand } = props;
   const isOpen = expanded.has(node.path);
   const tick = tickOf(node, selected);
   const selectable = selectableUnder(node);
   const selectedCount = selectable.filter((path) => selected.has(path)).length;
-  const change = changeOf(node, selected, modified, created);
+  const change = changeOf(node, selected, modified, created, deleted);
+  const entries = props.menuFor?.(node) ?? [];
+  const { onContextMenu } = props;
   return (
     <li>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: the right-click opens the menu the row's own button opens */}
       <div
         style={{ paddingLeft: depth * 14 }}
         className="flex items-center gap-1.5 rounded-sm py-0.5 pr-1 hover:bg-neutral-subtle-hovered"
+        onContextMenu={
+          onContextMenu && entries.length > 0
+            ? (event) => {
+                event.preventDefault();
+                onContextMenu(node, { x: event.clientX, y: event.clientY });
+              }
+            : undefined
+        }
       >
         <IconButton
           icon={isOpen ? "chevron-down" : "chevron-right"}
@@ -170,14 +224,38 @@ function DirRow(props: RowProps) {
           glyph={isOpen ? "folder-open" : "folder"}
           className={change ? CHANGE_INK[change] : "text-icon-subtle"}
         />
-        <span className={cx("truncate font-medium", change ? CHANGE_INK[change] : "text-default")}>
-          {node.name}
-        </span>
-        {selectable.length > 0 && (
-          <span className="ml-auto shrink-0 text-body-sm text-subtlest tabular-nums">
-            {selectedCount}/{selectable.length}
+        {/* The whole name over one the panel cuts short. A keyboard reaches it on the chevron
+            before it, whose own name carries the folder's. */}
+        <Tooltip content={node.name} position="bottom-start" onlyIfTruncated>
+          <span
+            className={cx(
+              "truncate font-medium",
+              change === "deleted" && "line-through",
+              change ? CHANGE_INK[change] : "text-default",
+            )}
+          >
+            {node.name}
           </span>
-        )}
+        </Tooltip>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {selectable.length > 0 && (
+            <span className="text-body-sm text-subtlest tabular-nums">
+              {selectedCount}/{selectable.length}
+            </span>
+          )}
+          {entries.length > 0 && (
+            <DropdownMenu
+              trigger={{
+                label: `Actions for ${node.name}`,
+                icon: "more",
+                iconOnly: true,
+                appearance: "ghost",
+                spacing: "compact",
+              }}
+              items={entries}
+            />
+          )}
+        </span>
       </div>
       {isOpen && (
         <ul>
@@ -193,8 +271,10 @@ function DirRow(props: RowProps) {
 function FileRow(props: RowProps) {
   const { node, depth, selected, edited, stale, modified, created, openPath, onToggle, onOpen } =
     props;
+  const { deleted, deletable, onDelete, onRestore } = props;
   const file = node.file;
   if (!file) return null;
+  const isDeleted = deleted.has(node.path);
   const selectable = isSelectable(file);
   const inRepo = Boolean(file.repo) || Boolean(file.proposal?.present_in_repo);
   // The editor edits a repo file in place unless the pin and the head disagree on it.
@@ -203,7 +283,7 @@ function FileRow(props: RowProps) {
   const isStub = selectable && isAgentManifest(file) && !isSelected;
   const warning = file.repo?.warning ?? null;
   const drift = file.repo?.drift;
-  const change = changeOf(node, selected, modified, created);
+  const change = changeOf(node, selected, modified, created, deleted);
   return (
     <li>
       <div
@@ -226,22 +306,29 @@ function FileRow(props: RowProps) {
             <span className="w-3.5 shrink-0" />
           ))}
         {fileIcon(node.name, change)}
-        <Button
-          spacing="compact"
-          aria-current={openPath === node.path ? "true" : undefined}
-          onClick={() => onOpen(node.path)}
-          className="min-w-0 justify-start"
-        >
-          <span
-            className={cx(
-              "truncate",
-              openPath === node.path && "font-medium",
-              change ? CHANGE_INK[change] : inRepo && !warning ? "text-subtle" : "text-default",
-            )}
-          >
-            {node.name}
-          </span>
-        </Button>
+        {/* A button never shrinks on its own, so the name's box does: a long name truncates
+            before the row's badges and its Delete are pushed out of a narrow explorer. */}
+        <span className="flex min-w-0 shrink">
+          <Tooltip content={node.name} position="bottom-start" onlyIfTruncated>
+            <Button
+              spacing="compact"
+              aria-current={openPath === node.path ? "true" : undefined}
+              onClick={() => onOpen(node.path)}
+              className="min-w-0 justify-start"
+            >
+              <span
+                className={cx(
+                  "truncate",
+                  openPath === node.path && "font-medium",
+                  isDeleted && "line-through",
+                  change ? CHANGE_INK[change] : inRepo && !warning ? "text-subtle" : "text-default",
+                )}
+              >
+                {node.name}
+              </span>
+            </Button>
+          </Tooltip>
+        </span>
         {warning && (
           <InlineMessage appearance="warning" iconLabel={`Unusable: ${node.name}`} title="Unusable">
             {warning}
@@ -265,10 +352,35 @@ function FileRow(props: RowProps) {
             {DRIFT_HINTS[drift]}
           </InlineMessage>
         )}
-        {inRepo && !file.proposal && (
-          <span className="flex shrink-0 items-center gap-1 text-body-sm text-subtlest">
-            {locked && <Icon glyph="lock" size="small" />} In repo
-          </span>
+        {isDeleted ? (
+          <span className="shrink-0 text-body-sm text-subtlest">Deleted</span>
+        ) : (
+          inRepo &&
+          !file.proposal && (
+            <span className="flex shrink-0 items-center gap-1 text-body-sm text-subtlest">
+              {locked && <Icon glyph="lock" size="small" />} In repo
+            </span>
+          )
+        )}
+        {isDeleted && onRestore ? (
+          <IconButton
+            icon="undo"
+            label={`Restore ${node.name}`}
+            spacing="compact"
+            className="ml-auto"
+            onClick={() => onRestore([node.path])}
+          />
+        ) : (
+          onDelete &&
+          deletable.has(node.path) && (
+            <IconButton
+              icon="trash"
+              label={`Delete ${node.name}`}
+              spacing="compact"
+              className="ml-auto"
+              onClick={() => onDelete([node.path])}
+            />
+          )
         )}
       </div>
     </li>

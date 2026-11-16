@@ -13,7 +13,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { keys } from "../api/queries";
 import { seedFailure } from "../api/queryTesting";
-import { TicketPage } from "./TicketPage";
+import type { Review } from "../api/types";
+import { FOCUSED_STORAGE_KEY, TicketPage } from "./TicketPage";
 import {
   CONFIG,
   type Entry,
@@ -42,6 +43,18 @@ function render(
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+/** The page in a browser that remembers Focused switched off: every row of the log. */
+function renderAll(...args: Parameters<typeof render>): string {
+  vi.stubGlobal("window", {
+    localStorage: { getItem: (key: string) => (key === FOCUSED_STORAGE_KEY ? "0" : null) },
+  });
+  try {
+    return render(...args);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 }
 
 /** Every metric on the page, as the two halves of its box in the order they are written. */
@@ -336,7 +349,7 @@ describe("TicketPage", () => {
 
     it("marks the new generation's attempt starting, not the one the old generation booked", () => {
       // The fixture's log booked `plan` #2 in generation 1; the restart entered #2 again.
-      const html = render(
+      const html = renderAll(
         [
           {
             id: 7,
@@ -653,7 +666,7 @@ describe("TicketPage", () => {
 
   it("folds unbounded content behind buttons instead of inlining it", () => {
     const html = render();
-    expect(button(html, "Output")).not.toBeNull();
+    expect(button(html, "Terminal")).not.toBeNull();
     // The tail of the long summary must not be in the row markup.
     expect(html).not.toContain("Needs a decision");
     // The step header does not repeat a failed run's reason: the event row that reports the
@@ -662,7 +675,7 @@ describe("TicketPage", () => {
   });
 
   it("reads newest first, blocks and events alike", () => {
-    const html = render();
+    const html = renderAll();
     // `spec_gate` has no events yet, which puts it at the newest end of the log.
     expect(html.indexOf("No events recorded")).toBeLessThan(
       html.indexOf("Expected results missing"),
@@ -672,11 +685,77 @@ describe("TicketPage", () => {
     expect(html.indexOf("Agent started")).toBeLessThan(html.indexOf("Step started"));
   });
 
-  it("marks the order the page is actually in, not the one a click would give", () => {
+  it("sorts the activity with one icon beside its title, named for what a press does", () => {
     const html = render();
-    expect(html).toContain('role="group" aria-label="Order"');
-    expect(button(html, "Newest first")).toContain('aria-pressed="true"');
-    expect(button(html, "Oldest first")).toContain('aria-pressed="false"');
+    const header = html.slice(html.indexOf(">Activity<"));
+    const sort = header.match(/<button[^>]*aria-label="Show oldest first"[^>]*>.*?<\/button>/)?.[0];
+    // The glyph is the order the log is in now: newest at the top, so sorted descending.
+    expect(sort).toContain('data-glyph="sort-down"');
+    // Outside the heading, so the panel is still named Activity alone.
+    expect(html).toMatch(/<h2[^>]*>(?:<[^>]+>)*Activity(?:<[^>]+>)*<\/h2>/);
+    expect(html).not.toContain("Newest first");
+    expect(html).not.toContain('aria-label="Order"');
+  });
+
+  describe("where a message goes", () => {
+    /** The activity block whose header names `step`: from its header to the next block's. */
+    const block = (html: string, step: string) => {
+      const activity = html.slice(html.indexOf(">Activity<"));
+      const start = activity.indexOf(`>${step}</code>`);
+      const next = activity.indexOf('<header class="sticky', start);
+      return activity.slice(start, next === -1 ? undefined : next);
+    };
+
+    it("puts the gate's message in the gate's block, under its header", () => {
+      const html = render();
+      const gate = block(html, "spec_gate");
+      expect(gate.indexOf("</header>")).toBeGreaterThan(-1);
+      expect(gate.indexOf("</header>")).toBeLessThan(gate.indexOf("Waiting for a review"));
+      // Said once, and not over the graph.
+      expect(html.match(/Waiting for a review/g)).toHaveLength(1);
+      expect(html.indexOf("Waiting for a review")).toBeGreaterThan(html.indexOf("flow-graph"));
+    });
+
+    it("keeps a message about the whole ticket at the top", () => {
+      const html = render([], { quarantined_at: "2026-08-25T11:00:00Z" });
+      expect(html.indexOf("Stopped after repeated errors")).toBeLessThan(
+        html.indexOf("flow-graph"),
+      );
+    });
+
+    it("keeps the gate's message at the top until the log can draw the gate's block", () => {
+      const html = render([], {}, undefined, CONFIG, (qc) =>
+        qc.removeQueries({ queryKey: keys.timeline(TICKET_ID) }),
+      );
+      expect(html).toContain("Loading the activity");
+      expect(html).toContain("Waiting for a review");
+      expect(html.indexOf("Waiting for a review")).toBeLessThan(html.indexOf("flow-graph"));
+    });
+  });
+
+  describe("Focused", () => {
+    /** The switch's opening tag, found by its label. */
+    const focusedSwitch = (html: string) =>
+      html.match(/<button[^>]*role="switch"[^>]*aria-labelledby="([^"]+)"[^>]*>/g)?.find((tag) => {
+        const id = tag.match(/aria-labelledby="([^"]+)"/)?.[1];
+        return id !== undefined && html.includes(`id="${id}">Focused<`);
+      });
+
+    it("is on for a reader who never switched it, leaving the routine rows out", () => {
+      const html = render();
+      expect(focusedSwitch(html)).toContain('aria-checked="true"');
+      expect(html).toContain("Expected results missing");
+      expect(html).toContain("Retry scheduled");
+      expect(html).not.toContain("Agent started");
+      expect(html).not.toContain("Step started");
+    });
+
+    it("shows every row to a reader whose browser remembers it off", () => {
+      const html = renderAll();
+      expect(focusedSwitch(html)).toContain('aria-checked="false"');
+      expect(html).toContain("Agent started");
+      expect(html).toContain("Step started");
+    });
   });
 
   it("totals the ticket's spend in the Activity header", () => {
@@ -714,8 +793,6 @@ describe("TicketPage", () => {
     // Captioned in words rather than in a native tooltip, with the tilde ahead of the box.
     expect(html).toMatch(/>Cost<\/span><span>~<\/span><span data-metric-box/);
     expect(html).toContain('aria-label="Why the cost is an estimate"');
-    // The attempt's own row says so as well.
-    expect(html).toContain('aria-label="Why this cost is an estimate"');
   });
 
   it("draws a dash, not a free ticket, when no attempt was priced", () => {
@@ -744,7 +821,7 @@ describe("TicketPage", () => {
   });
 
   it("gives a row that names a GitHub thing a link to it", () => {
-    const html = render();
+    const html = renderAll();
     expect(html).toContain(
       'href="https://github.com/northwind/harbor-invoices/tree/spec/204-remit-to"',
     );
@@ -753,7 +830,7 @@ describe("TicketPage", () => {
   it("blinks the link on the row the waiting ticket is stopped at", () => {
     // The whole chain: the ticket's own `waiting_gate` on `spec_gate` decides which link moves,
     // so a page that stopped passing the hold down would leave this one still.
-    const html = render([
+    const html = renderAll([
       {
         id: 7,
         type: "gate_waiting",
@@ -761,9 +838,14 @@ describe("TicketPage", () => {
         created_at: "2026-08-25T10:13:02Z",
       },
     ]);
-    // The activity rows only: the message over the page links the same pull request, and holds
-    // still — it is the way to act, not the row that says where the ticket stopped.
-    const activity = html.slice(html.indexOf(">Activity<"));
+    // The activity's rows only: the gate's message, in the gate's block, links the same pull
+    // request and holds still — it is the way to act, not the row that says where it stopped.
+    const activity = html
+      .slice(html.indexOf(">Activity<"))
+      .split("<li")
+      .slice(1)
+      .map((part) => part.slice(0, part.indexOf("</li>")))
+      .join("");
     const [pr] = (activity.match(/<a [^>]*>/g) ?? []).filter((tag) => tag.includes("/pull/248"));
     expect(pr).toContain("flow-blink");
     // Its neighbour in the previous block names a branch and says nothing about what to do next.
@@ -792,5 +874,61 @@ describe("TicketPage", () => {
       "This step needs a person&#x27;s decision before the ticket moves on.",
     );
     expect(render()).not.toContain("View pull request");
+  });
+
+  describe("a parked run of a step that awaits review", () => {
+    const REVIEWED = {
+      ...CONFIG,
+      steps: CONFIG.steps.map((step) =>
+        step.name === "plan" ? { ...step, postconditions: "request_approval()" } : step,
+      ),
+    };
+    const parked: TicketOver = {
+      current_step: "plan",
+      status: "blocked",
+      park_reason: "idle",
+      step_runs: [run(1, "plan", 1, "interrupted")],
+    };
+    const reviewed = (over: Partial<Review>) => (qc: QueryClient) =>
+      qc.setQueryData(keys.runReview(1), {
+        awaits_review: true,
+        branch: "plan/204-remit",
+        head_sha: "4f1c2a9e0b7d",
+        pushed: true,
+        approval: null,
+        offered: true,
+        refusal: null,
+        ...over,
+      } satisfies Review);
+    const nothingPushed = reviewed({
+      branch: null,
+      head_sha: null,
+      pushed: false,
+      refusal: "Nothing is pushed yet.",
+    });
+
+    it("asks for a review once the run pushed a commit to approve", () => {
+      const html = plain(render([], parked, undefined, REVIEWED, reviewed({})));
+      expect(html).toContain("Waiting for your review");
+      expect(html).not.toContain("The agent waited for an answer");
+    });
+
+    it("says the agent waited for an answer when it asked before pushing anything", () => {
+      const html = plain(render([], parked, undefined, REVIEWED, nothingPushed));
+      expect(html).toContain("The agent waited for an answer and nobody answered");
+      expect(html).not.toContain("Waiting for your review");
+    });
+
+    it("is not a review when the head is an earlier step's on a shared branch", () => {
+      const html = plain(render([], parked, undefined, REVIEWED, reviewed({ pushed: false })));
+      expect(html).toContain("The agent waited for an answer and nobody answered");
+      expect(html).not.toContain("Waiting for your review");
+    });
+
+    it("is not a review while Approve would be refused", () => {
+      const refused = reviewed({ refusal: "A Resume is already waiting for this run." });
+      const html = plain(render([], parked, undefined, REVIEWED, refused));
+      expect(html).not.toContain("Waiting for your review");
+    });
   });
 });
