@@ -156,8 +156,9 @@ their copy too.
 When you rebuild a template:
 
 1. Build the new template with `python -m orchestrator.e2b_template`.
-2. Put the new pin in `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES`.
-3. Deploy again.
+2. Put the new pin in `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES`. On AWS it is a key of the
+   app secret ([`aws.md`](aws.md#the-app-secret)).
+3. Deploy again, or start a new task.
 4. Only then delete the old build.
 
 Every organization on the managed key shares the setting, and customers cannot see or change
