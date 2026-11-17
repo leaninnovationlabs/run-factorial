@@ -20,6 +20,7 @@ from orchestrator.adapters.state import (
     CheckRunState,
     CommentState,
     IssueState,
+    Mergeability,
     PullRequestState,
     RepoPermission,
     ReviewState,
@@ -100,6 +101,11 @@ class Forge(Protocol):
     async def pr_comments(self, number: int) -> Sequence[CommentState]: ...
     async def pr_reviews(self, number: int) -> Sequence[ReviewState]: ...
     async def pr_review_verdict(self, number: int) -> ReviewVerdict: ...
+    async def pr_mergeability(self, number: int) -> Mergeability: ...
+
+    @property
+    def approvals_bound_to_head(self) -> bool: ...
+
     async def repo_permission(self, login: str) -> RepoPermission: ...
     def is_delivery_author(self, login: str) -> bool: ...
 
@@ -161,6 +167,13 @@ class SourceForge:
 
     async def pr_review_verdict(self, number: int) -> ReviewVerdict:
         return await self.inner.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        return await self.inner.pr_mergeability(number)
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self.inner.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         return await self.inner.repo_permission(login)
@@ -226,6 +239,13 @@ class CompositeStateSource:
 
     async def pr_review_verdict(self, number: int) -> ReviewVerdict:
         return await self.forge.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        return await self.forge.pr_mergeability(number)
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self.forge.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         return await self.forge.repo_permission(login)

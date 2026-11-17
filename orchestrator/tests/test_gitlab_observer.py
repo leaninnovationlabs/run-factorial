@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from orchestrator.github.state import ReviewVerdict
+from orchestrator.github.state import Mergeability, ReviewVerdict
 from orchestrator.gitlab.client import GitLabClient
 from orchestrator.gitlab.observer import GitLabStateSource, list_issues
 from orchestrator.settings import GitLabSettings
@@ -311,3 +311,50 @@ async def test_file_text_reads_the_raw_endpoint_and_none_when_absent() -> None:
         "https://gitlab.test/api/v4/projects/group%2Fproject/repository/files/"
         "docs%2F12%20x%3Fa%3Db%23c%25d.md/raw?ref=spec%2F42-x"
     ]
+
+
+@pytest.mark.parametrize(
+    ("has_conflicts", "detailed", "merge_status", "expected"),
+    [
+        (True, "conflict", None, Mergeability.CONFLICTING),
+        (False, "conflict", None, Mergeability.CONFLICTING),
+        (False, "need_rebase", None, Mergeability.BEHIND),
+        (False, "checking", None, Mergeability.UNKNOWN),
+        (False, "unchecked", None, Mergeability.UNKNOWN),
+        (False, "preparing", None, Mergeability.UNKNOWN),
+        (False, "mergeable", None, Mergeability.CLEAN),
+        (False, "not_approved", None, Mergeability.CLEAN),
+        # GitLab before 15.6 sends `merge_status` alone.
+        (False, None, "can_be_merged", Mergeability.CLEAN),
+        (False, None, "cannot_be_merged", Mergeability.CONFLICTING),
+        (False, None, "checking", Mergeability.UNKNOWN),
+        (False, None, "unchecked", Mergeability.UNKNOWN),
+        (False, None, "cannot_be_merged_recheck", Mergeability.UNKNOWN),
+        (False, None, "something_new", Mergeability.UNKNOWN),
+        (False, None, None, Mergeability.UNKNOWN),
+        (True, None, "can_be_merged", Mergeability.CONFLICTING),
+    ],
+)
+@pytest.mark.asyncio
+async def test_gitlab_mergeability_reads_the_merge_request(
+    has_conflicts: bool, detailed: str | None, merge_status: str | None, expected: Mergeability
+) -> None:
+    payload = {
+        key: value
+        for key, value in (
+            ("has_conflicts", has_conflicts),
+            ("detailed_merge_status", detailed),
+            ("merge_status", merge_status),
+        )
+        if value is not None
+    }
+
+    class _Client:
+        async def get(self, url: str, **params: object) -> object:
+            assert url == "/projects/group%2Fproject/merge_requests/3"
+            return payload
+
+    source = GitLabStateSource(_Client(), "group/project", 42)  # type: ignore[arg-type]
+
+    assert await source.pr_mergeability(3) == expected
+    assert source.approvals_bound_to_head is False

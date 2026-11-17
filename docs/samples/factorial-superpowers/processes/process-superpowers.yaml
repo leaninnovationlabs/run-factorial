@@ -1,8 +1,8 @@
 # ADLC process: the superpowers sample. Brainstorm, plan, build, review, code review, done.
-# GitHub or GitLab: read a pull request below as a merge request on GitLab, and the build and
-# review steps need the repository's own CI on it. The method is the one the superpowers project
-# teaches (github.com/obra/superpowers): agree a design with a person, write a plan of small
-# test-first tasks, build it task by task, then review the whole branch with fresh eyes.
+# GitHub or GitLab: read a pull request below as a merge request on GitLab. The method is the
+# one the superpowers project teaches (github.com/obra/superpowers): agree a design with a
+# person, write a plan of small test-first tasks, build it task by task, then review the whole
+# branch with fresh eyes.
 #
 # This file is also the reference for two predicates. The format itself is commented in
 # ../factorial-simple/processes/process-simple.yaml.
@@ -141,7 +141,6 @@ steps:
         # Every task box in the plan ticked. The agent ticks a task's boxes in the commit that
         # completes it, so the plan merged with the code says what was done.
         - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
-        - ci_green("sp/{ticket}-*")
 
   # ------------------------------------------------------------------ 4. review (agent)
   - name: review
@@ -164,10 +163,9 @@ steps:
     postconditions:
       all:
         # The verdict comment proves the review ran; its text is not checked. Its fixes must
-        # leave the plan done and CI green.
+        # leave the plan done.
         - pr_comment_contains("sp/{ticket}-*", "## Review Verdict")
         - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
-        - ci_green("sp/{ticket}-*")
     onSuccess:
       ticketLabel: "factorial:code-review"
       assign: ["{roles.code_reviewers}"]
@@ -196,6 +194,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:build-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

@@ -53,6 +53,7 @@ import {
   Icon,
   IconButton,
   LinkButton,
+  Lozenge,
   Pagination,
   Select,
   TextField,
@@ -369,6 +370,7 @@ function IssueRow({
           <span className="factory-board__row-title">{node.title}</span>
         </Link>
       </Tooltip>
+      {node.sandboxWaiting && <Lozenge>Waiting for a sandbox</Lozenge>}
       {/* The number behind the band the swatch shows. */}
       {spend && <span className="factory-board__row-metric">{spend}</span>}
       {project !== null && <span className="factory-board__row-project">{project}</span>}

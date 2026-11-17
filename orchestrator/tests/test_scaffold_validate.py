@@ -23,8 +23,8 @@ from orchestrator.config.scaffold.validate import validate_bundle
 
 def lane(name: str) -> str:
     """The Simple template's process file, declaring lane `name`."""
-    [text] = [lane.text for lane in PROCESS_TEMPLATES[0].lanes if lane.key == "simple"]
-    return text.replace("\nname: simple\n", f"\nname: {name}\n")
+    [text] = [lane.text for lane in PROCESS_TEMPLATES[0].lanes]
+    return text.replace("\nname: primary\n", f"\nname: {name}\n")
 
 
 def bundle_for(

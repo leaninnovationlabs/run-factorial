@@ -108,6 +108,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:spec-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: plan
 
   # ------------------------------------------------------------------ 3. build (agent)
   - name: build
@@ -174,6 +176,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:build-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

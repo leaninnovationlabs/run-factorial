@@ -2253,6 +2253,7 @@ class E2bAdapter:
             "factorial_kind": self.kind,
             "ticket": spec.ticket[:64],
             "agent": spec.agent[:64],
+            **({"factorial_org": spec.organization[:64]} if spec.organization else {}),
         }
 
     async def _take_consent(

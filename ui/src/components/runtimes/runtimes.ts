@@ -189,10 +189,14 @@ export function suggestSlug(name: string): string {
  */
 export type IsolationStrategy = "local_cli" | "e2b";
 
-export const ISOLATION_LABELS: Record<IsolationStrategy, string> = {
-  local_cli: "On the host",
-  e2b: "Managed cloud sandbox",
-};
+/** A runtime's sandbox, as the list and its own page name it. */
+export function sandboxLabelOf(runtime: {
+  details?: Record<string, unknown>;
+  sandbox_key: "own" | "managed";
+}): string {
+  if (isolationOf(runtime.details) === "local_cli") return "On the host";
+  return runtime.sandbox_key === "managed" ? "Factorial-managed sandbox" : "E2B sandbox";
+}
 
 export function isolationOf(details: Record<string, unknown> | undefined): IsolationStrategy {
   return details?.isolation === "e2b" ? "e2b" : "local_cli";

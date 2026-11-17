@@ -89,6 +89,31 @@ const GLYPHS = {
     </>
   ),
   maximize: <path d="M9.5 2.5h4v4m0-4L9 7M6.5 13.5h-4v-4m0 4L7 9" />,
+  minimize: <path d="M3.5 12.5h9" />,
+  pointer: <path d="M3.25 2.5 13 6.6 8.9 8.1l-1.5 4.1Z" />,
+  paperclip: (
+    <path d="M13 7.5 7.8 12.7a3 3 0 0 1-4.3-4.3l5.6-5.6a2 2 0 0 1 2.9 2.9L6.5 11.2A1 1 0 0 1 5 9.7l5-4.9" />
+  ),
+  file: FILE,
+  image: (
+    <>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.25" />
+      <path d="M5.5 6.25v.01" strokeWidth="2" />
+      <path d="m2.5 11.5 3.25-3 2.5 2 2-1.5 3.25 2.5" />
+    </>
+  ),
+  dock: (
+    <>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.25" />
+      <path d="M10 2.75v10.5" />
+    </>
+  ),
+  float: (
+    <>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.25" />
+      <path d="M9 8.75h3v2.25H9z" fill="currentColor" />
+    </>
+  ),
   eye: (
     <>
       <path d="M1.5 8S4 3.25 8 3.25 14.5 8 14.5 8 12 12.75 8 12.75 1.5 8 1.5 8Z" />

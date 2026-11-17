@@ -56,6 +56,12 @@ def _ask_the_model() -> dict[str, Any]:
 def main() -> int:
     argv = sys.argv[1:]
     call: dict[str, Any] = {"argv": argv, "prompt": sys.stdin.read()}
+    # An image named on the command line is read when Codex starts: record that it was there.
+    call["images"] = [
+        {"path": word.split("=", 1)[1], "size": os.path.getsize(word.split("=", 1)[1])}
+        for word in argv
+        if word.startswith("--image=")
+    ]
     if os.environ.get("FAKE_CODEX_ASKS_THE_MODEL"):
         call["model"] = _ask_the_model()
     with open(os.environ["FAKE_CODEX_RECORD"], "a") as record:

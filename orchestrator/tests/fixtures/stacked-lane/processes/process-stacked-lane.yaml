@@ -172,6 +172,8 @@ steps:
         merge: true
         ticketLabel: "factorial:done"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

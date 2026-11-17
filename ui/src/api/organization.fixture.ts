@@ -33,6 +33,7 @@ export function organizationDetail(permissions: string[] = ADMIN_PERMISSIONS): O
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-01T00:00:00Z",
     role: null,
+    managed_sandbox_limit: null,
     settings: permissions.includes("org:manage") ? {} : null,
     permissions,
   };

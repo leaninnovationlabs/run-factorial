@@ -21,14 +21,19 @@ from orchestrator.db.models import (
 )
 from orchestrator.events import EventType
 from orchestrator.events.approvals import latest_approval
-from orchestrator.github.state import CheckRunState
+from orchestrator.github.state import CheckRunState, Mergeability, PullRequestState
 from orchestrator.predicates import EvalContext, ReviewFacts, Unmet, evaluate, failures, needs
 from orchestrator.predicates.globs import matches_ref
 from orchestrator.predicates.library import ci_check_runs
 from orchestrator.worker.failures import _fail_run
-from orchestrator.worker.rework import _latest_details, _rejecting_gates
+from orchestrator.worker.rework import (
+    ConflictFix,
+    _latest_details,
+    _rejecting_gates,
+    conflict_window,
+)
 from orchestrator.worker.templates import _glob, _pr_for, _pr_values, _ref_name
-from orchestrator.worker.tick_context import _advance, _observed, _Tick
+from orchestrator.worker.tick_context import _advance, _move_to, _observed, _Tick
 from runtime.contract import Artifact as RunArtifact
 from runtime.contract import ArtifactKind
 
@@ -90,7 +95,11 @@ async def acceptance_verdict(
     tick: _Tick, step: AgentStep, run: StepRun, *, every_leaf: bool = False
 ) -> Verdict:
     """`run`'s step's postconditions now (`evaluate`'s `every_leaf`), and its rework's unmoved
-    rejections. A step with none is met. An unreadable verdict raises `_EvaluationUnavailable`."""
+    rejections. A step with none is met. Inside a conflict window, the pull request's word alone
+    (`_fix_verdict`). An unreadable verdict raises `_EvaluationUnavailable`."""
+    fix = await conflict_window(tick, step)
+    if fix is not None:
+        return await _fix_verdict(tick, step, run, fix)
     met, reasons, words = True, (), ()
     if step.postconditions is not None:
         ctx = await _review_context(tick, step, run)
@@ -100,6 +109,66 @@ async def acceptance_verdict(
         )
         met, reasons, words = result.value, failures(result), needs(result)
     return Verdict(met, reasons, await _unmoved_rejections(tick, step, run.attempt), needs=words)
+
+
+async def _fix_verdict(tick: _Tick, step: AgentStep, run: StepRun, fix: ConflictFix) -> Verdict:
+    """A conflict fix holds when the pull request the gate sent back is open, its head is no
+    longer the one sent back, and it merges cleanly. The step's postconditions are not asked: in
+    a stacked lane they name a pull request the lane has already merged.
+
+    A pull request no longer open holds too: nothing is left to fix, and the gate decides on a
+    merged or closed one by its own rules."""
+    pull_request = await _fix_pull_request(tick, step, run.attempt, fix)
+    if pull_request is None or pull_request.state != "open":
+        return Verdict(True, (), ())
+    what = f"step {step.name} attempt {run.attempt}: the conflict fix of PR #{fix.pr_number}"
+    number, base = f"pull request #{fix.pr_number}", f"`{fix.base_ref}`"
+    if pull_request.head_sha == fix.head_sha:
+        await _observed(_branch_not_ahead(tick, fix), what=what)
+        reason = (
+            f"{number} still ends at {fix.head_sha[:7]}: nothing merged {base} into "
+            f"`{fix.head_ref}`"
+        )
+    else:
+        state = await _observed(_settled_mergeability(tick, fix.pr_number), what=what)
+        if state == Mergeability.CLEAN:
+            return Verdict(True, (), ())
+        reason = (
+            f"{number} still conflicts with {base}"
+            if state == Mergeability.CONFLICTING
+            else f"{number} is still behind {base}"
+        )
+    return Verdict(False, (reason,), (), needs=(reason,))
+
+
+async def _fix_pull_request(
+    tick: _Tick, step: AgentStep, attempt: int, fix: ConflictFix
+) -> PullRequestState | None:
+    """The pull request the gate sent back, from the tick's listing: memoized per snapshot, so
+    `accepted` asking again after the verdict costs no forge read."""
+    pulls = await _observed(
+        tick.source.pull_requests(),
+        what=f"step {step.name} attempt {attempt}: the conflict fix of PR #{fix.pr_number}",
+    )
+    return next((pr for pr in pulls if pr.number == fix.pr_number), None)
+
+
+async def _settled_mergeability(tick: _Tick, number: int) -> Mergeability:
+    state = await tick.source.pr_mergeability(number)
+    if state == Mergeability.UNKNOWN:
+        # GitHub's answer for a few seconds after a push: no verdict yet, so neither accept nor
+        # fail, and ask again next tick.
+        raise LookupError(f"the forge has not yet computed whether PR #{number} can merge")
+    return state
+
+
+async def _branch_not_ahead(tick: _Tick, fix: ConflictFix) -> None:
+    """Raise when the branch has moved but its pull request does not show it yet: GitHub updates
+    a PR's head after the push lands on the branch, and a fix failed for that would cost an
+    agent run."""
+    for branch in await tick.source.branches():
+        if branch.name == fix.head_ref and branch.sha != fix.head_sha:
+            raise LookupError(f"PR #{fix.pr_number} does not show its branch's new head yet")
 
 
 async def _review_context(tick: _Tick, step: AgentStep, run: StepRun) -> EvalContext:
@@ -225,10 +294,39 @@ async def accepted(
     """`_accept`'s met path: complete the run and move the ticket on, for a caller that has
     decided to accept it, by the postconditions or a person's force (decision 78). `extra` is the
     outcome's `{pr_url}` (`accepted_values`) when the caller read it before a write it cannot take
-    back."""
+    back.
+
+    A conflict fix goes straight back to the gate that sent it, with no `onSuccess`: the gate's
+    next run closes the window before anything else can enter the step again, and `step.next`
+    in a stacked lane is a gate that has already merged."""
+    fix = await conflict_window(tick, step)
+    if fix is not None:
+        await tick.emit(EventType.STEP_COMPLETED, run=run, step=step.name, attempt=run.attempt)
+        # A forced fix did not show the pull request merges cleanly, and a pull request no longer
+        # open was merged or closed by a person: either way no agent's merge is there to read.
+        pull_request = await _fix_pull_request(tick, step, run.attempt, fix)
+        if not run.forced_by and pull_request is not None and pull_request.state == "open":
+            tick.plan.pr_comments.append((fix.pr_number, _approver_note(fix)))
+        await _move_to(tick, fix.gate.name, from_step=step.name, reason="conflict_fixed")
+        return
     if extra is None:
         extra = await accepted_values(tick, step)
     await _advance(tick, step, run, step.on_success, extra=extra)
+
+
+def _approver_note(fix: ConflictFix) -> str:
+    """Said on the pull request, where its approver reads: nothing between the fixing step and
+    the gate ran on the merge."""
+    if fix.state == Mergeability.CONFLICTING:
+        return (
+            f"An agent merged `{fix.base_ref}` into this branch and resolved the conflicts. The "
+            "lane's test and review steps did not run again. Read the merge commit before you "
+            "approve."
+        )
+    return (
+        f"An agent merged `{fix.base_ref}` into this branch to bring it up to date. The lane's "
+        "test and review steps did not run again."
+    )
 
 
 async def accepted_values(tick: _Tick, step: AgentStep) -> dict[str, str]:

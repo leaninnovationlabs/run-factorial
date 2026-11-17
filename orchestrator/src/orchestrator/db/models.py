@@ -25,6 +25,8 @@ from sqlalchemy import (
     Double,
     ForeignKey,
     Index,
+    Integer,
+    LargeBinary,
     Numeric,
     SQLColumnExpression,
     UniqueConstraint,
@@ -62,6 +64,7 @@ __all__ = [
     "Artifact",
     "ArtifactDirection",
     "ArtifactKind",
+    "ChatAttachment",
     "ChatBackendState",
     "ChatConversation",
     "ChatItem",
@@ -205,6 +208,10 @@ class EnteredBy(StrEnum):
     RESTART = "restart"
     #: The first run of a step a person redid (decision 76).
     REDO = "redo"
+    #: The first run of the agent step a merging gate sent a conflicting pull request back to.
+    CONFLICT_FIX = "conflict_fix"
+    #: The gate's own re-entry after that fix, to merge the now-clean pull request.
+    CONFLICT_FIXED = "conflict_fixed"
 
 
 class ArtifactDirection(StrEnum):
@@ -1206,6 +1213,27 @@ class ChatItem(Base):
     rev: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     created_at: Mapped[CreatedAt]
     updated_at: Mapped[UpdatedAt]
+
+
+class ChatAttachment(Base):
+    """A file a person attached to a message (`assistant/attachments.py`): the bytes, which the
+    API writes with the message and the assistant's process reads when it runs the turn. It goes
+    with its item, and so with its conversation. Nothing serves `content` to a browser."""
+
+    __tablename__ = "chat_attachment"
+    __table_args__ = (Index("chat_attachment_item_idx", "item_id"),)
+
+    id: Mapped[IdPk]
+    item_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chat_item.id", ondelete="CASCADE")
+    )
+    #: As the person's file was named, cut down to a name (`safe_name`). Shown, never trusted.
+    name: Mapped[str]
+    #: What the bytes are: one of `IMAGE_TYPES`, or `text/plain`.
+    media_type: Mapped[str]
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[CreatedAt]
 
 
 class ChatProposal(Base):

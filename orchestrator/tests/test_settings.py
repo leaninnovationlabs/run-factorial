@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -387,3 +388,74 @@ def test_the_terminal_origin_follows_the_deployment_shape(
 def test_a_terminal_public_url_that_is_not_an_origin_is_refused(url: str) -> None:
     with pytest.raises(ValidationError, match="TERMINAL__PUBLIC_URL"):
         build(terminal={"public_url": url})
+
+
+MANAGED_KEY = "FACTORIAL_RUNTIME__E2B__MANAGED__API_KEY"
+CLAUDE_BUILD = {"claude": "factorial-claude:0b8f0a52-1111-4222-8333-444455556666"}
+
+
+def managed(**fields: Any) -> dict[str, Any]:
+    return {"e2b": {"managed": {"api_key": "k", **fields}}}
+
+
+def test_managed_offers_need_the_key_a_family_template_and_an_api_key_type() -> None:
+    offered = "claude_api@e2b,codex_api@e2b,claude_subscription@e2b"
+    on = build(runtime={**managed(templates=CLAUDE_BUILD), "offered": offered})
+    assert on.managed_offers == {"claude_api@e2b"}
+    no_key = build(runtime={"e2b": {"managed": {"templates": CLAUDE_BUILD}}, "offered": offered})
+    assert no_key.managed_offers == frozenset()
+    not_offered = build(runtime={**managed(templates=CLAUDE_BUILD), "offered": "codex_api@e2b"})
+    assert not_offered.managed_offers == frozenset()
+
+
+def test_the_managed_settings_parse_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MANAGED_KEY, "secret")
+    monkeypatch.setenv("FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES", json.dumps(CLAUDE_BUILD))
+    monkeypatch.setenv("FACTORIAL_RUNTIME__E2B__MANAGED__ORG_LIMITS", '{"acme": 0}')
+    monkeypatch.setenv("FACTORIAL_RUNTIME__E2B__MANAGED__POOL_LIMIT", "5")
+    monkeypatch.setenv("FACTORIAL_RUNTIME__OFFERED", "claude_api@e2b")
+    block = build().runtime.e2b.managed
+    assert block.api_key is not None and block.api_key.get_secret_value() == "secret"
+    assert block.templates == CLAUDE_BUILD
+    assert block.limit_for("acme") == 0
+    assert block.pool_limit == 5
+
+
+def test_a_blank_managed_setting_reads_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("API_KEY", "TEMPLATES", "ORG_LIMITS"):
+        monkeypatch.setenv(f"FACTORIAL_RUNTIME__E2B__MANAGED__{name}", "")
+    block = build().runtime.e2b.managed
+    assert block.api_key is None
+    assert block.templates == {}
+    assert block.org_limits == {}
+
+
+def test_a_managed_template_must_be_a_build_pin() -> None:
+    with pytest.raises(ValidationError, match="factorial-claude"):
+        build(runtime=managed(templates={"claude": "factorial-claude"}))
+
+
+def test_settings_refuse_the_managed_key_beside_a_host_offer() -> None:
+    both = {**managed(), "offered": "claude_api@local_cli,claude_api@e2b"}
+    with pytest.raises(ValidationError, match=r"MANAGED__API_KEY[\s\S]*RUNTIME__OFFERED") as raised:
+        build(runtime=both)
+    assert "read the deployment's settings" in str(raised.value)
+    # The default single-organization offers include the host, so the effective list counts.
+    with pytest.raises(ValidationError, match="RUNTIME__OFFERED"):
+        build(runtime=managed())
+    assert build(runtime={**managed(), "offered": "claude_api@e2b"}).managed_offers == frozenset()
+
+
+def test_a_deployment_without_the_managed_key_still_starts_with_host_offers() -> None:
+    assert build().offers == API_HOST
+
+
+def test_limit_for_uses_the_named_number_then_the_default() -> None:
+    block = build(
+        runtime={**managed(org_limits={"acme": 0, "big": 5}), "offered": "claude_api@e2b"}
+    ).runtime.e2b.managed
+    assert block.limit_for("acme") == 0
+    assert block.limit_for("big") == 5
+    assert block.limit_for("other") == 2

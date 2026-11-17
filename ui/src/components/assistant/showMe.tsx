@@ -23,6 +23,25 @@ export const ANCHOR_WAIT_MS = 3000;
 
 const SHOWN = "data-assist-shown";
 
+/** What is shown: a card of the model's, or something a person pointed at, which has no name of
+ *  its own to be found by and is found again by the dashboard link it holds. */
+export type Shown = ShowMePayload & { link?: string | null };
+
+/** The conversation's own frames, whose links to a page are not the thing on the page. */
+const CONVERSATION =
+  '[data-assistant-mini], [data-assistant-dock], [data-assistant-chat], [role="dialog"]';
+
+/** The row or list item that holds a link to `path`, or the link itself. `base` is what the
+ *  browser shows before a dashboard path. */
+function findLinked(path: string, base: string): HTMLElement | null {
+  const href = `${base}${path}`.replace(/["\\]/g, "\\$&");
+  for (const link of document.querySelectorAll<HTMLElement>(`a[href="${href}"]`)) {
+    if (link.closest('[data-page-phase="out"]') || link.closest(CONVERSATION)) continue;
+    return link.closest<HTMLElement>('tr, [role="row"], li') ?? link;
+  }
+  return null;
+}
+
 export function showMeHref(card: ShowMePayload): string {
   return card.path;
 }
@@ -36,24 +55,30 @@ function findAnchor(name: AssistAnchor): HTMLElement | null {
 
 export function ShowMeSpotlight({
   card,
+  base = "",
   onBack,
   onDismiss,
 }: {
-  card: ShowMePayload;
-  onBack: () => void;
+  card: Shown;
+  /** What the browser shows before a dashboard path: the router's base. */
+  base?: string;
+  /** Absent when the conversation is still on screen beside the page: the ring and its note are
+   *  all there is to show, and a new page ends them. */
+  onBack?: () => void;
   onDismiss: () => void;
 }) {
   const anchor = isAssistAnchor(card.anchor) ? card.anchor : null;
+  const link = anchor === null ? (card.link ?? null) : null;
   const [target, setTarget] = useState<HTMLElement | null>(null);
-  const [waited, setWaited] = useState(anchor === null);
+  const [waited, setWaited] = useState(anchor === null && link === null);
   const note = card.note?.trim() || null;
 
   useEffect(() => {
-    if (!anchor) return;
+    if (!anchor && !link) return;
     let ringed: HTMLElement | null = null;
     let scrolled = false;
     const look = () => {
-      const found = findAnchor(anchor);
+      const found = anchor ? findAnchor(anchor) : link ? findLinked(link, base) : null;
       if (found === ringed) return;
       ringed?.removeAttribute(SHOWN);
       ringed = found;
@@ -92,23 +117,25 @@ export function ShowMeSpotlight({
       clearTimeout(timer);
       ringed?.removeAttribute(SHOWN);
     };
-  }, [anchor]);
+  }, [anchor, link, base]);
 
   if (typeof document === "undefined") return null;
   return createPortal(
     <>
       {target && note && <Callout anchor={target} text={note} />}
-      <div className="fixed right-4 bottom-[calc(1rem+var(--tab-bar-clearance,0px))] z-layer flex max-w-sm items-center gap-2 rounded-lg bg-surface-overlay p-2 shadow-overlay">
-        {!target && waited && note && (
-          <p role="note" className="min-w-0 px-1 text-body text-default">
-            {note}
-          </p>
-        )}
-        <Button appearance="primary" onClick={onBack}>
-          Back to chat
-        </Button>
-        <IconButton icon="close" label="Stop showing" onClick={onDismiss} />
-      </div>
+      {onBack && (
+        <div className="fixed right-4 bottom-[calc(1rem+var(--tab-bar-clearance,0px))] z-layer flex max-w-sm items-center gap-2 rounded-lg bg-surface-overlay p-2 shadow-overlay">
+          {!target && waited && note && (
+            <p role="note" className="min-w-0 px-1 text-body text-default">
+              {note}
+            </p>
+          )}
+          <Button appearance="primary" onClick={onBack}>
+            Back to chat
+          </Button>
+          <IconButton icon="close" label="Stop showing" onClick={onDismiss} />
+        </div>
+      )}
     </>,
     document.body,
   );

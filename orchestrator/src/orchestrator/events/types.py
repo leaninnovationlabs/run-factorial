@@ -161,8 +161,12 @@ class EventType(StrEnum):
     #: blocked on something else), `off_the_floor` (the ticket is neither running nor blocked),
     #: `preconditions_unmet` (with `unmet`, the false leaves), `spawn_refused` (the runtime
     #: refused the spawn, and the ticket is blocked on that), `spawn_failed` (the substrate
-    #: failed the spawn, `detail` says how; the ticket stays as it was) or `unavailable` (GitHub
-    #: could not be read to check the preconditions for `COMPLETION_UNREADABLE_FOR`).
+    #: failed the spawn, `detail` says how; the ticket stays as it was), `unavailable` (the
+    #: forge could not be read for `COMPLETION_UNREADABLE_FOR`),
+    #: `sandbox_limit` (the Factorial-managed key's limit is reached, with `scope`, `limit` and
+    #: `running` as `SANDBOX_LIMIT_WAITING` has them; the ticket stays as it was) or
+    #: `conflict_fixed` (the run was a conflict fix whose pull request needs none now: merged,
+    #: closed, or fixed by a person's push; the ticket went back to its gate).
     STEP_RETRY_REFUSED = "step_retry_refused"
 
     #: The loop honoured that request: the substrate stopped, the workspace was kept, and the
@@ -216,6 +220,13 @@ class EventType(StrEnum):
     #: `terminal.parked_recheck` and releases it once the refusal clears. Carries `step`,
     #: `runtime` (the slug) and `refusal`, which names the fix.
     SPAWN_REFUSED = "spawn_refused"
+    #: A start on the Factorial-managed key waits: its organization, or the whole pool, already
+    #: has as many active runs as its limit allows (`worker.sandbox_limit`). No row, no attempt,
+    #: no label; the next tick asks again. Carries `step`, `attempt` (the one that would have
+    #: started), `scope` (`organization` or `pool`), `limit`, `running` and `runtime` (the slug).
+    #: Written once per entry of the step, and again when the held attempt, the scope or the
+    #: limit changes.
+    SANDBOX_LIMIT_WAITING = "sandbox_limit_waiting"
 
     #: A human pressed Resume on a parked run (decision 26). Recorded by the API and
     #: OBSERVED by the loop, like `INTERRUPT_REQUESTED`. Carries `by`, `requested_via`,
@@ -474,6 +485,25 @@ class EventType(StrEnum):
     #: rejecting (decision 79). Carries `pr_number` and `head_sha`. Written once per pull request
     #: per gate run, with one comment on the ticket.
     GATE_PR_CLOSED = "gate_pr_closed"
+
+    #: A merging gate's reading of its pull request's mergeability. Carries `step`, `attempt`,
+    #: `pr_number`, `head_sha`, `base_ref` and `state` (`conflicting`, `behind` or `clean`).
+    GATE_MERGEABILITY = "gate_mergeability"
+
+    #: A person asked, from the dashboard, for a conflicting pull request to be fixed. Carries
+    #: `requested_by` and `idempotency_key`. Answered by `GATE_CONFLICT_SENT_BACK` or
+    #: `CONFLICT_FIX_REFUSED`.
+    CONFLICT_FIX_REQUESTED = "conflict_fix_requested"
+
+    #: The loop could not honour a `CONFLICT_FIX_REQUESTED`: `request_id` names it and `reason`
+    #: says why (`no_fix_step`, `no_pull_request`, `already_merged`, `mergeable`,
+    #: `newer_attempt` or `unsafe_branch`).
+    CONFLICT_FIX_REFUSED = "conflict_fix_refused"
+
+    #: A merging gate sent its conflicting pull request back to an agent step. Carries
+    #: `pr_number`, `head_ref`, `base_ref`, `head_sha`, `state`, `target_step`, `request_id` (null
+    #: when the loop started it) and `requested_by`. It is never a `GATE_REJECTED`.
+    GATE_CONFLICT_SENT_BACK = "gate_conflict_sent_back"
 
     #: An open issue the admission pass declined for a reason an operator has to fix: no default
     #: process configured, an unknown process label, or two of them (`worker.selection`). Carries

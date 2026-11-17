@@ -19,6 +19,7 @@ from orchestrator.config import (
 from orchestrator.config.conditions import awaits_review
 from orchestrator.db.models import (
     Event,
+    Organization,
     Runtime,
     StepKind,
     StepRun,
@@ -43,14 +44,17 @@ from orchestrator.factorial.runtimes import (
     isolation_of,
     requires_stored_credential,
     row_registry_kind,
-    template_of,
+    sandbox_key_of,
 )
+from orchestrator.factorial.sandbox_team import SandboxTeam, managed_gap
 from orchestrator.github import LABEL_BLOCKED
-from orchestrator.github.state import CommentState
+from orchestrator.github.state import CommentState, Mergeability
 from orchestrator.predicates import Unmet, evaluate
 from orchestrator.worker.acceptance import (
     _accept,
     _delivered_branch,
+    _fix_pull_request,
+    _settled_mergeability,
     _write_artifacts,
     accepted,
     postconditions_met,
@@ -66,6 +70,7 @@ from orchestrator.worker.failures import (
     spoken,
 )
 from orchestrator.worker.inputs import (
+    ResolvedInputs,
     RetryBriefing,
     _resolve_inputs,
     release_run_credential,
@@ -82,8 +87,17 @@ from orchestrator.worker.leases import renew
 from orchestrator.worker.outputs import observe_outputs, observe_waiting_outputs
 from orchestrator.worker.previews import carry_preview
 from orchestrator.worker.pricing import record_usage
-from orchestrator.worker.rework import Adopt, Skip, SkipReason, _resume_plan
+from orchestrator.worker.rework import (
+    Adopt,
+    ConflictFix,
+    Skip,
+    SkipReason,
+    _resume_plan,
+    conflict_fix_instructions,
+    conflict_window,
+)
 from orchestrator.worker.runtime_adapters import RuntimeRefused, workspace_key
+from orchestrator.worker.sandbox_limit import LimitReached, note_sandbox_limit_waiting
 from orchestrator.worker.sessions import _active_since, _poll_session, _spoken, _terminal
 from orchestrator.worker.templates import _expected_artifacts
 from orchestrator.worker.tick_context import (
@@ -95,6 +109,7 @@ from orchestrator.worker.tick_context import (
     _apply_outcome,
     _current,
     _insert_run,
+    _move_to,
     _next_attempt,
     _observed,
     _retry_ready,
@@ -145,7 +160,8 @@ async def _agent_step(tick: _Tick, step: AgentStep) -> None:
     if status == StepRunStatus.SUCCEEDED:
         # The ticket is sitting on a step it already completed: a gate sent it back here
         # (`gate.onReject.rerunStep`). Rework is a new attempt, not a re-read of the old one,
-        # though it continues the old one's session (`worker.rework`).
+        # though it continues the old one's session (`worker.rework`). A conflict send-back
+        # lands here too, and `_start_attempt` starts that one fresh.
         await _start_attempt(
             tick,
             step,
@@ -170,11 +186,20 @@ async def _start_attempt(
     attempt: int,
     rework_of: StepRun | None = None,
     briefing: RetryBriefing | None = None,
+    announce_hold: bool = True,
+    placed: tuple[_Placement | None] | None = None,
 ) -> StepRun | None:
-    """Check preconditions, then create the `(ticket, step, attempt)` row and spawn.
+    """Check preconditions and the managed key's limit, then create the `(ticket, step,
+    attempt)` row and spawn.
     `rework_of` is the attempt a gate sent back, or a person retried with a `briefing`, whose
-    session the new one continues. Returns the inserted row, also when it then failed
-    permanently, or None when no row was inserted."""
+    session the new one continues. Inside a conflict window neither applies: the attempt is a
+    conflict fix (`_conflict_fix`), and none starts when its pull request needs none
+    (`_returned_to_gate`). Returns the inserted row, also when it then failed permanently, or
+    None when no row was inserted. A start the limit holds sets `tick.held_by_limit`, and says
+    so on the ticket unless `announce_hold` is False. `placed` is `_placement`'s answer when the
+    caller already read it this tick."""
+    if await _returned_to_gate(tick, step, attempt):
+        return None
     if step.preconditions is not None:
         # `_grant_attempt` evaluates this same guard so its acknowledgment can name an unmet
         # precondition — keep the two sites in step. Their error behaviour differs: this one
@@ -196,9 +221,24 @@ async def _start_attempt(
             await note_next_step_waiting(tick, step.name, Unmet.of(result))
             return None
 
-    placement = await _placement(tick)
+    placement = placed[0] if placed is not None else await _placement(tick)
     if (refusal := await _spawn_refusal(tick, placement)) is not None:
         await _block_on_refusal(tick, step, refusal)
+        return None
+
+    fix = await conflict_window(tick, step)
+    if fix is not None:
+        # The kept session sits on the step's own branch, which in a stacked lane is not the
+        # pull request's, and a checkout only moves along its own branch.
+        rework_of = None
+        briefing = None
+
+    if placement is not None and (reached := await _held_by_limit(tick, placement)) is not None:
+        tick.held_by_limit = reached
+        if announce_hold:
+            await note_sandbox_limit_waiting(
+                tick, step.name, reached, attempt=attempt, runtime=placement.runtime.slug
+            )
         return None
 
     run = StepRun(
@@ -224,6 +264,7 @@ async def _start_attempt(
             run.id,
             entered_by=run.entered_by,
             extra_inputs=(briefing.failure,) if briefing is not None else (),
+            fix=fix,
         )
     except (LeaseLost, AgentRuntimeError):
         await release_run_credential(tick, run.id)
@@ -299,7 +340,7 @@ async def _start_attempt(
     assert adapter is not None  # `_build_run_spec` raised `refused`
     # An E2B run's template build, whose name carries the CLI version it installed: the row
     # can be re-pointed later, so only the event says what this run booted.
-    template = template_of(runtime.details) if isolation_of(runtime.details) == "e2b" else None
+    template = placement.team.template if placement.team is not None else None
     pin = _cli_pin(template, adapter)
     plan = (
         await _resume_plan(
@@ -430,8 +471,55 @@ async def _start_attempt(
     # After the spawn, not before: a refused or lost-lease spawn must not announce a start that
     # never happened, and the idempotency loser returned long ago. The one outcome that fires on
     # something other than a completed transition — the start IS the transition it reports.
-    _apply_outcome(tick, step.on_start, extra={"step": step.name, "attempt": str(attempt)})
+    on_start = step.on_start
+    if fix is not None and on_start is not None and on_start.comment is not None:
+        # The step's own start comment names its normal work, which a fix run does not do.
+        on_start = on_start.model_copy(update={"comment": None})
+        tick.plan.comments.append(_fix_start_comment(fix, attempt))
+    _apply_outcome(tick, on_start, extra={"step": step.name, "attempt": str(attempt)})
     return run
+
+
+def _fix_start_comment(fix: ConflictFix, attempt: int) -> str:
+    merge = f"an agent merges `{fix.base_ref}` into `{fix.head_ref}`"
+    if fix.state == Mergeability.CONFLICTING:
+        return f"Conflict fix starting (attempt {attempt}): {merge} and resolves the conflicts."
+    return f"Branch update starting (attempt {attempt}): {merge}."
+
+
+async def _returned_to_gate(tick: _Tick, step: AgentStep, attempt: int) -> bool:
+    """Inside a conflict window, whether the gate's pull request needs no fix any more, and the
+    ticket went back to the gate with no run: it is merged, closed or gone from the listing, or
+    its head moved and it merges cleanly. Asked before anything that can hold the start, since a
+    stacked lane's preconditions name that pull request open. A moved head the forge has not
+    judged yet raises `_EvaluationUnavailable`, so nothing spawns on a guess.
+
+    The moved head may be a person's push or an earlier attempt's that ended before it was
+    accepted, and nothing tells them apart, so the approver's note says only what is true of
+    both."""
+    fix = await conflict_window(tick, step)
+    if fix is None:
+        return False
+    pull_request = await _fix_pull_request(tick, step, attempt, fix)
+    if pull_request is not None and pull_request.state == "open":
+        if pull_request.head_sha == fix.head_sha:
+            return False
+        state = await _observed(
+            _settled_mergeability(tick, fix.pr_number),
+            what=f"step {step.name} attempt {attempt}: the conflict fix of PR #{fix.pr_number}",
+        )
+        if state != Mergeability.CLEAN:
+            return False
+        tick.plan.pr_comments.append(
+            (
+                fix.pr_number,
+                f"This branch changed after the gate sent it back, and it now merges with "
+                f"`{fix.base_ref}`. The lane's test and review steps did not run again. Read the "
+                "new commits before you approve.",
+            )
+        )
+    await _move_to(tick, fix.gate.name, from_step=step.name, reason="conflict_fixed")
+    return True
 
 
 async def _log_offset(adapter: RuntimeAdapter, run_id: str) -> dict[str, int]:
@@ -491,6 +579,8 @@ class _Placement:
     runtime: Runtime
     isolation: str | None = None
     adapter: RuntimeAdapter | None = None
+    #: The E2B team the adapter was pointed at; None on the host.
+    team: SandboxTeam | None = None
     #: The row's details or the project's permit list did not read: raised before the egress
     #: list is.
     unreadable: SettingsInvalid | RuntimeDetailsInvalid | None = None
@@ -516,15 +606,18 @@ async def _place(tick: _Tick) -> _Placement:
         return _Placement(runtime, isolation, refused=refused)
     assert tick.deps.runtime_adapters is not None  # `_runtime_row` checked
     try:
-        adapter = tick.deps.runtime_adapters.for_runtime(
-            runtime, held_key=await workspace_key(tick.session, runtime), repoint=True
-        )
+        team = await workspace_key(tick.session, runtime, tick.deps.managed_sandbox)
+        adapter = tick.deps.runtime_adapters.for_runtime(runtime, team=team, repoint=True)
     except AgentRuntimeError:
         raise
     except (RuntimeError, RuntimeDetailsInvalid, SettingsInvalid) as exc:
         # A key that does not decrypt included: its attempt fails permanently, saying why.
         return _Placement(runtime, isolation, refused=exc)
-    return _Placement(runtime, isolation, adapter)
+    # Refused here rather than by the adapter's spawn, whose sentence would send a person to
+    # store a key or choose a template the managed team does not let them.
+    if team is not None and (gap := managed_gap(team, runtime.slug)) is not None:
+        return _Placement(runtime, isolation, team=team, refused=RuntimeRefused(gap))
+    return _Placement(runtime, isolation, adapter, team)
 
 
 async def _placement(tick: _Tick) -> _Placement | None:
@@ -546,8 +639,13 @@ async def _build_run_spec(
     *,
     entered_by: str | None,
     extra_inputs: tuple[RunInput, ...] = (),
+    fix: ConflictFix | None = None,
 ) -> RunSpec:
     """Everything the substrate needs — and nothing about labels, promotion or merging.
+
+    A conflict `fix` keeps the step's agent and replaces only its workspace branches, its
+    instructions and its inputs: an input is data under the agent's own instructions, which
+    describe a build, so it cannot carry the job.
 
     The mapping from `ResolvedAgent` (repo config, read at a pinned sha) onto the runtime
     contract's `AgentPrompts` / `AgentSkill` lives here on purpose: `orchestrator.factorial`
@@ -618,7 +716,11 @@ async def _build_run_spec(
 
     # Before the mint, for the same reason as the capability checks above: a run whose images
     # this adapter cannot take is refused before a token exists to throw away.
-    resolved_inputs = await _resolve_inputs(tick, step, attempt, entered_by)
+    resolved_inputs = (
+        await _resolve_inputs(tick, step, attempt, entered_by)
+        if fix is None
+        else ResolvedInputs(inputs=())
+    )
     if resolved_inputs.attachments and not adapter.supports_attachments:
         raise RuntimeError(
             f"the inputs of step {step.name!r} include {len(resolved_inputs.attachments)} "
@@ -626,6 +728,8 @@ async def _build_run_spec(
             "project on a runtime that can"
         )
 
+    # Before the mint, as every refusal above: a fix's instructions refuse an unsafe branch name.
+    instructions = resolved.instructions if fix is None else conflict_fix_instructions(fix)
     run_secret_set = await run_secrets(
         tick,
         resolved,
@@ -644,22 +748,29 @@ async def _build_run_spec(
     return RunSpec(
         agent=step.agent,
         ticket=tick.ticket.external_key,
+        organization=tick.project.organization_slug,
         workspace=RunWorkspace(
             repo=repo,
-            base=expand(step.workspace.base, tick.values),
+            # A fix starts its checkout at the pull request's head, on the concrete name the
+            # send-back read.
+            base=expand(step.workspace.base, tick.values) if fix is None else fix.head_ref,
             # `{slug}` survives expansion on purpose: the agent chooses it (design.md §6).
-            branch=expand(step.workspace.branch, tick.values),
+            branch=expand(step.workspace.branch, tick.values) if fix is None else fix.head_ref,
             config_sha=tick.config_sha,
         ),
         # Contents, not paths, and read at `resolved.commit_sha` — what runs is exactly what the
         # registry pinned, not whatever the substrate would have checked out.
-        prompts=AgentPrompts(system=resolved.system_prompt, instructions=resolved.instructions),
+        prompts=AgentPrompts(
+            system=resolved.system_prompt,
+            instructions=instructions,
+        ),
         skills=tuple(
             AgentSkill(name=skill.name, content=skill.content, scope=SkillScope(skill.scope))
             for skill in resolved.skills
         ),
         mcp=mcp_servers,
-        expected_artifacts=_expected_artifacts(step, tick.values),
+        # A fix delivers to an existing pull request, not what the step's postconditions name.
+        expected_artifacts=_expected_artifacts(step, tick.values) if fix is None else (),
         inputs=(*resolved_inputs.inputs, *extra_inputs),
         attachments=resolved_inputs.attachments,
         missing_attachments=resolved_inputs.missing,
@@ -690,6 +801,19 @@ def _shown_files(step: AgentStep, values: Mapping[str, str]) -> tuple[ShownFile,
     return tuple(
         ShownFile(path=expand(declared.path, values), label=declared.display_label)
         for declared in preview.files
+    )
+
+
+async def _held_by_limit(tick: _Tick, placement: _Placement) -> LimitReached | None:
+    """The managed key's limit a start on `placement` would pass; a start under it is
+    reserved until the ticket's transaction ends. A placement that will not spawn is not held:
+    its attempt fails after the insert, saying why."""
+    if placement.adapter is None or sandbox_key_of(placement.runtime.details) != "managed":
+        return None
+    organization = await tick.session.get(Organization, tick.project.organization_id)
+    assert organization is not None  # `project.organization_id` is a foreign key
+    return await tick.deps.sandbox_starts.reserve(
+        tick.session, tick.ticket.id, organization, tick.deps.managed_sandbox
     )
 
 

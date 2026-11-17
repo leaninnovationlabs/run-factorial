@@ -26,6 +26,7 @@ const ALLOWED: { file: string; needle: string; why: string }[] = [
   { file: "components/activity/words.ts", needle: "{x}…", why: "truncation marker" },
   { file: "components/assistant/AssistantChat.tsx", needle: "{x}…", why: "truncation marker" },
   { file: "components/assistant/items/ToolLine.tsx", needle: "{x}…", why: "truncation marker" },
+  { file: "components/assistant/pointed.ts", needle: "{x}…", why: "truncation marker" },
   { file: "components/flow/geometry.ts", needle: "{x}…", why: "truncation marker" },
   { file: "components/assistant/items/ToolGroup.tsx", needle: "{x}{x}…", why: "progress label" },
   { file: "components/tickets/refreshNote.ts", needle: "refreshing…", why: "progress label" },

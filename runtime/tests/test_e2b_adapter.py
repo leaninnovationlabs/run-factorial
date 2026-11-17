@@ -2493,6 +2493,21 @@ async def test_a_start_with_the_same_token_is_refused_once_another_run_has_the_w
         await adapter.inspect_start(run_id, token="r1", limit=LIMIT, credentials=VIEW_CREDENTIALS)
 
 
+async def test_a_sandbox_carries_its_organization(tmp_path: Path) -> None:
+    _, client, _ = await run_to_end(
+        tmp_path, [Script(tui=at_prompt())], make_spec(organization="acme-" + "x" * 80)
+    )
+    (sandbox,) = client.sandboxes.values()
+    assert sandbox.options.metadata["factorial_org"] == ("acme-" + "x" * 80)[:64]
+    assert {"factorial_run", "factorial_deployment"} <= sandbox.options.metadata.keys()
+
+
+async def test_a_run_without_an_organization_adds_no_key(tmp_path: Path) -> None:
+    _, client, _ = await run_to_end(tmp_path, [Script(tui=at_prompt())])
+    (sandbox,) = client.sandboxes.values()
+    assert "factorial_org" not in sandbox.options.metadata
+
+
 async def test_reap_reparks_a_running_sandbox_nothing_keeps_awake(tmp_path: Path) -> None:
     """A viewer's connect that raced a park, or a wake whose worker died before recording it,
     leaves a kept sandbox running, which E2B kills, workspace and all, at its timeout. The

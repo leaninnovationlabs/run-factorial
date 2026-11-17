@@ -32,6 +32,7 @@ from orchestrator.factorial.runtimes import (
     registry_kind_for,
     requires_stored_credential,
     row_registry_kind,
+    sandbox_key_of,
 )
 from orchestrator.factorial.runtimes import RUNTIME_TYPES as REEXPORTED_RUNTIME_TYPES
 from orchestrator.secrets import store
@@ -390,3 +391,31 @@ def test_a_value_is_trimmed_and_must_fit_a_header() -> None:
             credential_value(name, " \n\t")
     pem = "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n"
     assert credential_value("DOCS_SIGNING_KEY", pem) == pem
+
+
+BUILD_ID = "0b8f0a52-1111-4222-8333-444455556666"
+
+
+def test_a_managed_row_needs_e2b_and_carries_no_template() -> None:
+    with pytest.raises(RuntimeDetailsInvalid, match="e2b"):
+        parse_runtime_details("claude_api", {"sandbox_key": "managed"})
+    with pytest.raises(RuntimeDetailsInvalid, match="template"):
+        parse_runtime_details(
+            "claude_api",
+            {"isolation": "e2b", "sandbox_key": "managed", "template": "n:" + BUILD_ID},
+        )
+    parse_runtime_details("claude_api", {"isolation": "e2b", "sandbox_key": "managed"})
+
+
+def test_a_managed_row_asks_for_no_sandbox_key() -> None:
+    assert "E2B_API_KEY" in create_credential_names("claude_api", "e2b")
+    assert "E2B_API_KEY" not in create_credential_names("claude_api", "e2b", managed=True)
+    assert "ANTHROPIC_API_KEY" in create_credential_names("claude_api", "e2b", managed=True)
+
+
+def test_a_row_without_the_field_is_own_and_stores_no_marker() -> None:
+    assert sandbox_key_of({}) == "own"
+    assert sandbox_key_of(None) == "own"
+    assert sandbox_key_of({"sandbox_key": "managed"}) == "managed"
+    own = parse_runtime_details("claude_api", {"isolation": "e2b"})
+    assert own.model_dump(mode="json", exclude_defaults=True) == {"isolation": "e2b"}

@@ -20,10 +20,14 @@ function downloadYaml(text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/** The file menu (Import a file, Export, Copy) is not offered. Its items and the file input stay
+ *  wired, so the menu comes back whole when this is true. */
+const FILE_MENU_OFFERED: boolean = false;
+
 /** The row over the editor: the way back and what is being edited, with what the commit has to
  *  say under that heading; then the commit button, the config's verdict and the whole-config
- *  actions; and the file input Import opens. With nothing to commit the button says so itself,
- *  rather than a reason beside it. `readOnly` keeps the way back and Export and Copy alone.
+ *  actions. With nothing to commit the button says so itself, rather than a reason beside it.
+ *  `readOnly` keeps the way back alone.
  *
  *  The verdict chip is the process file's own check, made as it is typed. Validate is the whole
  *  draft's: every edited, new and deleted file, judged as a commit would judge it. */
@@ -71,8 +75,8 @@ export function EditorActions({
   changed: boolean;
   onDiscard: () => void;
   templates: ProcessTemplate[];
-  /** Replaces the process text with one lane of a template: the editor holds one lane at a time. */
-  onTemplate: (template: string, lane: string) => void;
+  /** Replaces the process text with a template's process. */
+  onTemplate: (template: string) => void;
   onCopy: () => void;
   importInput: RefObject<HTMLInputElement | null>;
   /** Called with the imported file's text. */
@@ -182,39 +186,38 @@ export function EditorActions({
               </Button>
             )}
             <DropdownMenu
-              trigger={{ label: "Replace with template" }}
-              items={templates.flatMap((template) =>
-                template.lanes.map((lane) => ({
-                  label:
-                    template.lanes.length > 1 ? `${template.title} · ${lane.key}` : template.title,
-                  description: template.description,
-                  onClick: () => onTemplate(template.key, lane.key),
-                })),
-              )}
+              trigger={{ label: "Import" }}
+              items={templates.map((template) => ({
+                label: template.title,
+                description: template.description,
+                onClick: () => onTemplate(template.key),
+              }))}
             />
           </>
         )}
-        <DropdownMenu
-          trigger={{ label: "Editor actions", icon: "more", iconOnly: true }}
-          items={[
-            ...(readOnly
-              ? []
-              : [{ label: "Import a file", onClick: () => importInput.current?.click() }]),
-            {
-              label: "Export",
-              description: "Download process.yaml",
-              unavailable: text.trim() ? undefined : "Nothing to export yet",
-              onClick: () => downloadYaml(text),
-            },
-            {
-              label: "Copy",
-              unavailable: text.trim() ? undefined : "Nothing to copy yet",
-              onClick: onCopy,
-            },
-          ]}
-        />
+        {FILE_MENU_OFFERED && (
+          <DropdownMenu
+            trigger={{ label: "Editor actions", icon: "more", iconOnly: true }}
+            items={[
+              ...(readOnly
+                ? []
+                : [{ label: "Import a file", onClick: () => importInput.current?.click() }]),
+              {
+                label: "Export",
+                description: "Download process.yaml",
+                unavailable: text.trim() ? undefined : "Nothing to export yet",
+                onClick: () => downloadYaml(text),
+              },
+              {
+                label: "Copy",
+                unavailable: text.trim() ? undefined : "Nothing to copy yet",
+                onClick: onCopy,
+              },
+            ]}
+          />
+        )}
       </div>
-      {!readOnly && (
+      {FILE_MENU_OFFERED && !readOnly && (
         <input
           ref={importInput}
           type="file"

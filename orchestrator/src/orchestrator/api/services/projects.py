@@ -37,6 +37,7 @@ from orchestrator.factorial import RepoConfigSource
 from orchestrator.factorial.registry import adopters, latest_process_versions, offered_version
 from orchestrator.github.connection import CONNECTION_SECRETS
 from orchestrator.secrets import store
+from orchestrator.settings import ManagedSandbox
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,7 @@ async def project_detail(
     project: Project,
     *,
     config_source: RepoConfigSource | None,
+    managed: ManagedSandbox,
     webhook_reachable: bool = True,
 ) -> ProjectDetail:
     """One project with everything that needs no live GitHub state.
@@ -136,7 +138,9 @@ async def project_detail(
     configs, parse_notes = parse_snapshots(versions)
     runtimes = await named_runtimes(session, project.organization_id, configs)
     gap = await secret_gap(session, config_source, project, configs, runtimes)
-    runtime_rows = await runtime_items(session, configs, runtimes, project.settings)
+    runtime_rows = await runtime_items(
+        session, configs, runtimes, project.settings, managed=managed
+    )
     github = await github_standing(session, project, source, webhook_reachable=webhook_reachable)
 
     counts = (

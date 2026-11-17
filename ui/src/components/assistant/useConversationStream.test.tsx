@@ -234,6 +234,12 @@ describe("useConversationStream", () => {
     await settle();
     expect(items).not.toHaveBeenCalled();
     expect(open).not.toHaveBeenCalled();
-    expect(current()).toEqual({ items: [], turn: null, connected: false, gone: false });
+    expect(current()).toEqual({
+      items: [],
+      turn: null,
+      connected: false,
+      gone: false,
+      loaded: false,
+    });
   });
 });

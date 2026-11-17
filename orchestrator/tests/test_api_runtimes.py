@@ -21,6 +21,7 @@ import httpx
 import pytest
 import yaml
 from fastapi import FastAPI
+from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,7 @@ from orchestrator.api.deps import (
     login_sessions_dependency,
     probe_http_dependency,
     runtime_adapter_dependency,
+    settings_dependency,
 )
 from orchestrator.api.routes import runtimes as runtimes_route
 from orchestrator.api.services.organizations import default_organization_id
@@ -51,9 +53,10 @@ from orchestrator.db.models import (
 )
 from orchestrator.events import EventType, append
 from orchestrator.factorial import RepoConfigSource
+from orchestrator.factorial.sandbox_team import sandbox_team
 from orchestrator.github import MergeProvenance
 from orchestrator.secrets import store
-from orchestrator.settings import RuntimeSettings
+from orchestrator.settings import ManagedSandbox, RuntimeSettings
 from runtime.adapters.codex_cli.login import start_device_login
 from runtime.adapters.e2b.client import TemplateBuild
 from tests.api_harness import build_app, client_for, make_settings, seed_project, seed_ticket
@@ -1285,6 +1288,71 @@ async def test_readiness_blocks_on_an_e2b_runtime_the_project_does_not_permit(
         assert rows["runtime"]["state"] == "ok"
 
 
+MANAGED_KEY = "e2b_managed_pool_never_echoed"
+MANAGED = ManagedSandbox(api_key=SecretStr(MANAGED_KEY), templates={"claude": E2B_TEMPLATE})
+MANAGED_TEMPLATE = "The template is provided with the Factorial-managed key."
+
+
+async def _managed_row(session: AsyncSession, slug: str | None = None) -> Runtime:
+    """A managed runtime written straight to its table, past the create's checks."""
+    slug = slug or _slug()
+    row = Runtime(
+        organization_id=await default_organization_id(session),
+        slug=slug,
+        name=slug,
+        type="claude_api",
+        details={"isolation": "e2b", "sandbox_key": "managed"},
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@pytest.mark.parametrize(
+    ("managed", "state", "says"),
+    [
+        (MANAGED, "ok", None),
+        (
+            ManagedSandbox(api_key=SecretStr(MANAGED_KEY)),
+            "blocked",
+            "The Factorial-managed key no longer covers runtime",
+        ),
+        (ManagedSandbox(), "blocked", "The Factorial-managed key is not available on this"),
+        (
+            MANAGED.model_copy(update={"org_limits": {"default": 0}}),
+            "blocked",
+            "The Factorial-managed key is not available to this organization.",
+        ),
+    ],
+    ids=["covered", "no-template", "no-key", "limit-zero"],
+)
+async def test_readiness_reads_a_managed_runtime_as_its_spawn_would(
+    auth: dict[str, str],
+    async_session: AsyncSession,
+    managed: ManagedSandbox,
+    state: str,
+    says: str | None,
+) -> None:
+    """Covered, a managed runtime holds no sandbox key or template and lacks neither."""
+    slug = _slug()
+    project = await _seed_with_runtime(async_session, slug)
+    row = await _managed_row(async_session, slug)
+    await store.put_for_runtime(async_session, row.id, "ANTHROPIC_API_KEY", "sk-fake")
+    app = probe_app(async_session, files=mini_config_files([]))
+    app.dependency_overrides[settings_dependency] = lambda: make_settings(managed=managed)
+    async with client_for(app) as client:
+        await client.patch(
+            f"/api/projects/{project.id}",
+            headers=auth,
+            json={"settings": {"runtime_allowlist": [slug]}},
+        )
+        _, rows = await _readiness(client, auth, project.id)
+
+    assert rows["runtime"]["state"] == state, rows["runtime"]
+    if says is not None:
+        assert says in rows["runtime"]["detail"]
+
+
 async def test_permit_changes_apply_to_the_settings_as_they_stand(
     auth: dict[str, str], async_session: AsyncSession
 ) -> None:
@@ -1848,6 +1916,485 @@ async def test_test_credential_says_ok_and_checks_an_e2b_runtimes_key_beside_it(
     assert on_e2b.json()["ok"] is True
     assert on_e2b.json()["e2b"] == {"ok": True, "detail": "E2B accepted the stored E2B_API_KEY."}
     assert keys == ["e2b_a"]
+
+
+async def test_a_managed_runtimes_template_is_neither_listed_nor_chosen(
+    auth: dict[str, str], async_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pool's builds are not the customer's to see or pick."""
+    listed: list[str] = []
+
+    async def builds(api_key: str) -> list[TemplateBuild]:
+        listed.append(api_key)
+        return []
+
+    monkeypatch.setattr(runtimes_route, "template_builds", builds)
+    row = await _managed_row(async_session)
+    url = f"/api/runtimes/{row.id}"
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        templates = await client.get(f"{url}/templates", headers=auth)
+        chosen = await client.patch(
+            url,
+            headers=auth,
+            json={"details": {**row.details, "template": E2B_TEMPLATE}},
+        )
+
+    assert (templates.status_code, templates.json()["detail"]) == (409, MANAGED_TEMPLATE)
+    assert (chosen.status_code, chosen.json()["detail"]) == (409, MANAGED_TEMPLATE)
+    assert listed == []
+
+
+async def test_test_credential_probes_the_managed_key_and_never_returns_it(
+    auth: dict[str, str], async_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys: list[str] = []
+
+    class _Sandboxes:
+        def __init__(self, api_key: str, **_: object) -> None:
+            keys.append(api_key)
+
+        async def check(self) -> None:
+            return None
+
+    monkeypatch.setattr(runtimes_route, "E2bSandboxClient", _Sandboxes)
+    row = await _managed_row(async_session)
+    await store.put_for_runtime(async_session, row.id, "ANTHROPIC_API_KEY", PROBED_KEY)
+    await store.put_for_runtime(async_session, row.id, "E2B_API_KEY", "e2b_stale_own_key")
+    app = build_app(make_settings(managed=MANAGED), async_session)
+    _vendor(app, 200, [])
+    async with client_for(app) as client:
+        tested = await client.post(f"/api/runtimes/{row.id}/test-credential", headers=auth)
+
+    assert tested.json()["e2b"] == {"ok": True, "detail": "E2B accepted the Factorial-managed key."}
+    assert keys == [MANAGED_KEY]
+    assert MANAGED_KEY not in tested.text
+
+
+async def test_the_managed_team_is_its_own_team_to_the_live_team_guard(
+    auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    """Compared by name, never by the deployment's key: a 200 for the managed key's own value
+    would tell a caller what that key is."""
+    row = await _managed_row(async_session)
+    await _run_on(async_session, row.id, status=StepRunStatus.INTERRUPTED)
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        stored = await client.put(
+            f"/api/runtimes/{row.id}/credentials/E2B_API_KEY",
+            headers=auth,
+            json={"value": MANAGED_KEY},
+        )
+
+    assert stored.status_code == 409, stored.text
+    assert MANAGED_KEY not in stored.text
+
+
+ORG_RUNTIMES = "/api/orgs/default/runtimes"
+ON_MANAGED = {"isolation": "e2b", "sandbox_key": "managed"}
+OWN_TEMPLATE = E2B_TEMPLATE[:-1] + "9"
+
+
+def _managed_body(**over: object) -> dict:
+    return {
+        "slug": _slug(),
+        "name": "Managed",
+        "type": "claude_api",
+        "details": ON_MANAGED,
+        "credentials": {"ANTHROPIC_API_KEY": "sk-ant-model-key"},
+        **over,
+    }
+
+
+def _check_body(body: dict) -> dict:
+    return {key: body[key] for key in ("type", "details", "credentials")}
+
+
+async def _own_e2b_row(client, auth: dict[str, str], rt: str = "claude_api") -> dict:
+    """An own-key sandbox runtime holding its key and a template from that key's team."""
+    created = await _create(client, auth, type=rt, details={"isolation": "e2b"})
+    url = f"/api/runtimes/{created['id']}"
+    put = await client.put(f"{url}/credentials/E2B_API_KEY", headers=auth, json={"value": "e2b_a"})
+    assert put.status_code == 200, put.text
+    chosen = await client.patch(
+        url, headers=auth, json={"details": {"isolation": "e2b", "template": OWN_TEMPLATE}}
+    )
+    assert chosen.status_code == 200, chosen.text
+    return chosen.json()
+
+
+async def test_runtime_options_list_the_offers_the_managed_key_covers(
+    auth: dict[str, str], async_session: AsyncSession
+) -> None:
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        covered = (await client.get("/api/runtime-options", headers=auth)).json()
+    async with client_for(build_app(make_settings(), async_session)) as client:
+        none = (await client.get("/api/runtime-options", headers=auth)).json()
+
+    assert covered["managed_sandbox"] == ["claude_api@e2b"]
+    assert none["managed_sandbox"] == []
+
+
+@pytest.mark.parametrize(
+    ("managed", "limit"),
+    [
+        (MANAGED.model_copy(update={"org_limits": {"default": 5}}), 5),
+        (MANAGED, 2),
+        (MANAGED.model_copy(update={"org_limits": {"default": 0}}), 0),
+        (None, None),
+    ],
+    ids=["named", "default", "off", "no-managed-key"],
+)
+async def test_an_organization_read_gives_its_managed_sandbox_limit(
+    auth: dict[str, str],
+    async_session: AsyncSession,
+    managed: ManagedSandbox | None,
+    limit: int | None,
+) -> None:
+    async with client_for(build_app(make_settings(managed=managed), async_session)) as client:
+        one = await client.get("/api/orgs/default", headers=auth)
+        listed = await client.get("/api/orgs", headers=auth)
+
+    assert one.status_code == 200, one.text
+    assert one.json()["managed_sandbox_limit"] == limit
+    assert {org["slug"]: org["managed_sandbox_limit"] for org in listed.json()}["default"] == limit
+
+
+async def test_a_managed_create_stores_no_sandbox_key(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        made = await client.post(ORG_RUNTIMES, headers=auth, json=_managed_body())
+
+    assert made.status_code == 201, made.text
+    body = made.json()
+    assert body["details"] == ON_MANAGED
+    assert (body["sandbox_key"], body["template"], body["sandbox_gap"]) == (
+        "managed",
+        E2B_TEMPLATE,
+        None,
+    )
+    assert await store.list_names_for_runtime(async_session, body["id"]) == ["ANTHROPIC_API_KEY"]
+
+
+@pytest.mark.parametrize("route", ["create", "check"])
+@pytest.mark.parametrize(
+    ("case", "says"),
+    [
+        ("uncovered_offer", "The Factorial-managed key does not cover codex_api"),
+        ("no_managed_key", "provides no Factorial-managed key"),
+        ("limit_zero", "The Factorial-managed key is not available to organization 'default'"),
+        ("e2b_key_in_body", "A runtime on the Factorial-managed key needs no E2B_API_KEY"),
+        ("template_in_body", MANAGED_TEMPLATE),
+    ],
+)
+async def test_a_managed_create_is_refused(
+    auth: dict[str, str], async_session: AsyncSession, route: str, case: str, says: str
+) -> None:
+    managed: ManagedSandbox = MANAGED
+    body = _managed_body()
+    if case == "uncovered_offer":
+        body["type"] = "codex_api"
+        body["credentials"] = {"OPENAI_API_KEY": "sk-model-key"}
+    elif case == "no_managed_key":
+        managed = ManagedSandbox(templates={"claude": E2B_TEMPLATE})
+    elif case == "limit_zero":
+        managed = MANAGED.model_copy(update={"org_limits": {"default": 0}})
+    elif case == "e2b_key_in_body":
+        body["credentials"] = {**body["credentials"], "E2B_API_KEY": MANAGED_KEY}
+    else:
+        body["details"] = {**ON_MANAGED, "template": E2B_TEMPLATE}
+    async with client_for(build_app(make_settings(managed=managed), async_session)) as client:
+        before = await _counts(async_session)
+        refused = await client.post(
+            ORG_RUNTIMES if route == "create" else f"{ORG_RUNTIMES}/check",
+            headers=auth,
+            json=body if route == "create" else _check_body(body),
+        )
+
+    assert refused.status_code == 422, refused.text
+    assert says in refused.json()["detail"]
+    assert MANAGED_KEY not in refused.text
+    assert await _counts(async_session) == before
+
+
+@pytest.mark.parametrize("route", ["create", "check", "move"])
+async def test_a_managed_body_whose_isolation_is_not_a_string_is_refused(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None, route: str
+) -> None:
+    """An unhashable isolation reaches the managed key's checks first: it is invalid details,
+    not a server error."""
+    details = {**ON_MANAGED, "isolation": ["e2b"]}
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        if route == "move":
+            own = await _own_e2b_row(client, auth)
+            refused = await client.patch(
+                f"/api/runtimes/{own['id']}", headers=auth, json={"details": details}
+            )
+        else:
+            body = _managed_body(details=details)
+            refused = await client.post(
+                ORG_RUNTIMES if route == "create" else f"{ORG_RUNTIMES}/check",
+                headers=auth,
+                json=body if route == "create" else _check_body(body),
+            )
+
+    assert refused.status_code == 422, refused.text
+
+
+async def test_a_managed_check_answers_the_model_key_only(
+    auth: dict[str, str], async_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pool's key is never probed for a caller and its builds are never listed to one."""
+    asked: list[str] = []
+
+    class _Sandboxes:
+        def __init__(self, api_key: str, **_: object) -> None:
+            asked.append(api_key)
+
+        async def check(self) -> None:
+            return None
+
+    async def builds(api_key: str) -> list[TemplateBuild]:
+        asked.append(api_key)
+        return [_build(E2B_TEMPLATE, verified=True)]
+
+    monkeypatch.setattr(runtimes_route, "E2bSandboxClient", _Sandboxes)
+    monkeypatch.setattr(runtimes_route, "template_builds", builds)
+    app = build_app(make_settings(managed=MANAGED), async_session)
+    _vendor(app, 200, [])
+    async with client_for(app) as client:
+        checked = await client.post(
+            f"{ORG_RUNTIMES}/check", headers=auth, json=_check_body(_managed_body())
+        )
+
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["model"]["ok"] is True
+    assert (checked.json()["e2b"], checked.json()["templates"]) == (None, [])
+    assert asked == []
+
+
+async def test_a_patch_that_names_no_sandbox_key_keeps_the_rows(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    """A managed row turned own by omission would read a stale stored key."""
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        made = (await client.post(ORG_RUNTIMES, headers=auth, json=_managed_body())).json()
+        await store.put_for_runtime(async_session, made["id"], "E2B_API_KEY", "e2b_stale")
+        url = f"/api/runtimes/{made['id']}"
+        for patch in (
+            {"name": "Renamed"},
+            {"metadata": {"team": "core"}},
+            {"details": {"isolation": "e2b"}},
+        ):
+            patched = await client.patch(url, headers=auth, json=patch)
+            assert patched.status_code == 200, (patch, patched.text)
+            assert patched.json()["sandbox_key"] == "managed", patch
+            assert patched.json()["details"] == ON_MANAGED, patch
+
+
+async def test_moving_to_the_managed_key_drops_the_stored_key_and_template(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        own = await _own_e2b_row(client, auth)
+        assert (own["sandbox_key"], own["template"]) == ("own", OWN_TEMPLATE)
+        moved = await client.patch(
+            f"/api/runtimes/{own['id']}", headers=auth, json={"details": ON_MANAGED}
+        )
+
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["details"] == ON_MANAGED
+    assert (moved.json()["sandbox_key"], moved.json()["template"]) == ("managed", E2B_TEMPLATE)
+    assert await store.get_for_runtime(async_session, own["id"], "E2B_API_KEY") is None
+
+
+@pytest.mark.parametrize(
+    ("case", "says"),
+    [
+        ("uncovered_offer", "The Factorial-managed key does not cover codex_api"),
+        ("limit_zero", "The Factorial-managed key is not available to organization 'default'"),
+        ("template_in_body", MANAGED_TEMPLATE),
+    ],
+)
+async def test_a_move_to_the_managed_key_gets_the_checks_a_create_gets(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None, case: str, says: str
+) -> None:
+    managed = MANAGED
+    if case == "limit_zero":
+        managed = MANAGED.model_copy(update={"org_limits": {"default": 0}})
+    details = {**ON_MANAGED, "template": E2B_TEMPLATE} if case == "template_in_body" else ON_MANAGED
+    async with client_for(build_app(make_settings(managed=managed), async_session)) as client:
+        rt = "codex_api" if case == "uncovered_offer" else "claude_api"
+        own = await _own_e2b_row(client, auth, rt)
+        url = f"/api/runtimes/{own['id']}"
+        refused = await client.patch(url, headers=auth, json={"details": details})
+        after = (await client.get(url, headers=auth)).json()
+
+    assert refused.status_code == 422, refused.text
+    assert says in refused.json()["detail"]
+    assert (after["sandbox_key"], after["details"]["template"]) == ("own", OWN_TEMPLATE)
+    assert await store.get_for_runtime(async_session, own["id"], "E2B_API_KEY") is not None
+
+
+async def test_both_moves_wait_for_live_runs(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    """A paused sandbox resumes only with its own team's key, whichever way the runtime moves."""
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        own = await _own_e2b_row(client, auth)
+        managed = (await client.post(ORG_RUNTIMES, headers=auth, json=_managed_body())).json()
+        for row in (own, managed):
+            await _run_on(async_session, row["id"], status=StepRunStatus.INTERRUPTED)
+
+        to_managed = await client.patch(
+            f"/api/runtimes/{own['id']}", headers=auth, json={"details": ON_MANAGED}
+        )
+        to_own = await client.put(
+            f"/api/runtimes/{managed['id']}/credentials/E2B_API_KEY",
+            headers=auth,
+            json={"value": "e2b_own"},
+        )
+        own_after = (await client.get(f"/api/runtimes/{own['id']}", headers=auth)).json()
+        managed_after = (await client.get(f"/api/runtimes/{managed['id']}", headers=auth)).json()
+
+    assert (to_managed.status_code, to_own.status_code) == (409, 409), (to_managed, to_own)
+    assert "live step run" in to_managed.json()["detail"]
+    assert "live step run" in to_own.json()["detail"]
+    assert own_after["sandbox_key"] == "own"
+    assert await store.get_for_runtime(async_session, own["id"], "E2B_API_KEY") is not None
+    assert managed_after["sandbox_key"] == "managed"
+    assert "E2B_API_KEY" not in managed_after["credential_names"]
+
+
+async def test_storing_an_own_key_moves_a_managed_row_to_own(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        made = (await client.post(ORG_RUNTIMES, headers=auth, json=_managed_body())).json()
+        url = f"/api/runtimes/{made['id']}"
+        stored = await client.put(
+            f"{url}/credentials/E2B_API_KEY", headers=auth, json={"value": "e2b_own"}
+        )
+        after = (await client.get(url, headers=auth)).json()
+
+    assert stored.status_code == 200, stored.text
+    assert after["details"] == {"isolation": "e2b"}
+    assert (after["sandbox_key"], after["template"], after["sandbox_gap"]) == ("own", None, None)
+    row = await async_session.get(Runtime, made["id"])
+    assert row is not None
+    await async_session.refresh(row)
+    team = await sandbox_team(async_session, row, MANAGED)
+    assert team.managed is False
+    assert team.api_key is not None and team.api_key.get_secret_value() == "e2b_own"
+
+
+async def test_a_patch_to_an_own_key_on_a_managed_row_is_refused(
+    auth: dict[str, str], async_session: AsyncSession, master_key: None
+) -> None:
+    """An own row with no key would be a broken runtime: the move is storing the key."""
+    async with client_for(build_app(make_settings(managed=MANAGED), async_session)) as client:
+        made = (await client.post(ORG_RUNTIMES, headers=auth, json=_managed_body())).json()
+        url = f"/api/runtimes/{made['id']}"
+        refused = await client.patch(
+            url, headers=auth, json={"details": {"isolation": "e2b", "sandbox_key": "own"}}
+        )
+        after = (await client.get(url, headers=auth)).json()
+
+    assert refused.status_code == 422, refused.text
+    assert "store the runtime's own E2B_API_KEY" in refused.json()["detail"]
+    assert after["sandbox_key"] == "managed"
+
+
+@pytest.mark.parametrize(
+    ("managed", "says"),
+    [
+        (
+            ManagedSandbox(api_key=SecretStr(MANAGED_KEY)),
+            "The Factorial-managed key no longer covers runtime",
+        ),
+        (ManagedSandbox(), "The Factorial-managed key is not available on this deployment"),
+    ],
+    ids=["no-template", "no-key"],
+)
+async def test_a_managed_runtime_that_resolves_no_team_says_why(
+    auth: dict[str, str], async_session: AsyncSession, managed: ManagedSandbox, says: str
+) -> None:
+    row = await _managed_row(async_session)
+    async with client_for(build_app(make_settings(managed=managed), async_session)) as client:
+        read = (await client.get(f"/api/runtimes/{row.id}", headers=auth)).json()
+
+    assert read["template"] is None
+    assert says in read["sandbox_gap"]
+
+
+async def test_no_runtime_answer_carries_the_managed_key(
+    auth: dict[str, str],
+    async_session: AsyncSession,
+    master_key: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every route this key's work touched, from an API that holds the key, refusals included."""
+
+    class _Sandboxes:
+        def __init__(self, *_: object, **__: object) -> None: ...
+
+        async def check(self) -> None:
+            return None
+
+    monkeypatch.setattr(runtimes_route, "E2bSandboxClient", _Sandboxes)
+    app = build_app(make_settings(managed=MANAGED), async_session)
+    _vendor(app, 200, [])
+    answers: list[tuple[str, httpx.Response]] = []
+
+    async def ask(label: str, request) -> httpx.Response:
+        response = await request
+        answers.append((label, response))
+        return response
+
+    async with client_for(app) as client:
+        await ask("options", client.get("/api/runtime-options", headers=auth))
+        await ask("org", client.get("/api/orgs/default", headers=auth))
+        await ask("orgs", client.get("/api/orgs", headers=auth))
+        body = _managed_body()
+        check = f"{ORG_RUNTIMES}/check"
+        await ask("check", client.post(check, headers=auth, json=_check_body(body)))
+        keyed = {**body, "credentials": {**body["credentials"], "E2B_API_KEY": MANAGED_KEY}}
+        await ask("create keyed", client.post(ORG_RUNTIMES, headers=auth, json=keyed))
+        await ask("check keyed", client.post(check, headers=auth, json=_check_body(keyed)))
+        made = (await ask("create", client.post(ORG_RUNTIMES, headers=auth, json=body))).json()
+        url = f"/api/runtimes/{made['id']}"
+        await ask("list", client.get(ORG_RUNTIMES, headers=auth))
+        await ask("get", client.get(url, headers=auth))
+        await ask("rename", client.patch(url, headers=auth, json={"name": "Renamed"}))
+        own_patch = {"details": {"isolation": "e2b", "sandbox_key": "own"}}
+        await ask("patch own", client.patch(url, headers=auth, json=own_patch))
+        await ask("templates", client.get(f"{url}/templates", headers=auth))
+        await ask("test", client.post(f"{url}/test-credential", headers=auth))
+        key_url = f"{url}/credentials/E2B_API_KEY"
+        await ask("delete key", client.delete(key_url, headers=auth))
+        await ask("put own", client.put(key_url, headers=auth, json={"value": "e2b_own"}))
+        await ask("patch managed", client.patch(url, headers=auth, json={"details": ON_MANAGED}))
+
+    statuses = {label: response.status_code for label, response in answers}
+    assert statuses == {
+        "options": 200,
+        "org": 200,
+        "orgs": 200,
+        "check": 200,
+        "create keyed": 422,
+        "check keyed": 422,
+        "create": 201,
+        "list": 200,
+        "get": 200,
+        "rename": 200,
+        "patch own": 422,
+        "templates": 409,
+        "test": 200,
+        "delete key": 404,
+        "put own": 200,
+        "patch managed": 200,
+    }
+    for label, response in answers:
+        assert MANAGED_KEY not in response.text, label
 
 
 async def test_test_credential_requires_the_api_token(async_session: AsyncSession) -> None:

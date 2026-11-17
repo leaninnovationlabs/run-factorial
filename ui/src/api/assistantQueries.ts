@@ -7,6 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
+import type { ChatAttachmentIn, ChatPointed } from "./types";
 
 /** Most recent first: the API orders them by their last item. */
 export function useConversations() {
@@ -41,8 +42,26 @@ export function useDeleteConversation() {
 export function useSendMessage() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, text, page }: { id: number; text: string; page: string | null }) =>
-      api.sendAssistantMessage(id, { text, page }),
+    mutationFn: ({
+      id,
+      text,
+      page,
+      context = [],
+      attachments = [],
+    }: {
+      id: number;
+      text: string;
+      page: string | null;
+      context?: ChatPointed[];
+      attachments?: ChatAttachmentIn[];
+    }) =>
+      // Only when there is some: a message of words alone is the body it always was.
+      api.sendAssistantMessage(id, {
+        text,
+        page,
+        ...(context.length > 0 ? { context } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }),
     onSettled: () => void client.invalidateQueries({ queryKey: keys.conversations }),
   });
 }

@@ -10,12 +10,21 @@
  * a keyboard press leaves the focus on it; a disabled field drops the focus, so when the turn ends
  * it goes back to the field unless the person has since pressed or focused somewhere else.
  *
- * The text stays until the API takes it: a refused send keeps what was written, and says why.
+ * Over the field wait what the person pointed at and the files they attached, as chips, each
+ * with a way out; the paperclip picks a file and a paste of one attaches it (`files.ts`).
+ *
+ * The draft stays until the API takes it: a refused send keeps what was written, and says why.
+ * The assistant's provider holds the draft (`draft.ts`), so it outlives the frame this is drawn
+ * in; with no holder given, the composer keeps its own.
  */
 
 import { type FocusEvent, type KeyboardEvent, type Ref, useEffect, useRef, useState } from "react";
 import type { ChatTurn } from "../../api/types";
-import { ActionError, IconButton, TextArea } from "../ui";
+import { ActionError, cx, IconButton, TextArea } from "../ui";
+import { type Draft, EMPTY_DRAFT, isEmpty } from "./draft";
+import { attach, MAX_FILES } from "./files";
+import { useBodyText } from "./frames";
+import { FileChips, PointedChips } from "./PointedChips";
 import { isLive } from "./useConversationStream";
 
 const WAITING_AFTER_MS = 10_000;
@@ -39,21 +48,40 @@ export function Composer({
   turn,
   isBlocked,
   error,
+  draft,
+  onDraft,
   onSend,
   onStop,
   inputRef,
+  compact = false,
+  acceptsImages = true,
 }: {
   turn: ChatTurn | null;
   /** The API said a turn is already under way here, before the stream has shown it. */
   isBlocked: boolean;
   error: unknown;
+  /** The draft and where a change to it goes, when something outside holds it. */
+  draft?: Draft;
+  onDraft?: (next: Draft | ((was: Draft) => Draft)) => void;
   /** True once the API has taken the message. */
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (draft: Draft) => Promise<boolean>;
   /** Settles when the API has answered; a refusal makes Stop pressable again. */
   onStop: (turnId: number) => Promise<unknown>;
   inputRef?: Ref<HTMLTextAreaElement>;
+  /** A frame beside the page: one row that grows with its lines, and no line under it. */
+  compact?: boolean;
+  /** Whether the assistant's backend takes an image; a text file always goes. */
+  acceptsImages?: boolean;
 }) {
-  const [text, setText] = useState("");
+  const body = useBodyText();
+  const picker = useRef<HTMLInputElement>(null);
+  /** Why the last file picked could not be attached. */
+  const [refusedFile, setRefusedFile] = useState<string | null>(null);
+  const [own, setOwn] = useState(EMPTY_DRAFT);
+  const held = draft ?? own;
+  const hold = onDraft ?? setOwn;
+  const text = held.text;
+  const setText = (written: string) => hold({ ...held, text: written });
   const [sending, setSending] = useState(false);
   const [stopped, setStopped] = useState<number | null>(null);
   const live = isLive(turn);
@@ -84,13 +112,30 @@ export function Composer({
     }
   }, [busy]);
 
+  // Both of these wait, on a file's bytes or on the API, and the draft can change meanwhile:
+  // something is pointed at, a second paste lands. So each writes onto the draft as it then
+  // stands, never onto the one it started from.
+  async function add(picked: File[]) {
+    if (picked.length === 0) return;
+    const { added, refused } = await attach(picked, held.files, acceptsImages);
+    setRefusedFile(refused);
+    if (added.length === 0) return;
+    hold((was) => ({ ...was, files: [...was.files, ...added].slice(0, MAX_FILES) }));
+  }
+
   async function send() {
-    const message = text.trim();
-    if (!message || busy || sending) return;
+    if (isEmpty(held) || busy || sending) return;
+    const sent = held;
     setSending(true);
-    const taken = await onSend(message);
+    const taken = await onSend({ ...sent, text: text.trim() });
     setSending(false);
-    if (taken) setText("");
+    if (!taken) return;
+    // What was sent goes; what joined the draft while the request was out stays.
+    hold((was) => ({
+      text: was.text === sent.text ? "" : was.text,
+      pointed: was.pointed.filter((item) => !sent.pointed.includes(item)),
+      files: was.files.filter((file) => !sent.files.includes(file)),
+    }));
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -139,19 +184,70 @@ export function Composer({
         </p>
       )}
       <ActionError error={error} />
+      {refusedFile && (
+        <p role="alert" className="text-body-sm text-danger">
+          {refusedFile}
+        </p>
+      )}
+      <FileChips
+        files={held.files}
+        onRemove={(at) => hold({ ...held, files: held.files.filter((_, index) => index !== at) })}
+      />
+      <PointedChips
+        pointed={held.pointed}
+        onRemove={(at) =>
+          hold({ ...held, pointed: held.pointed.filter((_, index) => index !== at) })
+        }
+      />
       <div className="flex items-stretch gap-2">
         <TextArea
           ref={inputRef}
           aria-label="Message the assistant"
-          className="min-w-0 flex-1"
-          minimumRows={2}
+          className={cx("min-w-0 flex-1", body)}
+          minimumRows={compact ? Math.min(6, text.split("\n").length) : 2}
           resize="none"
-          placeholder="Ask about tickets, runs, costs or a process. Shift+Enter for a new line."
+          placeholder={
+            compact
+              ? "Reply"
+              : "Ask about tickets, runs, costs or a process. Shift+Enter for a new line."
+          }
           value={text}
           disabled={busy}
+          // The words are on their way: they are not to be changed under the request.
+          readOnly={sending}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
+          // A screenshot is pasted more often than it is saved and picked. A paste that carries
+          // words is the words: a spreadsheet's cells come with a picture of themselves.
+          onPaste={(event) => {
+            const pasted = [...(event.clipboardData?.files ?? [])];
+            if (pasted.length === 0 || event.clipboardData?.getData("text/plain")) return;
+            event.preventDefault();
+            void add(pasted);
+          }}
           {...tracksFocus}
+        />
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          tabIndex={-1}
+          onChange={(event) => {
+            const picked = [...(event.currentTarget.files ?? [])];
+            // The same file can be picked again after it was taken out.
+            event.currentTarget.value = "";
+            void add(picked);
+          }}
+        />
+        <IconButton
+          icon="paperclip"
+          label="Attach a file"
+          className={TALL}
+          aria-disabled={busy || undefined}
+          onClick={() => {
+            if (!busy) picker.current?.click();
+          }}
         />
         {live ? (
           <IconButton
@@ -180,9 +276,11 @@ export function Composer({
           />
         )}
       </div>
-      <p className="text-center text-body-sm text-subtlest">
-        Factorial Assistant can make mistakes. Check important results.
-      </p>
+      {!compact && (
+        <p className="text-center text-body-sm text-subtlest">
+          Factorial Assistant can make mistakes. Check important results.
+        </p>
+      )}
     </div>
   );
 }

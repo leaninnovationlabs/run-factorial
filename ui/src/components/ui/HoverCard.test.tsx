@@ -35,6 +35,75 @@ async function pointer(type: "pointerover" | "pointerout", target: Element, poin
   });
 }
 
+describe("HoverCard with words beside its icon", () => {
+  it("draws them in the trigger, and a press on them opens the card outside the trigger's box", async () => {
+    view = await mount(
+      <div style={{ overflow: "hidden" }}>
+        <HoverCard label="Pointed at Ticket 212" icon="chart" text="Ticket 212">
+          <p>Blocked at build</p>
+        </HoverCard>
+      </div>,
+    );
+    const trigger = view.container.querySelector("button") as HTMLButtonElement;
+    expect(trigger.textContent).toBe("Ticket 212");
+    expect(trigger.getAttribute("aria-label")).toBe("Pointed at Ticket 212");
+    await click(trigger);
+    expect(card()?.textContent).toBe("Blocked at build");
+    // On the page, not in the box that holds the trigger: nothing around the trigger clips it.
+    expect(card()?.parentElement).toBe(document.body);
+  });
+});
+
+describe("HoverCard that holds links", () => {
+  const shown = () => document.querySelector<HTMLElement>("[data-hover-card]");
+
+  async function linked() {
+    view = await mount(
+      <HoverCard label="Pointed at Ticket 212" icon="chart" text="Ticket 212" interactive>
+        <a href="/tickets/212">Open the linked page</a>
+      </HoverCard>,
+    );
+    return view.container.querySelector("button") as HTMLButtonElement;
+  }
+
+  it("a press moves the focus into the card, so a keyboard reaches its links, and Escape gives it back", async () => {
+    const trigger = await linked();
+    trigger.focus();
+    await click(trigger);
+    await settle();
+    expect(shown()?.getAttribute("role")).toBe("dialog");
+    expect(shown()?.contains(document.activeElement)).toBe(true);
+    await press("Escape", document);
+    expect(shown()).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("a mouse resting on it shows the card and leaves the focus where it was", async () => {
+    vi.useFakeTimers();
+    const trigger = await linked();
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    await pointer("pointerover", trigger, "mouse");
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(shown()?.textContent).toBe("Open the linked page");
+    expect(shown()?.getAttribute("role")).toBe("tooltip");
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+
+  it("following a link in it closes it", async () => {
+    const trigger = await linked();
+    await click(trigger);
+    const link = shown()?.querySelector("a") as HTMLAnchorElement;
+    link.addEventListener("click", (event) => event.preventDefault());
+    await click(link);
+    expect(shown()).toBeNull();
+  });
+});
+
 describe("HoverCard", () => {
   it("draws the icon alone on a server render", () => {
     const html = renderToString(

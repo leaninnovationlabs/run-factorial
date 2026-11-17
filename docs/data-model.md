@@ -46,7 +46,7 @@ the source of truth (tech-stack decision 2).
 
 - The assistant's chat has its own tables (revision 0024): `app_setting`, `app_credential`,
   `chat_conversation`, `chat_turn`, `chat_item`, `chat_proposal`, `chat_backend_state` and
-  `chat_spend`. A
+  `chat_spend`, and `chat_attachment` (revision 0044). A
   conversation is not an event, because `event.project_id` is NOT NULL and a conversation spans
   projects. A write the chat causes is still an event.
 - A conversation is deleted 30 days after its last activity. The clock is
@@ -757,7 +757,15 @@ UPDATE`) before it draws the `rev`, so one conversation's writes commit in `rev`
 that has read up to a `rev` has seen every item below it, and resumes from the highest `rev` it
 saw. A transaction that writes a conversation's turns or proposals as well takes that
 lock before any of their rows, as a delete of the conversation does, so two such transactions
-queue on it rather than deadlock. `turn_id` is SET NULL.
+queue on it rather than deadlock. `turn_id` is SET NULL. A person's message keeps what they
+pointed at (`context`) and the names of what they attached (`attachments`) in its `payload`.
+
+**chat_attachment** (revision 0044) — a file a person attached to a message: `name`,
+`media_type` (one of four image types, or `text/plain`), `size` and the bytes in `content`. The
+API writes it in the transaction that queues the message's turn, and the assistant's process
+reads it when it runs the turn, so the bytes are in the database and on no process's disk.
+`item_id` cascades with its item, and so with its conversation and its retention. No route
+serves `content`.
 
 **chat_proposal** (revision 0024) — a write the assistant proposed and a person decides.
 `item_id` cascades with its item. `mcp_token_id` named the chat token that proposed it; a

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from orchestrator.factorial.bedrock_token import DEFAULT_MODEL as BEDROCK_DEFAULT_MODEL
+from runtime.assistant.adapters import TAKES_IMAGES
 
 __all__ = [
     "ALL_ASSISTANT_OFFERS",
@@ -24,6 +25,7 @@ __all__ = [
     "parse_assistant_offers",
     "parse_credential_slot",
     "stores_credential",
+    "takes_images",
 ]
 
 
@@ -126,3 +128,14 @@ def stores_credential(kind: str, auth_mode: str) -> bool:
     """Bedrock's bearer is minted from the host's role for each turn, so nothing is stored."""
     vocab = BACKENDS.get(kind)
     return vocab is not None and auth_mode in vocab.credentials and auth_mode != HOST_ROLE_MODE
+
+
+def takes_images(backend: str, auth_mode: str) -> bool:
+    """Whether a turn on this backend and sign-in is handed the images attached to its message.
+
+    The backend must be able to pass one on (`runtime.assistant.adapters.TAKES_IMAGES`), and the
+    models behind the sign-in must be known to take one. Claude's and OpenAI's are. Nothing on
+    Bedrock has been seen to, through Codex or through Bedrock Responses, so a Bedrock turn gets
+    a message's words, its text files and what was pointed at, and is told of an image it was
+    not given: a turn that failed on a picture would lose everything sent with it."""
+    return backend in TAKES_IMAGES and auth_mode != HOST_ROLE_MODE

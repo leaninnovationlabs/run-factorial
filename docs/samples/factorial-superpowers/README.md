@@ -41,8 +41,8 @@ that branch and merge with the code.
 |---|---|---|---|
 | `brainstorm` | `sp-brainstorm-agent` | brainstorming | The design is on the branch and a person approved it. |
 | `plan` | `sp-planning-agent` | writing-plans | The plan is on the branch and a person approved it. |
-| `build` | `sp-implement-agent` | executing-plans, test-driven-development, verification-before-completion | The pull request to `main` is open, every task box in the plan is ticked, and CI is green. |
-| `review` | `sp-review-agent` | reviewing-a-branch, test-driven-development, verification-before-completion | Its `## Review Verdict` comment is on the pull request, the plan is still done, and CI is green. |
+| `build` | `sp-implement-agent` | executing-plans, test-driven-development, verification-before-completion | The pull request to `main` is open and every task box in the plan is ticked. |
+| `review` | `sp-review-agent` | reviewing-a-branch, test-driven-development, verification-before-completion | Its `## Review Verdict` comment is on the pull request and the plan is still done. |
 | `code_review_gate` | none | | A person approves the pull request. It merges. A request for changes sends the ticket back to `build`. |
 
 The files are at fixed paths, so the predicates and the dashboard can find them:
@@ -58,8 +58,8 @@ was admitted) one question at a time, and waits at its prompt for the answer. Th
 in the run's terminal while the session is live, or on the ticket page with **Resume** once it
 has paused. A ticket that already settles everything gets no questions.
 
-**The build step needs CI on pull requests.** `ci_green` reads false on a branch whose CI never
-ran. A repository without CI never finishes this step.
+**No step waits for CI.** The agents run the repository's suite themselves, and the lane works
+in a repository with no CI on pull requests.
 
 ## Approving the design and the plan
 

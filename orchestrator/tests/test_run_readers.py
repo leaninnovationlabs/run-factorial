@@ -27,6 +27,9 @@ HISTORY: Final[dict[str, str]] = {
     ),
     "events/read_models.py:in_flight_runs": "live status, as above",
     "events/read_models.py:open_gates": "WAITING status, as above",
+    "events/read_models.py:_not_sent_back": (
+        "a predicate on an outer query that selects its own runs; it reads no run by itself"
+    ),
     "events/terminals.py:terminal_admission": "one run by id",
     "api/deps.py:observe": "one run by id, for its ticket",
     "api/routes/runtimes.py:_last_auth_failures": "history",

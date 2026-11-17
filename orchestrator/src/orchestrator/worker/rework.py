@@ -5,7 +5,8 @@ Only a rework, or a person's Retry, continues a session. An automatic retry afte
 starts fresh.
 
 The rework window (`_rejecting_gates`) lives here too: a rework's inputs and its acceptance both
-read it.
+read it. So does the conflict window (`_conflict_fix`), inside which an attempt is a conflict
+fix instead: a fresh session on the pull request's own branch.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
+from functools import cache
+from pathlib import Path
 from typing import Any, Final
 
 from sqlalchemy import select
@@ -20,6 +23,8 @@ from sqlalchemy import select
 from orchestrator.config import AgentStep, GateReject, GateStep
 from orchestrator.db.models import Event, Runtime, StepRun, StepRunStatus
 from orchestrator.events import EventType
+from orchestrator.github.state import Mergeability
+from orchestrator.worker.gate_conflicts import is_plain_ref, was_conflict_send_back
 from orchestrator.worker.tick_context import _runs_for, _Tick
 from runtime.contract import ResumeFrom, ResumeMode
 
@@ -89,9 +94,104 @@ async def _rejecting_gates(tick: _Tick, step: AgentStep, attempt: int) -> list[R
         if on_reject is None or on_reject.rerun_step != step.name:
             continue
         gate_runs = await _runs_for(tick.session, tick.ticket, gate.name)
-        if gate_runs and StepRunStatus(gate_runs[-1].status) == StepRunStatus.REJECTED:
+        if (
+            gate_runs
+            and StepRunStatus(gate_runs[-1].status) == StepRunStatus.REJECTED
+            # A conflict send-back is no reviewer's request, so it opens no rework.
+            and not await was_conflict_send_back(tick.session, gate_runs[-1])
+        ):
             window.append(Rejection(gate, on_reject, gate_runs[-1]))
     return window
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictFix:
+    """A merging gate that sent `step` back to fix its pull request, and still stands so."""
+
+    gate: GateStep
+    #: The gate's latest run, REJECTED by the send-back.
+    run: StepRun
+    pr_number: int
+    head_ref: str
+    base_ref: str
+    head_sha: str
+    state: Mergeability
+
+
+async def _conflict_fix(tick: _Tick, step: AgentStep) -> ConflictFix | None:
+    """The first gate in config order whose latest current run a conflict send-back naming
+    `step` ended: the conflict window, the mirror of `_rejecting_gates`. It stays open through
+    retries of a failed fix and closes when the gate opens its next run."""
+    for gate in tick.config.steps:
+        if not isinstance(gate, GateStep):
+            continue
+        fixer = tick.config.conflict_fix_step(gate.name)
+        if fixer is None or fixer.name != step.name:
+            continue
+        gate_runs = await _runs_for(tick.session, tick.ticket, gate.name)
+        if not gate_runs or StepRunStatus(gate_runs[-1].status) != StepRunStatus.REJECTED:
+            continue
+        latest = gate_runs[-1]
+        if not await was_conflict_send_back(tick.session, latest):
+            continue
+        sent = await _latest_details(tick, latest, EventType.GATE_CONFLICT_SENT_BACK)
+        if sent.get("target_step") != step.name:
+            continue
+        return ConflictFix(
+            gate=gate,
+            run=latest,
+            pr_number=int(sent["pr_number"]),
+            head_ref=str(sent["head_ref"]),
+            base_ref=str(sent["base_ref"]),
+            head_sha=str(sent["head_sha"]),
+            state=Mergeability(sent["state"]),
+        )
+    return None
+
+
+async def conflict_window(tick: _Tick, step: AgentStep) -> ConflictFix | None:
+    """`_conflict_fix`, read once per tick and step: a start, an acceptance and a failure each
+    ask it, and it costs three queries per gate."""
+    if step.name not in tick.conflict_windows:
+        tick.conflict_windows[step.name] = await _conflict_fix(tick, step)
+    return tick.conflict_windows[step.name]
+
+
+_FIX_INSTRUCTIONS: Final = Path(__file__).parent / "conflict_fix_instructions.md"
+
+
+@cache
+def _fix_template() -> str:
+    return _FIX_INSTRUCTIONS.read_text(encoding="utf-8")
+
+
+class UnsafeRef(RuntimeError):
+    """A branch name a fix run's instructions cannot hold. A `RuntimeError`, so the start fails
+    for good (`_PERMANENT_CONFIG_ERRORS`). The gate asks `plain_refs` before it sends a fix back,
+    so only a send-back older than that check gets here."""
+
+
+def plain_ref(ref: str) -> str:
+    if not is_plain_ref(ref):
+        raise UnsafeRef(
+            f"A conflict fix cannot run on the branch {ref!r}: its name has characters a command "
+            "line acts on. Merge the target into the pull request's branch by hand, then remove "
+            "the blocked label, and the ticket goes back to its gate."
+        )
+    return ref
+
+
+def conflict_fix_instructions(fix: ConflictFix) -> str:
+    """What a fix run is told in place of its agent's own instructions, which describe a build.
+    The orchestrator writes them because the job is the same in every lane, and a lane pinned
+    before fixes existed must still get it. They state the agent prohibitions themselves: an
+    agent may keep them only in the instructions this replaces."""
+    return _fix_template().format(
+        pr_number=fix.pr_number,
+        head_ref=plain_ref(fix.head_ref),
+        base_ref=plain_ref(fix.base_ref),
+        state_words="conflicts with" if fix.state == Mergeability.CONFLICTING else "is behind",
+    )
 
 
 async def _latest_details(tick: _Tick, run: StepRun, event_type: EventType) -> dict[str, Any]:

@@ -3,6 +3,14 @@
  * choices make, which cards a deployment's offered list shows, and which keys a choice
  * asks for. The offered list (`GET /api/runtime-options`) is the authority; the API refuses what
  * it does not list, so these rules only keep the page from asking.
+ *
+ * A fourth choice, the sandbox key, matters only on the cloud sandbox: a type whose `@e2b` offer
+ * the Factorial-managed key covers may run on it (no key and no template to store) or on the
+ * organization's own. The Sandbox step shows the cloud sandbox as two cards, one per key
+ * (`SandboxCard`), over the same stored choice. The caller passes the covered offers it may use
+ * (none when the organization's limit is 0 or unknown). `reconcile` derives the effective key:
+ * managed unless the person picked the own card (`keyPicked`), and always own where the list does
+ * not cover the choice. A forced own is never kept as the person's pick.
  */
 
 import type { RuntimeType } from "../../api/types";
@@ -21,7 +29,8 @@ import {
 export type Cli = "claude" | "codex";
 export type Auth = "api_key" | "subscription" | "bedrock_commercial" | "bedrock_govcloud";
 export type Sandbox = "host" | "cloud" | "self_hosted";
-export type Choice = { cli: Cli; auth: Auth; sandbox: Sandbox };
+export type SandboxKey = "managed" | "own";
+export type Choice = { cli: Cli; auth: Auth; sandbox: Sandbox; sandboxKey: SandboxKey };
 
 export interface CardInfo<T extends string> {
   value: T;
@@ -66,30 +75,47 @@ export function authCards(cli: Cli): CardInfo<Auth>[] {
   ];
 }
 
-export const SANDBOX_CARDS: readonly CardInfo<Sandbox>[] = [
-  {
-    value: "host",
-    label: "On the host",
-    description: "The agent runs on the machine that runs Factorial, and can read its files.",
-  },
-  {
-    value: "cloud",
-    label: "Managed cloud sandbox",
-    description: "A fresh sandbox per run. Keys stay outside it.",
-  },
-  {
-    value: "self_hosted",
-    label: "Self-hosted sandbox",
-    description: "A sandbox in your own infrastructure.",
-  },
-];
+export type SandboxCard = "host" | "managed" | "own" | "self_hosted";
 
-const DEFAULT_SANDBOX: Sandbox = "host";
+const SANDBOX_LABELS: Record<SandboxCard, string> = {
+  host: "On the host",
+  managed: "Factorial-managed sandbox",
+  own: "Your own E2B sandbox",
+  self_hosted: "Self-hosted sandbox",
+};
+
+/** `limit` is the organization's on the managed key. */
+function sandboxCards(limit: number): CardInfo<SandboxCard>[] {
+  const card = (value: SandboxCard, description: string) => ({
+    value,
+    label: SANDBOX_LABELS[value],
+    description,
+  });
+  return [
+    card("host", "The agent runs on the machine that runs Factorial, and can read its files."),
+    card(
+      "managed",
+      `Runs in Factorial's sandbox account. No setup. Your organization gets ${runCount(limit)} at a time.`,
+    ),
+    card("own", "Runs in your E2B account, with your limits and your template builds."),
+    card("self_hosted", "A sandbox in your own infrastructure."),
+  ];
+}
+
+export function sandboxCardOf(choice: Choice): SandboxCard {
+  return choice.sandbox === "cloud" ? choice.sandboxKey : choice.sandbox;
+}
+
+export function choiceForSandboxCard(
+  card: SandboxCard,
+): Pick<Choice, "sandbox"> & Partial<Pick<Choice, "sandboxKey">> {
+  return card === "managed" || card === "own"
+    ? { sandbox: "cloud", sandboxKey: card }
+    : { sandbox: card };
+}
+
 /** The default sandbox first, so a default or a reconciled choice lands on it. */
-const SANDBOX_ORDER: readonly Sandbox[] = [
-  DEFAULT_SANDBOX,
-  ...SANDBOX_CARDS.map((card) => card.value).filter((each) => each !== DEFAULT_SANDBOX),
-];
+const SANDBOX_ORDER: readonly Sandbox[] = ["host", "cloud", "self_hosted"];
 
 /** Each type's cards. `codex_bedrock` answers to both Bedrock cards: its stored region, not its
  *  type, names the partition. */
@@ -132,7 +158,12 @@ export function offerKey(type: RuntimeType, isolation: IsolationStrategy): strin
   return `${type}@${isolation}`;
 }
 
-export type CardLozenge = "Not recommended for prod";
+const LOZENGE_ROLE: Record<CardLozenge, Role> = {
+  "Not recommended for prod": "warning",
+  Limited: "neutral",
+};
+
+export type CardLozenge = "Not recommended for prod" | "Limited";
 export interface CardState {
   enabled: boolean;
   lozenge: CardLozenge | null;
@@ -213,11 +244,23 @@ export function cardStates(offered: ReadonlySet<string> | null, choice: Choice):
   };
 }
 
-export function defaultChoice(offered: ReadonlySet<string>): Choice | null {
+/** Whether the managed key covers this choice's type on the cloud sandbox, whatever sandbox is
+ *  chosen now, so a switch to the cloud card finds the key choice already settled. */
+export function managedCovers(managed: ReadonlySet<string>, choice: Choice): boolean {
+  const type = typeFor(choice.cli, choice.auth);
+  return type !== null && managed.has(offerKey(type, "e2b"));
+}
+
+export function defaultChoice(
+  offered: ReadonlySet<string>,
+  managed: ReadonlySet<string>,
+): Choice | null {
   for (const cli of CLI_ORDER) {
     for (const auth of AUTH_ORDER) {
       for (const sandbox of SANDBOX_ORDER) {
-        if (offers(offered, cli, auth, sandbox)) return { cli, auth, sandbox };
+        if (!offers(offered, cli, auth, sandbox)) continue;
+        const choice: Choice = { cli, auth, sandbox, sandboxKey: "own" };
+        return managedCovers(managed, choice) ? { ...choice, sandboxKey: "managed" } : choice;
       }
     }
   }
@@ -234,12 +277,40 @@ function firstEnabled<T extends string>(
 
 /** Moves a choice the offered list no longer allows to the first enabled card of its group,
  *  CLI first: the CLI decides which authentications exist, and both decide the sandboxes. */
-export function reconcile(offered: ReadonlySet<string> | null, choice: Choice): Choice {
+export function reconcile(
+  offered: ReadonlySet<string> | null,
+  managed: ReadonlySet<string>,
+  choice: Choice,
+  keyPicked: SandboxKey | null = null,
+): Choice {
   if (offered === null) return choice;
   const cli = firstEnabled(CLI_ORDER, cliStates(offered), choice.cli);
   const auth = firstEnabled(AUTH_ORDER, authStates(offered, cli), choice.auth);
   const sandbox = firstEnabled(SANDBOX_ORDER, sandboxStates(offered, cli, auth), choice.sandbox);
-  return { cli, auth, sandbox };
+  const next: Choice = { cli, auth, sandbox, sandboxKey: keyPicked ?? "managed" };
+  return managedCovers(managed, next) ? next : { ...next, sandboxKey: "own" };
+}
+
+/** Whether the choice runs in the cloud sandbox on the managed key: no key, no template. */
+export function usesManagedKey(choice: Choice): boolean {
+  return choice.sandbox === "cloud" && choice.sandboxKey === "managed";
+}
+
+/** The managed key's limit in words, in the singular for one: it counts active runs. */
+export function runCount(limit: number): string {
+  return limit === 1 ? "1 run" : `${limit} runs`;
+}
+
+/** The summary's note under a managed choice. */
+export function managedLimitNote(limit: number): string {
+  return `Up to ${runCount(limit)} at a time for this organization.`;
+}
+
+/** A managed runtime's row on its own page, which cannot name the limit while it is unknown. */
+export function managedKeyMeta(limit: number | null): string {
+  return limit === null || limit <= 0
+    ? "Provided by Factorial."
+    : `Provided by Factorial. ${runCount(limit)} at a time.`;
 }
 
 export type CodexSignIn = "chatgpt" | "paste";
@@ -255,6 +326,7 @@ export function deferredLogin(type: RuntimeType | null, codexSignIn: CodexSignIn
 export function detailsFor(choice: Choice): Record<string, unknown> {
   const isolation = ISOLATION_FOR[choice.sandbox];
   const details: Record<string, unknown> = isolation === null ? {} : { isolation };
+  if (usesManagedKey(choice)) details.sandbox_key = "managed";
   const partition = (Object.keys(PARTITION_AUTH) as BedrockPartition[]).find(
     (each) => PARTITION_AUTH[each] === choice.auth,
   );
@@ -271,13 +343,9 @@ export function fieldsFor(choice: Choice, codexSignIn: CodexSignIn): string[] {
   if (type !== null && requiresStoredCredential(type) && !deferredLogin(type, codexSignIn)) {
     names.push(credentialNameFor(type));
   }
-  if (choice.sandbox === "cloud") names.push(E2B_CREDENTIAL);
+  if (choice.sandbox === "cloud" && !usesManagedKey(choice)) names.push(E2B_CREDENTIAL);
   return names;
 }
-
-const LOZENGE_ROLE: Record<CardLozenge, Role> = {
-  "Not recommended for prod": "warning",
-};
 
 /** The cards that can be chosen: a card the deployment leaves out, or one not built yet, is not
  *  shown at all (#385). */
@@ -287,16 +355,55 @@ export function cardOptions<T extends string>(
 ): RadioOption[] {
   return cards
     .filter((card) => states[card.value].enabled)
-    .map((card) => {
-      const { enabled, lozenge } = states[card.value];
-      return {
-        value: card.value,
-        label: card.label,
-        description: card.description,
-        isDisabled: !enabled,
-        lozenge: lozenge ? { text: lozenge, appearance: LOZENGE_ROLE[lozenge] } : undefined,
-      };
-    });
+    .map((card) => optionOf(card, states[card.value]));
+}
+
+function optionOf<T extends string>(
+  card: CardInfo<T>,
+  { enabled, lozenge, reason }: CardState,
+): RadioOption {
+  return {
+    value: card.value,
+    label: card.label,
+    description: card.description,
+    isDisabled: !enabled,
+    disabledReason: enabled ? undefined : (reason ?? undefined),
+    lozenge: lozenge ? { text: lozenge, appearance: LOZENGE_ROLE[lozenge] } : undefined,
+  };
+}
+
+/** The managed card, unlike the others, stays in the row disabled when the choice's type is not
+ *  covered, so the person learns the managed key exists and what it works with. */
+function managedState(managed: ReadonlySet<string>, choice: Choice, cloud: CardState): CardState {
+  if (managedCovers(managed, choice)) return { ...cloud, lozenge: "Limited" };
+  const otherAuth = AUTH_ORDER.some(
+    (auth) => auth !== choice.auth && managedCovers(managed, { ...choice, auth }),
+  );
+  return {
+    enabled: false,
+    lozenge: "Limited",
+    reason: otherAuth ? "Works with an API key only" : NOT_OFFERED,
+  };
+}
+
+/** The Sandbox step's cards. The managed card is there only when the organization may use the
+ *  managed key: a limit above 0, and a deployment whose key covers some offer. */
+export function sandboxCardOptions(
+  states: Record<Sandbox, CardState>,
+  managed: ReadonlySet<string>,
+  limit: number | null,
+  choice: Choice,
+): RadioOption[] {
+  const hasManaged = limit !== null && limit > 0 && managed.size > 0;
+  const flat: Record<SandboxCard, CardState> = {
+    host: states.host,
+    managed: managedState(managed, choice, states.cloud),
+    own: states.cloud,
+    self_hosted: states.self_hosted,
+  };
+  return sandboxCards(limit ?? 0)
+    .filter((card) => (card.value === "managed" ? hasManaged : flat[card.value].enabled))
+    .map((card) => optionOf(card, flat[card.value]));
 }
 
 function labelOf<T extends string>(cards: readonly CardInfo<T>[], value: T): string {
@@ -310,13 +417,19 @@ export function axisLabels({ cli, auth }: { cli: Cli; auth: Auth }): { cli: stri
 
 /** The card names a choice reads as, for the summary and the suggested name. */
 export function choiceLabels(choice: Choice): { cli: string; auth: string; sandbox: string } {
-  return { ...axisLabels(choice), sandbox: labelOf(SANDBOX_CARDS, choice.sandbox) };
+  return { ...axisLabels(choice), sandbox: SANDBOX_LABELS[sandboxCardOf(choice)] };
 }
 
+/** The whole organization reads a runtime's name, where the own card's "Your own" says nobody's. */
+const NAMED_SANDBOX: Record<SandboxKey, string> = {
+  managed: SANDBOX_LABELS.managed,
+  own: "E2B sandbox",
+};
+
 export function suggestName(choice: Choice): string {
-  const labels = choiceLabels(choice);
-  const base = `${labels.cli} · ${labels.auth}`;
-  return choice.sandbox === "cloud" ? `${base} · ${labels.sandbox}` : base;
+  const { cli, auth } = axisLabels(choice);
+  const base = `${cli} · ${auth}`;
+  return choice.sandbox === "cloud" ? `${base} · ${NAMED_SANDBOX[choice.sandboxKey]}` : base;
 }
 
 const AUTH_WORD: Record<Auth, string> = {

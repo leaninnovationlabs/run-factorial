@@ -61,6 +61,41 @@ export function sseBody() {
 
 export type SseBody = ReturnType<typeof sseBody>;
 
+/** The API a conversation's frame reads, with one conversation, 8, and its stream by id. */
+export function stubChatApi({
+  items = [],
+  turn = null,
+}: {
+  items?: ChatItem[];
+  turn?: ChatTurn | null;
+} = {}) {
+  const streams = new Map<number, SseBody>();
+  vi.spyOn(api, "getAssistantReady").mockResolvedValue({
+    enabled: true,
+    credential_set: true,
+    credential_updated_at: null,
+    ready_to_send: true,
+  });
+  vi.spyOn(api, "listConversations").mockResolvedValue([
+    {
+      id: 8,
+      title: "Blocked tickets",
+      created_at: "",
+      updated_at: "2026-10-12T09:00:00Z",
+      archived_at: null,
+    },
+  ]);
+  vi.spyOn(api, "getAssistantItems").mockResolvedValue({ items, turn });
+  vi.spyOn(api, "getProject").mockRejectedValue(new ApiError(404, "no such project"));
+  vi.spyOn(api, "getTicket").mockRejectedValue(new ApiError(404, "no such ticket"));
+  vi.spyOn(api, "openConversationStream").mockImplementation(async (id) => {
+    const body = sseBody();
+    streams.set(id, body);
+    return body.body;
+  });
+  return { stream: (id: number) => streams.get(id) };
+}
+
 function Where() {
   const { pathname, search } = useLocation();
   return <output data-where>{`${pathname}${search}`}</output>;

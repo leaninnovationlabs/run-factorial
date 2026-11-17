@@ -89,7 +89,7 @@ function typing(root: ParentNode) {
   const region = root.querySelector('[data-item-stream] [role="status"]');
   expect(region).not.toBeNull();
   const said = region?.textContent;
-  const dots = root.querySelector(".assist-typing-dot") !== null;
+  const dots = root.querySelector("[data-working-dots]") !== null;
   expect(dots).toBe(said === "Factorial Assistant is replying");
   return dots ? said : null;
 }
@@ -180,7 +180,7 @@ describe("ItemStream", () => {
     let root = (await render([asked], chatTurn(3, "queued"))).container;
     expect(typing(root)).not.toBeNull();
     // The dots are drawn only; the words are the region's, which was there before them.
-    expect(root.querySelector(".assist-typing-dot")?.closest("[aria-hidden]")).not.toBeNull();
+    expect(root.querySelector("[data-working-dots]")?.closest("[aria-hidden]")).not.toBeNull();
     // The reply has not begun, so the dots start the assistant's block, mark and all.
     expect(blocks(root)).toEqual(["person", "assistant"]);
     expect(root.querySelector('[data-speaker="assistant"] img[data-nav-mark]')).not.toBeNull();

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Final, Literal
 
 from fastapi import APIRouter, HTTPException, Response, status
@@ -91,10 +91,12 @@ from orchestrator.factorial.runtimes import (
     parse_runtime_details,
     parse_runtime_metadata,
     requires_stored_credential,
+    sandbox_key_of,
     template_of,
 )
+from orchestrator.factorial.sandbox_team import managed_gap, sandbox_team
 from orchestrator.secrets import store
-from orchestrator.settings import Settings
+from orchestrator.settings import ManagedSandbox, Settings
 from runtime.adapters.e2b.client import E2bSandboxClient, TemplateBuild, template_builds
 from runtime.adapters.e2b.template import names_harness
 
@@ -130,6 +132,19 @@ _REASON_MAX: Final = 200
 #: primary key so a runtime list never scans the whole log: a refusal older than these shows none.
 _AUTH_FAILURE_WINDOW: Final = 500
 
+_MANAGED_TEMPLATE: Final = "The template is provided with the Factorial-managed key."
+_MANAGED_NEEDS_NO_KEY: Final = (
+    f"A runtime on the Factorial-managed key needs no {E2B_CREDENTIAL}, because the deployment "
+    "provides the sandbox key."
+)
+_STORE_AN_OWN_KEY: Final = (
+    "To move this runtime off the Factorial-managed key, store the runtime's own "
+    f"{E2B_CREDENTIAL} instead."
+)
+#: A team as the live-team guard compares it: the managed one by name, never by its key, so no
+#: answer here can tell a caller whether a value is the deployment's key.
+_Team = tuple[Literal["own", "managed"], str | None]
+
 
 logger = logging.getLogger(__name__)
 
@@ -161,13 +176,15 @@ def _is_e2b(row: Runtime) -> bool:
         return False
 
 
-async def _held_key(session: AsyncSession, row: Runtime) -> str | None:
-    held = await store.get_for_runtime(session, row.id, E2B_CREDENTIAL)
-    return held.get_secret_value() if held is not None else None
+async def _held_team(session: AsyncSession, row: Runtime, managed: ManagedSandbox) -> _Team:
+    team = await sandbox_team(session, row, managed)
+    if team.managed:
+        return ("managed", None)
+    return ("own", team.api_key.get_secret_value() if team.api_key is not None else None)
 
 
 async def _refuse_moving_a_live_team(
-    session: AsyncSession, row: Runtime, before: str | None, after: str | None
+    session: AsyncSession, row: Runtime, before: _Team, after: _Team
 ) -> None:
     """The key names the team, and a paused sandbox resumes only with its own team's key, so
     a key stored, replaced or removed waits for the runtime's live runs. A kept workspace does
@@ -182,9 +199,7 @@ async def _refuse_moving_a_live_team(
         )
 
 
-def _forget_a_template_left_in_another_team(
-    row: Runtime, before: str | None, after: str | None
-) -> None:
+def _forget_a_template_left_in_another_team(row: Runtime, before: _Team, after: _Team) -> None:
     """A template is private to the team that built it, so a key that names another team, or
     none, takes the template with it: the runtime then reads "no E2B template" and its picker
     lists the new team's builds, rather than booting a build its team cannot see."""
@@ -309,12 +324,25 @@ async def _last_auth_failures(
     }
 
 
+async def _sandbox_of(
+    session: AsyncSession, row: Runtime, managed: ManagedSandbox
+) -> tuple[str | None, str | None]:
+    """The build a new sandbox boots, and why a managed runtime cannot start one. An own row's
+    build is on the row: asking the resolver would decrypt its key for nothing."""
+    if sandbox_key_of(row.details) == "own":
+        return template_of(row.details), None
+    team = await sandbox_team(session, row, managed)
+    return team.template, managed_gap(team, row.slug)
+
+
 def _runtime_out(
     row: Runtime,
     credentials: list[RuntimeCredentialOut],
     connected_projects: int,
     last_auth_failure: AuthFailureOut | None,
+    sandbox: tuple[str | None, str | None],
 ) -> RuntimeOut:
+    template, gap = sandbox
     return RuntimeOut(
         id=row.id,
         organization=row.organization_slug,
@@ -327,17 +355,21 @@ def _runtime_out(
         credentials=credentials,
         connected_projects=connected_projects,
         last_auth_failure=last_auth_failure,
+        sandbox_key=sandbox_key_of(row.details),
+        template=template,
+        sandbox_gap=gap,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
 
-async def _out(session: SessionDep, row: Runtime) -> RuntimeOut:
+async def _out(session: SessionDep, row: Runtime, managed: ManagedSandbox) -> RuntimeOut:
     return _runtime_out(
         row,
         (await _credentials_by_runtime(session, [row.id])).get(row.id, []),
         (await _connected_by_runtime(session, [row.id])).get(row.id, 0),
         (await _last_auth_failures(session, [row.id])).get(row.id),
+        await _sandbox_of(session, row, managed),
     )
 
 
@@ -369,7 +401,9 @@ def _validated_metadata(metadata: dict[str, object]) -> dict[str, str]:
 
 @org_router.get("/runtimes", response_model=list[RuntimeOut])
 @needs(Permission.RUNTIMES_MANAGE)
-async def list_runtimes(session: SessionDep, organization: OrganizationDep) -> list[RuntimeOut]:
+async def list_runtimes(
+    session: SessionDep, settings: SettingsDep, organization: OrganizationDep
+) -> list[RuntimeOut]:
     rows = (
         (
             await session.execute(
@@ -391,6 +425,7 @@ async def list_runtimes(session: SessionDep, organization: OrganizationDep) -> l
             credentials.get(row.id, []),
             connected.get(row.id, 0),
             refused.get(row.id),
+            await _sandbox_of(session, row, settings.runtime.e2b.managed),
         )
         for row in rows
     ]
@@ -404,19 +439,62 @@ def _refuse_unoffered(settings: Settings, rt: str, isolation: Isolation) -> None
         )
 
 
+def _refuse_landing_on_the_managed_key(
+    settings: Settings, organization: str, rt: str, details: Mapping[str, object]
+) -> None:
+    """What a runtime must pass before it runs on the Factorial-managed key, by a create, a key
+    check or a move. Asked before the details validator, whose sentences name no reason."""
+    if template_of(details) is not None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_MANAGED_TEMPLATE)
+    managed = settings.runtime.e2b.managed
+    if managed.api_key is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This Factorial install provides no Factorial-managed key.",
+        )
+    isolation = details.get("isolation", "local_cli")
+    # An unknown isolation, or one that is not a string, is the validator's to name.
+    if (
+        isinstance(isolation, str)
+        and isolation in ISOLATION_PLACES
+        and f"{rt}@{isolation}" not in settings.managed_offers
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"The Factorial-managed key does not cover {rt} "
+            f"{ISOLATION_PLACES[isolation]} on this Factorial install.",
+        )
+    if managed.limit_for(organization) == 0:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"The Factorial-managed key is not available to organization {organization!r}. "
+            "Use your own E2B key instead.",
+        )
+
+
 def _offered_details_and_keys(
-    settings: Settings, rt: str, details: dict[str, object], credentials: dict[str, SecretStr]
+    settings: Settings,
+    organization: str,
+    rt: str,
+    details: dict[str, object],
+    credentials: dict[str, SecretStr],
 ) -> tuple[dict[str, object], Isolation, dict[str, SecretStr]]:
-    """The checks a create and a key check share, in order: details, offer, names, values."""
+    """The checks a create and a key check share, in order: the managed key's, details, offer,
+    names, values."""
+    managed = sandbox_key_of(details) == "managed"
+    if managed:
+        _refuse_landing_on_the_managed_key(settings, organization, rt, details)
     valid = _validated_details(rt, details)
     isolation = isolation_of(valid)
     _refuse_unoffered(settings, rt, isolation)
-    allowed = create_credential_names(rt, isolation)
+    allowed = create_credential_names(rt, isolation, managed=managed)
     for name in credentials:
         if name not in allowed:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"A {rt} runtime {ISOLATION_PLACES[isolation]} does not read {name}.",
+                detail=_MANAGED_NEEDS_NO_KEY
+                if managed and name == E2B_CREDENTIAL
+                else f"A {rt} runtime {ISOLATION_PLACES[isolation]} does not read {name}.",
             )
     values: dict[str, SecretStr] = {}
     for name, secret in credentials.items():
@@ -432,19 +510,24 @@ def _offered_details_and_keys(
 @org_router.post("/runtimes/check", response_model=RuntimeCheckOut)
 @needs(Permission.RUNTIMES_MANAGE)
 async def check_runtime(
-    payload: RuntimeCheckIn, response: Response, settings: SettingsDep, http: ProbeHttpDep
+    payload: RuntimeCheckIn,
+    response: Response,
+    settings: SettingsDep,
+    http: ProbeHttpDep,
+    organization: OrganizationDep,
 ) -> RuntimeCheckOut:
     """Test the keys in the body, and list the sandbox team's templates, before a runtime exists.
     Nothing is stored, recorded or logged, and the answer is fixed sentences, as
-    `check_credential`'s is."""
+    `check_credential`'s is. On the Factorial-managed key only the model key is tested: the
+    pool's key is not probed for a caller, and its builds are not listed to one."""
     response.headers["Cache-Control"] = "no-store"
     valid, isolation, values = _offered_details_and_keys(
-        settings, payload.type, payload.details, payload.credentials
+        settings, organization.slug, payload.type, payload.details, payload.credentials
     )
     model = probe(payload.type, values, client=http, held="given", details=valid)
     e2b: CredentialCheckOut | None = None
     templates: list[RuntimeTemplateBuildOut] = []
-    if isolation == "e2b":
+    if isolation == "e2b" and sandbox_key_of(valid) == "own":
         result, (e2b, templates) = await asyncio.gather(
             model, _check_e2b(values.get(E2B_CREDENTIAL), payload.type)
         )
@@ -462,6 +545,19 @@ async def _probe_e2b_key(key: str, held: Literal["stored", "given"]) -> Credenti
     client = E2bSandboxClient(key, request_timeout=TIMEOUT_SECONDS)
     checked = await probe_e2b(client, held=held)
     return CredentialCheckOut(ok=checked.ok, detail=checked.detail)
+
+
+async def _probe_managed_key(key: SecretStr | None) -> CredentialCheckOut:
+    if key is None:
+        return CredentialCheckOut(
+            ok=False, detail="The Factorial-managed key is not available on this deployment."
+        )
+    client = E2bSandboxClient(key.get_secret_value(), request_timeout=TIMEOUT_SECONDS)
+    if (await probe_e2b(client)).ok:
+        return CredentialCheckOut(ok=True, detail="E2B accepted the Factorial-managed key.")
+    return CredentialCheckOut(
+        ok=False, detail="E2B did not answer to the Factorial-managed key. Try again."
+    )
 
 
 async def _check_e2b(
@@ -483,7 +579,9 @@ async def _check_e2b(
 @router.get("/runtime-options", response_model=RuntimeOptionsOut)
 @needs(SIGNED_IN)
 async def runtime_options(settings: SettingsDep) -> RuntimeOptionsOut:
-    return RuntimeOptionsOut(offered=sorted(settings.offers))
+    return RuntimeOptionsOut(
+        offered=sorted(settings.offers), managed_sandbox=sorted(settings.managed_offers)
+    )
 
 
 @org_router.post("/runtimes", response_model=RuntimeOut, status_code=status.HTTP_201_CREATED)
@@ -493,7 +591,7 @@ async def create_runtime(
 ) -> RuntimeOut:
     """Create a Runtime. `slug` and `type` are fixed from here on (`RuntimePatch`)."""
     details, _, values = _offered_details_and_keys(
-        settings, payload.type, payload.details, payload.credentials
+        settings, organization.slug, payload.type, payload.details, payload.credentials
     )
     if template_of(details) is not None and E2B_CREDENTIAL not in values:
         raise HTTPException(
@@ -521,13 +619,15 @@ async def create_runtime(
     for name, value in values.items():
         await store.put_for_runtime(session, row.id, name, value.get_secret_value())
     await session.refresh(row)
-    return await _out(session, row)
+    return await _out(session, row, settings.runtime.e2b.managed)
 
 
 @router.get("/runtimes/{runtime_id}", response_model=RuntimeOut)
 @needs(Permission.RUNTIMES_MANAGE)
-async def get_runtime(runtime_id: int, session: SessionDep) -> RuntimeOut:
-    return await _out(session, await _require_runtime(session, runtime_id))
+async def get_runtime(runtime_id: int, session: SessionDep, settings: SettingsDep) -> RuntimeOut:
+    return await _out(
+        session, await _require_runtime(session, runtime_id), settings.runtime.e2b.managed
+    )
 
 
 @router.patch("/runtimes/{runtime_id}", response_model=RuntimeOut)
@@ -539,7 +639,19 @@ async def update_runtime(
     if payload.name is not None:
         row.name = payload.name
     if payload.details is not None:
-        details = _validated_details(row.type, payload.details)
+        current = sandbox_key_of(row.details)
+        # Omitted, the row's own: which key a runtime uses changes only by an explicit move.
+        asked = payload.details.get("sandbox_key", current)
+        if current == "managed" and template_of(payload.details) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=_MANAGED_TEMPLATE)
+        if current == "managed" and asked == "own":
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_STORE_AN_OWN_KEY)
+        to_managed = current == "own" and asked == "managed"
+        if to_managed:
+            _refuse_landing_on_the_managed_key(
+                settings, row.organization_slug, row.type, payload.details
+            )
+        details = _validated_details(row.type, {**payload.details, "sandbox_key": asked})
         # A live run keeps the kind it spawned with, but its E2B sandbox needs the runtime's key,
         # which only an E2B runtime holds.
         moved = details.get("isolation") != row.details.get("isolation")
@@ -551,6 +663,11 @@ async def update_runtime(
                 detail=f"Runtime {row.slug!r} has live step run(s) ({live}). Change its isolation "
                 "after they finish.",
             )
+        if to_managed:
+            before = await _held_team(session, row, settings.runtime.e2b.managed)
+            await _refuse_moving_a_live_team(session, row, before, ("managed", None))
+            # Nothing of the team the runtime leaves stays reachable from it.
+            await store.delete_for_runtime(session, row.id, E2B_CREDENTIAL)
         chosen = template_of(details)
         # A template is private to its team, so it is chosen from the team the key names.
         if (
@@ -568,7 +685,7 @@ async def update_runtime(
         row.metadata_ = _validated_metadata(payload.metadata)
     await session.flush()
     await session.refresh(row)
-    return await _out(session, row)
+    return await _out(session, row, settings.runtime.e2b.managed)
 
 
 @router.delete("/runtimes/{runtime_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -643,6 +760,8 @@ async def list_template_builds(
             status.HTTP_409_CONFLICT,
             detail=f"Runtime {row.slug!r} does not run in a cloud sandbox.",
         )
+    if sandbox_key_of(row.details) == "managed":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_MANAGED_TEMPLATE)
     key = await store.get_for_runtime(session, row.id, E2B_CREDENTIAL)
     if key is None:
         raise HTTPException(
@@ -703,6 +822,7 @@ async def put_credential(
     name: str,
     payload: RuntimeCredentialIn,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> RuntimeCredentialName:
     # The body is a plaintext credential: never log, echo, or put it in an event (design.md §7.1).
     refuse_bad_name(name, "credential")
@@ -729,16 +849,22 @@ async def put_credential(
                 detail=f"Runtime {row.slug!r} does not run in a cloud sandbox. Only a cloud "
                 f"sandbox runtime holds {E2B_CREDENTIAL}.",
             )
-        before = await _held_key(session, row)
-        await _refuse_moving_a_live_team(session, row, before, value)
-        _forget_a_template_left_in_another_team(row, before, value)
+        before = await _held_team(session, row, settings.runtime.e2b.managed)
+        after: _Team = ("own", value)
+        await _refuse_moving_a_live_team(session, row, before, after)
+        _forget_a_template_left_in_another_team(row, before, after)
+        if before[0] == "managed":
+            # Storing an own key is the move off the managed key, in the same transaction.
+            row.details = {key: kept for key, kept in row.details.items() if key != "sandbox_key"}
     await store.put_for_runtime(session, runtime_id, name, value)
     return RuntimeCredentialName(name=name)
 
 
 @router.delete("/runtimes/{runtime_id}/credentials/{name}", status_code=status.HTTP_204_NO_CONTENT)
 @needs(Permission.RUNTIMES_MANAGE)
-async def delete_credential(runtime_id: int, name: str, session: SessionDep) -> Response:
+async def delete_credential(
+    runtime_id: int, name: str, session: SessionDep, settings: SettingsDep
+) -> Response:
     row = await _require_runtime(session, runtime_id, for_update=True)
     if name not in await store.list_names_for_runtime(session, runtime_id):
         raise HTTPException(
@@ -746,9 +872,11 @@ async def delete_credential(runtime_id: int, name: str, session: SessionDep) -> 
             detail=f"Runtime {runtime_id} has no credential named {name!r}.",
         )
     if name == E2B_CREDENTIAL and _is_e2b(row):
-        before = await _held_key(session, row)
-        await _refuse_moving_a_live_team(session, row, before, None)
-        _forget_a_template_left_in_another_team(row, before, None)
+        before = await _held_team(session, row, settings.runtime.e2b.managed)
+        # A key left on a managed runtime names no team it runs in.
+        after: _Team = before if before[0] == "managed" else ("own", None)
+        await _refuse_moving_a_live_team(session, row, before, after)
+        _forget_a_template_left_in_another_team(row, before, after)
     await store.delete_for_runtime(session, runtime_id, name)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -756,7 +884,7 @@ async def delete_credential(runtime_id: int, name: str, session: SessionDep) -> 
 @router.post("/runtimes/{runtime_id}/test-credential", response_model=CredentialTestOut)
 @needs(Permission.RUNTIMES_MANAGE)
 async def check_credential(
-    runtime_id: int, session: SessionDep, http: ProbeHttpDep
+    runtime_id: int, session: SessionDep, http: ProbeHttpDep, settings: SettingsDep
 ) -> CredentialTestOut:
     """Prove the stored model credential now, and an E2B runtime's team key beside it, with
     the vendor's cheapest authenticated call (`api.runtimes_probe`), never a sandbox. Nothing
@@ -774,13 +902,15 @@ async def check_credential(
     )
     e2b: CredentialCheckOut | None = None
     if _is_e2b(row):
-        key = await store.get_for_runtime(session, row.id, E2B_CREDENTIAL)
-        if key is None:
+        team = await sandbox_team(session, row, settings.runtime.e2b.managed)
+        if team.managed:
+            e2b = await _probe_managed_key(team.api_key)
+        elif team.api_key is None:
             e2b = CredentialCheckOut(
                 ok=False, detail=f"The runtime holds no {E2B_CREDENTIAL}. Save it first."
             )
         else:
-            e2b = await _probe_e2b_key(key.get_secret_value(), "stored")
+            e2b = await _probe_e2b_key(team.api_key.get_secret_value(), "stored")
     return CredentialTestOut(ok=result.ok, detail=result.detail, local=result.local, e2b=e2b)
 
 

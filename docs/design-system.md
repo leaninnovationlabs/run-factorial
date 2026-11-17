@@ -231,6 +231,10 @@ The reasons are in decision 50.
   and offer Undo in a flag.
 - **Reading surfaces and edit forms open in a `Drawer`**: modal, slides in from the right, dims
   the page, never shifts the layout.
+- **The assistant's conversation is the one exception.** It has two more frames, and neither is
+  modal: a column docked at the right edge of the page, which makes the page narrower, and a
+  small window that floats over the bottom right corner of the page (decision 63). Do not use
+  either for a different surface.
 - **Overlays use the layer stack** (`layers.ts`). Escape closes only the top layer. A modal layer
   makes everything under it `inert`, which contains focus without a Tab trap. Do not build a
   second overlay mechanism, and do not add a headless component library (deferred in
@@ -241,12 +245,21 @@ The reasons are in decision 50.
   name: ADS has no menu at a pointer. It uses the `DropdownMenu` surface, layer and menu list.
   A menu item may carry an `icon` before its label, and a group's name is the heading over its
   items ("Add new").
+- **One menu is on every element: the assistant's.** A right-click anywhere opens a menu named
+  Assistant, which takes the thing under the pointer into a conversation (decision 63). It has no
+  button of its own, because the assistant is always told the page a message came from: the
+  right-click only says which thing. The menu key of the keyboard opens the same menu. The
+  browser's menu stays in a text field, in the terminal, in the conversation, and with Shift. A
+  new `ContextMenu` on a page must add the assistant's entries to its own (`usePointEntries`),
+  because it takes the right-click from this one.
 - **A question that belongs where the person pressed opens in `PopupAt`**: the popup's surface
   at a point, with no button of its own. The config explorer asks for a new file's name there.
 - **Figures that do not need room in a row go behind an icon in a `HoverCard`**: a run's model,
   duration, tokens and cost on its attempt's header. A mouse on the icon, keyboard focus or a
   press opens the card, and a press is how a phone opens it. The card describes the icon and
-  never takes the focus, so it holds text only. `HoverCard` is not an ADS name: ADS has no card
+  never takes the focus, so it holds text only. An `interactive` card is the exception: it can
+  hold a link, and a press moves the focus into it so that a keyboard gets to the link. The
+  assistant's chips use it. `HoverCard` is not an ADS name: ADS has no card
   that opens on hover. It uses the layer stack and a popup's surface.
 - **Action feedback** goes through `useActionFeedback` / `showFlag`. A slow action says so after
   `SLOW_AFTER_MS`.
@@ -278,7 +291,7 @@ decision 50.
   activity panel is nearly the height of the window. The Output drawer shows one section at a
   time.
 - **A drawer** fills the window. The assistant's page (`bleed` in `routes.tsx`) goes to the edges
-  of the window.
+  of the window. The assistant's docked column and floating window do not exist on a phone.
 - **A field** is 16px on a phone, because iOS Safari zooms into a smaller field when it gets the
   focus.
 - **Insets:** the tab bar and a drawer's footer keep clear of the home indicator
@@ -298,10 +311,12 @@ decision 50.
 - **Contrast:** text 4.5:1 and a control's edge 3:1 in both themes, checked by `foundations.test.ts`.
   `prefers-contrast: more` swaps in the ADS increased-contrast values.
 - **Motion:** a looping animation beats three times and stops (WCAG 2.2.2), and stops under
-  reduced motion (`prefersReducedMotion()` in `components/ui/motion.ts`). Reuse the beats in
-  `motion.css`. Default transitions are `transition-colors` (150ms, eased out). A button eases every
-  change, gets smaller a little when you press it (`motion-safe:active:scale-97`), and its spinner
-  comes in with `animate-settle-in`.
+  reduced motion (`prefersReducedMotion()` in `components/ui/motion.ts`). A sign that work
+  continues is the exception: the process graph's running step and `WorkingDots` loop while the
+  work runs, because a sign that stops looks stalled. Under reduced motion, the dots fade in place
+  and do not move. Reuse the beats in `motion.css`. Default transitions are `transition-colors`
+  (150ms, eased out). A button eases every change, gets smaller a little when you press it
+  (`motion-safe:active:scale-97`), and its spinner comes in with `animate-settle-in`.
 - **Shortcuts:** never a single character (WCAG 2.1.4). Search is ⌘K / Ctrl+K. A focus trap needs a
   way out: the terminal releases on Ctrl+] (WCAG 2.1.2).
 - **Status is never colour alone:** a lozenge carries a word, a chart carries a legend and a table

@@ -58,6 +58,7 @@ class FakeBackend:
     supports_resume: ClassVar[bool] = True
     supports_cancel: ClassVar[bool] = True
     supports_effort: ClassVar[bool] = True
+    supports_images: ClassVar[bool] = True
 
     def __init__(
         self,

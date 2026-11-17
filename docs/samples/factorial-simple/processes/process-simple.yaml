@@ -48,7 +48,7 @@
 # never an agent or a container) rather than a substrate. A fourth, `kind: check`, completes
 # when its `conditions` hold on observed state (no agent, no action and no person;
 # it is built for waiting on CI). See docs/process-yaml.md. This sample uses neither: its
-# `test` step runs the suite itself, and its optional CI check waits inside the same step.
+# `test` step runs the suite itself.
 #
 # Runtime: `runtime: <slug>` selects the Runtime (a row on the Runtimes page) the agents run on.
 # Sync refuses a slug the page lacks. The agents declare no `runtime.kind`: the Runtime's type
@@ -165,6 +165,9 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:spec-rework"
         assign: ["{ticket_owner}"]
+      # The agent step that fixes a pull request that conflicts with its target.
+      onConflict:
+        rerunStep: plan
 
   # ------------------------------------------------------------------ 3. build (agent)
   - name: build
@@ -228,9 +231,7 @@ steps:
     postconditions:
       all:
         # The verdict comment is the acceptance gate: proof the test agent ran. Its PASS or FAIL
-        # text is not checked. Optional, and off here: uncomment the next line to require the
-        # repository's own CI too, for a repository that runs CI on pull requests.
-        # - ci_green("impl/{ticket}-*")
+        # text is not checked.
         - pr_comment_contains("impl/{ticket}-*", "## Test Verdict")
     onSuccess:
       ticketLabel: "factorial:code-review"
@@ -260,6 +261,9 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:build-rework"
         assign: ["{ticket_owner}"]
+      # The agent step that fixes a pull request that conflicts with its target.
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

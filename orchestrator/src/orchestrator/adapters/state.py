@@ -25,6 +25,7 @@ import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from functools import partial
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -79,6 +80,18 @@ class PullRequestState:
     state: str  # "open" | "closed"
     merged: bool
     url: str
+
+
+class Mergeability(StrEnum):
+    """Whether a PR can merge into its target branch as it stands, as the forge reports it.
+
+    UNKNOWN is the forge still computing (GitHub answers `mergeable: null` for a few seconds
+    after a push); a caller must never read it as CLEAN."""
+
+    CLEAN = "clean"
+    CONFLICTING = "conflicting"
+    BEHIND = "behind"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +204,12 @@ class StateSource(Protocol):
     #: one PR's approval/changes-requested verdict — lazy and keyed, like `files`/`check_runs`:
     #: only the PR a gate or predicate selected costs the review round trip.
     async def pr_review_verdict(self, number: int) -> ReviewVerdict: ...
+    #: whether one PR merges into its target as it stands — lazy and keyed, one forge GET.
+    async def pr_mergeability(self, number: int) -> Mergeability: ...
+    #: Whether a review approves the head it was given on (GitHub) or the merge request as a
+    #: whole (GitLab, whose approvals the push does not retire by itself).
+    @property
+    def approvals_bound_to_head(self) -> bool: ...
     #: `login`'s role on this repository, as GitHub reports it now — lazy and keyed, like
     #: `files`: only a reviewer a gate must weigh costs the lookup.
     async def repo_permission(self, login: str) -> RepoPermission: ...
@@ -294,6 +313,8 @@ class SnapshotState:
     review_states_by_number: Mapping[int, Sequence[ReviewState]] = field(default_factory=dict)
     review_verdicts_by_number: Mapping[int, ReviewVerdict] = field(default_factory=dict)
     permissions_by_login: Mapping[str, RepoPermission] = field(default_factory=dict)
+    mergeability_by_number: Mapping[int, Mergeability] = field(default_factory=dict)
+    approvals_bound_to_head: bool = True
 
     async def issue(self) -> IssueState:
         return self.issue_state
@@ -326,6 +347,9 @@ class SnapshotState:
         # Unsupplied resolves to the empty verdict — an unreviewed PR, same as every other
         # unobserved key here.
         return self.review_verdicts_by_number.get(number, ReviewVerdict())
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        return self.mergeability_by_number.get(number, Mergeability.CLEAN)
 
     async def repo_permission(self, login: str) -> RepoPermission:
         folded = login.casefold()
@@ -390,6 +414,13 @@ class SeededIssue:
 
     async def pr_review_verdict(self, number: int) -> ReviewVerdict:
         return await self.inner.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        return await self.inner.pr_mergeability(number)
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self.inner.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         return await self.inner.repo_permission(login)

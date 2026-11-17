@@ -245,6 +245,7 @@ async def factorial_project_get(
         config_source=await config_source_for(
             tc.session, found, github=await tc.deps.config_source(found), gitlab=tc.deps.gitlab
         ),
+        managed=tc.settings.runtime.e2b.managed,
         webhook_reachable=tc.settings.webhook_reachable,
     )
     where = (await project_repos(tc.session, [found.id]))[found.id]

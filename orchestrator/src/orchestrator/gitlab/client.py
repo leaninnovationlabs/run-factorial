@@ -16,9 +16,13 @@ __all__ = ["GitLabClient", "GitLabError", "quote_project"]
 
 
 class GitLabError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, body: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        #: The response text, whole: `message` keeps only its first 300 characters.
+        self.body = body
 
 
 def quote_project(repo: str) -> str:
@@ -159,4 +163,5 @@ def _raise_for(method: str, path: str, response: httpx.Response) -> None:
         raise GitLabError(
             f"{method} {path} failed: {response.status_code} {response.text[:300]}",
             status_code=response.status_code,
+            body=response.text,
         )

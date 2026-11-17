@@ -17,7 +17,7 @@
 #   system: system-prompt.md
 #   instructions: instructions.md
 #
-# model: claude-sonnet-5-5
+# model: claude-opus-5-5
 #   A concrete, versioned model id. A size alias ("sonnet", "opus") resolves to a name the API
 #   rejects, and the agent fails on its first turn. The parser refuses aliases outright. A Codex
 #   runtime needs a Codex model id.

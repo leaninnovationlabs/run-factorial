@@ -20,6 +20,7 @@ from orchestrator.events.read_models import (
     project_spend,
     project_tickets,
     recent_events,
+    sandbox_waits,
     ticket_park_reason,
     ticket_timeline,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "project_spend",
     "project_tickets",
     "recent_events",
+    "sandbox_waits",
     "ticket_park_reason",
     "ticket_timeline",
     "wake_admission",

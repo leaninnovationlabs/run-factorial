@@ -8,6 +8,7 @@ in `test_reconcile_agents.py` stay its proof.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -20,9 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config import AgentManifest
 from orchestrator.db.models import Project, Runtime, StepRunStatus, TicketStatus
 from orchestrator.events import EventType, append
+from orchestrator.factorial.sandbox_team import SandboxTeam
 from orchestrator.github import LABEL_BLOCKED, LABEL_EXIT, LABEL_INTERRUPTED
 from orchestrator.secrets import store
 from orchestrator.secrets.crypto import DecryptionError
+from orchestrator.settings import ManagedSandbox
 from orchestrator.worker import agent_steps as agent_steps_module
 from orchestrator.worker import runtime_adapters as runtime_adapters_module
 from orchestrator.worker.context import SessionPolicy
@@ -32,6 +35,7 @@ from orchestrator.worker.runtime_adapters import (
     registry_build,
 )
 from runtime.contract import AdapterUnavailable, SecretRoute
+from tests.api_harness import TOKEN, build_app, client_for, make_settings
 from tests.reconcile_world import (
     MANIFEST,
     RESOLVED_AGENT,
@@ -125,8 +129,9 @@ def test_an_e2b_runtime_spawns_into_its_own_team_on_the_one_instance() -> None:
         details={"isolation": "e2b", "template": "factorial-claude:1234"},
     )
 
-    first = adapters.for_runtime(row, held_key=SecretStr("e2b_team_b"), repoint=True)
-    again = adapters.for_runtime(row, held_key=None, repoint=True)
+    team = SandboxTeam(SecretStr("e2b_team_b"), "factorial-claude:1234", managed=False)
+    first = adapters.for_runtime(row, team=team, repoint=True)
+    again = adapters.for_runtime(row, team=replace(team, api_key=None), repoint=True)
 
     assert again is first and built == [first]
     assert built[0].workspaces == [
@@ -534,12 +539,22 @@ async def test_a_process_naming_no_runtime_still_reads_the_project_store(
 
 
 async def _on_e2b(
-    world: World, slug: str, *, permit: bool, egress: object = None, template: str = ""
+    world: World,
+    slug: str,
+    *,
+    permit: bool,
+    egress: object = None,
+    template: str = "",
+    managed: bool = False,
 ) -> None:
     """Move the runtime into a sandbox, and set what the project's operator permits."""
     async with world.sessions() as session:
         row = (await session.execute(select(Runtime).where(Runtime.slug == slug))).scalar_one()
-        row.details = {"isolation": "e2b", **({"template": template} if template else {})}
+        row.details = {
+            "isolation": "e2b",
+            **({"template": template} if template else {}),
+            **({"sandbox_key": "managed"} if managed else {}),
+        }
         project = await session.get(Project, world.project_id)
         assert project is not None
         settings = dict(project.settings)
@@ -612,6 +627,104 @@ async def test_a_malformed_egress_allowlist_is_refused_not_ignored(
     await run_tick(world)
 
     await _assert_refused_permanently(world, adapter, "egress_allowlist")
+
+
+MANAGED_KEY = "e2b_managed_pool_never_shown"
+CODEX_BUILD = "factorial-codex:00000000-0000-4000-8000-000000000002"
+
+
+async def _managed_world(
+    maker: async_sessionmaker[AsyncSession], managed: ManagedSandbox, *, stale: str | None = None
+) -> tuple[World, _Sandboxed, str]:
+    """A codex runtime on the managed key, holding `stale` as a stored E2B key it must ignore."""
+    slug = _runtime_slug()
+    adapter = _Sandboxed()
+    world = await _build_world(
+        maker,
+        resolved_agent=CODEX_AGENT,
+        config=_process_on_runtime(f"proc-{slug}", slug),
+        runtimes={slug: ("codex_api", adapter)},
+    )
+    world.deps = replace(world.deps, managed_sandbox=managed)
+    await _on_e2b(world, slug, permit=True, managed=True)
+    if stale is not None:
+        async with world.sessions() as session:
+            await store.put_for_runtime(
+                session, await _runtime_id(world, slug), "E2B_API_KEY", stale
+            )
+            await session.commit()
+    return world, adapter, slug
+
+
+@postgres
+async def test_a_managed_runtime_spawns_on_the_deployments_key_which_nothing_records(
+    maker: async_sessionmaker[AsyncSession], master_key: None, async_session: AsyncSession
+) -> None:
+    """The key reaches the adapter's client and nowhere else: not the run, not an event, not
+    an API read of the runtime, from an API that holds the key."""
+    managed = ManagedSandbox(api_key=SecretStr(MANAGED_KEY), templates={"codex": CODEX_BUILD})
+    world, adapter, slug = await _managed_world(maker, managed, stale="e2b_stale_own_key")
+    runtime_id = await _runtime_id(world, slug)
+    async with world.sessions() as session:
+        await store.put_for_runtime(session, runtime_id, "OPENAI_API_KEY", "sk-model-key")
+        await session.commit()
+
+    await run_tick(world)
+
+    (spec,) = adapter.spawns
+    assert adapter.workspaces[-1] == (MANAGED_KEY, CODEX_BUILD)
+    async with world.sessions() as session:
+        project = await session.get(Project, world.project_id)
+        assert project is not None
+        assert spec.organization == project.organization_slug
+    assert MANAGED_KEY not in [value.get_secret_value() for value in spec.secrets.values()]
+    assert (await _spawned(world))["template"] == CODEX_BUILD
+    for event in await event_rows(world):
+        assert MANAGED_KEY not in json.dumps(event.details, default=str), event.type
+    async with client_for(build_app(make_settings(managed=managed), async_session)) as client:
+        auth = {"Authorization": f"Bearer {TOKEN}"}
+        reads = {
+            path: await client.get(path, headers=auth)
+            for path in (
+                f"/api/runtimes/{runtime_id}",
+                "/api/orgs/default/runtimes",
+                f"/api/runtimes/{runtime_id}/credentials",
+                f"/api/projects/{world.project_id}",
+            )
+        }
+    for path, read in reads.items():
+        assert read.status_code == 200, (path, read.text)
+        assert MANAGED_KEY not in read.text, path
+    (item,) = [
+        row for row in reads[f"/api/projects/{world.project_id}"].json()["readiness"]
+        if row["key"] == "runtime"
+    ]
+    assert item["state"] == "ok", item
+
+
+@postgres
+@pytest.mark.parametrize(
+    ("managed", "says"),
+    [
+        (
+            ManagedSandbox(api_key=SecretStr(MANAGED_KEY), templates={}),
+            "The Factorial-managed key no longer covers runtime",
+        ),
+        (ManagedSandbox(), "The Factorial-managed key is not available on this deployment"),
+    ],
+    ids=["no-template", "no-key"],
+)
+async def test_a_managed_row_whose_template_is_gone_refuses_a_new_spawn_with_words(
+    maker: async_sessionmaker[AsyncSession], master_key: None, managed: ManagedSandbox, says: str
+) -> None:
+    """Refused for good, as an own runtime with no key or no template is, and never on the key
+    the row still stores."""
+    world, adapter, _ = await _managed_world(maker, managed, stale="e2b_stale_own_key")
+
+    await run_tick(world)
+
+    await _assert_refused_permanently(world, adapter, says, "own E2B key")
+    assert all(key != "e2b_stale_own_key" for key, _ in adapter.workspaces)
 
 
 RAILWAY_MANIFEST = AgentManifest.model_validate(

@@ -7,10 +7,12 @@ from pydantic import ValidationError
 
 from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.vocabulary import (
+    ALL_ASSISTANT_OFFERS,
     BACKENDS,
     credential_slot,
     parse_credential_slot,
     stores_credential,
+    takes_images,
 )
 
 
@@ -159,3 +161,18 @@ def test_defaults_are_the_spec_defaults() -> None:
         25,
         Decimal("20.00"),
     )
+
+
+def test_images_go_to_the_sign_ins_whose_models_are_known_to_take_them() -> None:
+    """Every backend and sign-in a deployment can offer, and whether a turn on it is handed an
+    attached image. Nothing on Bedrock is: its models have not been seen to take one, and a
+    turn that failed on a picture would lose the words sent with it."""
+    assert {offer: takes_images(*offer.split(":")) for offer in ALL_ASSISTANT_OFFERS} == {
+        "claude_sdk:api_key": True,
+        "claude_sdk:subscription": True,
+        "codex_cli:api_key": True,
+        "codex_cli:subscription": True,
+        "codex_cli:bedrock": False,
+        "bedrock_responses:bedrock": False,
+    }
+    assert takes_images("no_such_backend", "api_key") is False

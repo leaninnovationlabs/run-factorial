@@ -362,6 +362,7 @@ async def get_project(
         session,
         project,
         config_source=config_source,
+        managed=settings.runtime.e2b.managed,
         webhook_reachable=settings.webhook_reachable,
     )
     if Permission.PROJECTS_READ in grant.permissions:

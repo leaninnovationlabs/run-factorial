@@ -39,7 +39,12 @@ from orchestrator.api.schemas import (
 from orchestrator.api.services import assistant_settings as svc
 from orchestrator.api.services.assistant_send import SendRefused, queue_user_message
 from orchestrator.assistant.config import AssistantSettings
-from orchestrator.assistant.vocabulary import BACKENDS, assistant_offer, stores_credential
+from orchestrator.assistant.vocabulary import (
+    BACKENDS,
+    assistant_offer,
+    stores_credential,
+    takes_images,
+)
 from orchestrator.db.models import ChatConversation
 
 __all__ = ["router"]
@@ -83,6 +88,7 @@ async def get_assistant_ready(
         credential_updated_at=credential.updated_at,
         ready_to_send=refusal is None,
         refusal=refusal,
+        accepts_images=takes_images(current.backend, current.auth_mode),
     )
 
 

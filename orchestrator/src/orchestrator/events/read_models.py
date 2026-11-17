@@ -23,6 +23,7 @@ from typing import Any, Final, Literal
 from sqlalchemy import (
     ColumnElement,
     Float,
+    Integer,
     Numeric,
     Select,
     Subquery,
@@ -38,6 +39,7 @@ from sqlalchemy import (
     true,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from orchestrator.db.models import (
     CostSource,
@@ -119,6 +121,7 @@ __all__ = [
     "project_tickets",
     "recent_events",
     "run_extremes",
+    "sandbox_waits",
     "select_tickets",
     "spend_by_outcome",
     "spend_by_ticket",
@@ -975,6 +978,84 @@ async def recent_events(
 
 
 @dataclass(frozen=True, slots=True)
+class SandboxWait:
+    """Why a ticket waits for a sandbox right now (`EventType.SANDBOX_LIMIT_WAITING`)."""
+
+    scope: str
+    limit: int
+    running: int
+    runtime: str
+    #: The organization's runtime of that slug, or None once it is gone.
+    runtime_id: int | None
+
+
+async def sandbox_waits(
+    session: AsyncSession, *, ticket_id: int | None = None, organization_id: int | None = None
+) -> dict[int, SandboxWait]:
+    """The tickets waiting for a sandbox now, by ticket id: one query for one ticket or for a
+    whole organization's board.
+
+    The newest `sandbox_limit_waiting` alone does not say so: the start may have happened since.
+    It holds while the ticket is still open on that event's step, the step was not entered again
+    after it, and the attempt it names has no run of the current generation (a run row is the
+    start).
+    """
+    held = aliased(Event)
+    newer = aliased(Event)
+    entered = aliased(Event)
+    attempt = cast(held.details["attempt"].astext, Integer)
+    stmt = (
+        select(Ticket.id, held.details, Runtime.id)
+        .select_from(held)
+        .join(Ticket, Ticket.id == held.ticket_id)
+        .join(Project, Project.id == Ticket.project_id)
+        .outerjoin(
+            Runtime,
+            and_(
+                Runtime.organization_id == Project.organization_id,
+                Runtime.slug == held.details["runtime"].astext,
+            ),
+        )
+        .where(
+            held.type == EventType.SANDBOX_LIMIT_WAITING,
+            Ticket.status.in_((TicketStatus.RUNNING, TicketStatus.WAITING_GATE)),
+            held.details["step"].astext == Ticket.current_step,
+            ~exists().where(
+                newer.ticket_id == held.ticket_id,
+                newer.type == EventType.SANDBOX_LIMIT_WAITING,
+                newer.id > held.id,
+            ),
+            ~exists().where(
+                entered.ticket_id == held.ticket_id,
+                entered.type == EventType.STEP_ENTERED,
+                entered.details["step"].astext == Ticket.current_step,
+                entered.id > held.id,
+            ),
+            ~exists().where(
+                StepRun.ticket_id == Ticket.id,
+                StepRun.step_name == Ticket.current_step,
+                StepRun.attempt == attempt,
+                current_runs(Ticket.generation),
+            ),
+        )
+    )
+    if ticket_id is not None:
+        stmt = stmt.where(Ticket.id == ticket_id)
+    if organization_id is not None:
+        stmt = stmt.where(Project.organization_id == organization_id)
+    return {
+        int(ticket): SandboxWait(
+            scope=str(details["scope"]),
+            limit=int(details["limit"]),
+            running=int(details["running"]),
+            runtime=str(details["runtime"]),
+            runtime_id=runtime_id,
+        )
+        for ticket, details, runtime_id in await session.execute(stmt)
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class OverviewTicket:
     """One ticket as the factory board draws it: its lane, and the three figures it shades by."""
 
@@ -1007,6 +1088,8 @@ class OverviewTicket:
     minutes: float
     #: See `TicketRow.quarantined_at`.
     quarantined_at: datetime | None
+    #: See `sandbox_waits`.
+    sandbox_wait: SandboxWait | None = None
 
 
 async def factory_overview(
@@ -1077,6 +1160,7 @@ async def factory_overview(
         .order_by(Ticket.project_id, Ticket.id)
     )
     rows = (await session.execute(stmt)).all()
+    waits = await sandbox_waits(session, organization_id=organization_id)
     return [
         OverviewTicket(
             ticket_id=int(r[0]),
@@ -1095,6 +1179,7 @@ async def factory_overview(
             tokens=int(r[13]),
             minutes=round(float(r[14]) / 60, 2),
             quarantined_at=r[15],
+            sandbox_wait=waits.get(int(r[0])),
         )
         for r in rows
     ]
@@ -1158,6 +1243,16 @@ def _any_estimated() -> Any:
     return func.coalesce(func.bool_or(StepRun.cost_source == CostSource.ESTIMATED), False)
 
 
+def _not_sent_back() -> ColumnElement[bool]:
+    """The gate run did not end in a conflict send-back: the loop ended that wait, and no person
+    decided it."""
+    return ~exists().where(
+        Event.ticket_id == StepRun.ticket_id,
+        Event.step_run_id == StepRun.id,
+        Event.type == EventType.GATE_CONFLICT_SENT_BACK,
+    )
+
+
 def _gate_wait() -> ColumnElement[bool]:
     """A gate that opened and ended (`_GATE_ENDS`), so its wait has both ends."""
     return and_(
@@ -1165,6 +1260,7 @@ def _gate_wait() -> ColumnElement[bool]:
         StepRun.status.in_(_GATE_ENDS),
         StepRun.started_at.is_not(None),
         StepRun.ended_at.is_not(None),
+        _not_sent_back(),
     )
 
 
@@ -1453,7 +1549,11 @@ async def step_medians(
         .where(
             StepRun.started_at.is_not(None),
             or_(
-                and_(StepRun.kind == StepKind.HUMAN_GATE, StepRun.status.in_(_GATE_DECISIONS)),
+                and_(
+                    StepRun.kind == StepKind.HUMAN_GATE,
+                    StepRun.status.in_(_GATE_DECISIONS),
+                    _not_sent_back(),
+                ),
                 and_(StepRun.kind != StepKind.HUMAN_GATE, StepRun.status.in_(_RUN_ENDINGS)),
             ),
         )

@@ -3,19 +3,51 @@
  * and nothing a model's text could use to run or fetch anything.
  *
  * Raw HTML is skipped, not escaped into view. A link keeps only an `http(s)` address, which opens
- * in a new tab, or a dashboard path, which the router follows and which closes the Drawer; any
+ * in a new tab, or a dashboard path, which the router follows and which closes the Drawer (a
+ * docked or floating conversation stays beside the page it opens); any
  * other link is its text alone. An image is never loaded, whatever its address: a reply that a
  * prompt injection shaped could otherwise send data out in an image's URL with no click at all.
+ *
+ * Some models write a list with a bullet character, which markdown reads as one paragraph, so a
+ * line that starts with one is made a `-` item before the text is parsed (`bulletLines`).
  */
 
+import { memo } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Code, CodeBlock, cx } from "../../ui";
 import { DashboardLink, isDashboardPath } from "../AssistantProvider";
+import { useBodyText } from "../frames";
 
 const LINK = "font-medium underline underline-offset-2";
 
 function safeUrl(url: string): string {
   return /^https?:\/\//i.test(url) || isDashboardPath(url) ? url : "";
+}
+
+const BULLET = /^(\s*)[•◦▪‣·]\s+/;
+const FENCE = /^\s*(```|~~~)/;
+
+/** Outside a code fence, a line that starts with a bullet character becomes a `-` list item. */
+export function bulletLines(text: string): string {
+  let fenced = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (FENCE.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      return fenced ? line : line.replace(BULLET, "$1- ");
+    })
+    .join("\n");
+}
+
+type Hast = { type: string; value?: string; children?: Hast[] };
+
+function textOf(node: Hast | undefined): string {
+  if (!node) return "";
+  return node.type === "text" ? (node.value ?? "") : (node.children ?? []).map(textOf).join("");
 }
 
 const COMPONENTS: Components = {
@@ -36,23 +68,24 @@ const COMPONENTS: Components = {
   h5: ({ children }) => <h4 className="text-heading-xs">{children}</h4>,
   h6: ({ children }) => <h4 className="text-heading-xs">{children}</h4>,
   ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
+  // A list that resumes after a code block or a paragraph says where it resumes.
+  ol: ({ children, start }) => (
+    <ol start={start} className="list-decimal space-y-1 pl-5">
+      {children}
+    </ol>
+  ),
+  // A task item has its checkbox for a marker.
+  li: ({ children, className }) => (
+    <li className={className?.includes("task-list-item") ? "list-none" : undefined}>{children}</li>
+  ),
   blockquote: ({ children }) => (
     <blockquote className="border-l-2 border-bold pl-3 text-subtle">{children}</blockquote>
   ),
-  code: ({ children }) => (
-    <code className="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">
-      {children}
-    </code>
-  ),
-  pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-md bg-neutral p-3 text-body-sm [&>code]:bg-transparent [&>code]:p-0">
-      {children}
-    </pre>
-  ),
+  code: ({ children }) => <Code>{children}</Code>,
+  pre: ({ node }) => <CodeBlock text={textOf(node as Hast).replace(/\n$/, "")} label="code" />,
   table: ({ children }) => (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-body">{children}</table>
+      <table className="w-full border-collapse">{children}</table>
     </div>
   ),
   th: ({ children, style }) => (
@@ -70,12 +103,15 @@ const COMPONENTS: Components = {
   ),
 };
 
-export function AssistantText({ text }: { text: string }) {
+/** Memoized on its text: the provider holds the draft, so every key typed in the composer draws
+ *  the conversation again, and markdown is parsed on every draw of a reply. */
+export const AssistantText = memo(function AssistantText({ text }: { text: string }) {
+  const body = useBodyText();
   return (
-    <div className="space-y-2 text-body leading-relaxed break-words text-default">
+    <div className={cx("space-y-2 leading-relaxed break-words text-default", body)}>
       <Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={safeUrl} components={COMPONENTS}>
-        {text}
+        {bulletLines(text)}
       </Markdown>
     </div>
   );
-}
+});

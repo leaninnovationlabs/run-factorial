@@ -5,6 +5,7 @@ import { dueFrom, issueNumber, newest, str } from "./details";
 import type { EventLink } from "./links";
 import {
   COMPLETION_REFUSALS,
+  CONFLICT_FIX_REFUSALS,
   changesRefused,
   EXIT_CAUSES,
   FRESH_SESSION_REASONS,
@@ -347,6 +348,24 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
         label,
         primary: refusal && snippet(refusal),
         long: refusal ? { title: "Why the runtime refused", body: refusal } : null,
+        tone: "attention",
+        significant: true,
+      };
+    }
+
+    // A start held by the Factorial-managed key's limit: written once per entry of the step, and
+    // again when the scope, the limit or the held attempt changes.
+    case "sandbox_limit_waiting": {
+      const limit = typeof d.limit === "number" ? d.limit : null;
+      return {
+        label,
+        primary:
+          limit === 0
+            ? "not available to this organization"
+            : d.scope === "pool"
+              ? "the shared pool is full"
+              : `limit of ${limit ?? "?"} for this organization`,
+        long: null,
         tone: "attention",
         significant: true,
       };
@@ -980,6 +999,65 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
       };
     }
 
+    case "gate_mergeability": {
+      const state = str(d.state);
+      const base = str(d.base_ref) ?? "its target";
+      return {
+        label:
+          state === "conflicting"
+            ? `Pull request conflicts with ${base}`
+            : state === "behind"
+              ? `Pull request is behind ${base}`
+              : state === "clean"
+                ? "Pull request can merge again"
+                : label,
+        primary: null,
+        long: null,
+        tone: state === "clean" ? "success" : "attention",
+        significant: true,
+      };
+    }
+
+    case "conflict_fix_requested": {
+      const by = str(d.requested_by);
+      return {
+        label,
+        primary: by && `by ${by}`,
+        long: null,
+        tone: "attention",
+        significant: true,
+      };
+    }
+
+    case "conflict_fix_refused": {
+      const reason = str(d.reason);
+      return {
+        label,
+        primary: reason && (CONFLICT_FIX_REFUSALS[reason] ?? reason),
+        long: null,
+        tone: "attention",
+        significant: true,
+      };
+    }
+
+    case "gate_conflict_sent_back": {
+      const target = str(d.target_step);
+      const by = str(d.requested_by);
+      return {
+        label,
+        primary:
+          [
+            target && `to ${target}`,
+            d.request_id == null ? "started by the gate" : by && `by ${by}`,
+          ]
+            .filter(Boolean)
+            .join(", ") || null,
+        long: null,
+        tone: "attention",
+        significant: true,
+      };
+    }
+
     case "step_entered": {
       const from = str(d.from_step);
       const reason = str(d.reason);
@@ -992,8 +1070,12 @@ export function factsFor(entry: TimelineEntry, current = false): EventFacts {
             ? `restart${from ? `, from ${from}` : ""}`
             : reason === "redo"
               ? `redone${from ? `, from ${from}` : ""}`
-              : from &&
-                (reason === "reject_rerun" ? `rework, sent back from ${from}` : `from ${from}`),
+              : reason === "conflict_fix"
+                ? `conflict fix${from ? `, sent back from ${from}` : ""}`
+                : reason === "conflict_fixed"
+                  ? `conflict fixed${from ? `, from ${from}` : ""}`
+                  : from &&
+                    (reason === "reject_rerun" ? `rework, sent back from ${from}` : `from ${from}`),
         long: null,
         tone: "neutral",
         // Bracketing, like the two below: it says the ticket moved, never why anyone should care.

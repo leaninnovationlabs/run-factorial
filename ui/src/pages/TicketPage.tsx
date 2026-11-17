@@ -23,6 +23,7 @@ import {
   gateReview,
   hasPreview,
   heldAt,
+  isWorking,
   type LongContent,
   type NamedSection,
   nextNeeds,
@@ -140,6 +141,13 @@ export function TicketPage() {
         : null,
     [ticket, currentRuns],
   );
+  // The block whose agent is at work. Only while the ticket runs: a ticket stopped after repeated
+  // errors keeps its run at RUNNING, but nothing is watching that run any more.
+  const workingKey = useMemo(() => {
+    if (condition !== "running" && condition !== "retrying") return null;
+    const working = currentRuns.find(isWorking);
+    return working ? (logOrder.find((s) => s.run?.id === working.id)?.key ?? null) : null;
+  }, [condition, currentRuns, logOrder]);
   const gatePullQuery = useTicketGatePullRequest(
     ticketId,
     ticket != null && condition === "waiting_gate",
@@ -377,6 +385,7 @@ export function TicketPage() {
     forge,
     onRequeue: () => requeueControl.current?.arm(),
     onOpenTerminal: parkedRun ? () => openOutput(parkedRun.id, "terminal") : undefined,
+    gateRun: condition === "waiting_gate" ? latestRun : null,
     gateClosed,
     onCloseAndExit: () => closeAndExitControl.current?.arm(),
     awaitingReview: reviewRun
@@ -545,6 +554,7 @@ export function TicketPage() {
             waitingOn={waitingOn}
             startingKey={waitingKey}
             startingRuntime={startingRuntime}
+            workingKey={workingKey}
             onOpenText={openText}
             outputOpener={outputOpener}
             // Withheld while quarantined, like exit: the run row stays RUNNING, so the button

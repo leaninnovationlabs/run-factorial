@@ -70,6 +70,10 @@ function stubApi({
     };
   });
   vi.spyOn(api, "listConversations").mockResolvedValue(conversations);
+  // The line over the composer reads the project of the page behind it; no test's page has one
+  // unless the test gives it.
+  vi.spyOn(api, "getProject").mockRejectedValue(new ApiError(404, "no such project"));
+  vi.spyOn(api, "getTicket").mockRejectedValue(new ApiError(404, "no such ticket"));
   vi.spyOn(api, "getAssistantItems").mockResolvedValue({ items, turn });
   vi.spyOn(api, "openConversationStream").mockImplementation(async (id) => {
     const body = sseBody();
@@ -277,6 +281,53 @@ describe("AssistantPage", () => {
     expect(document.activeElement).toBe(composer());
   });
 
+  test("New chat on a conversation with nothing said yet makes no other one", async () => {
+    stubApi({ items: [] });
+    const create = vi.spyOn(api, "createConversation").mockResolvedValue(conversation(9, null));
+    await ask();
+    const newChat = newChatButton();
+    newChat?.focus();
+    await click(newChat);
+    await settle();
+    expect(create).not.toHaveBeenCalled();
+    expect(api.getAssistantItems).toHaveBeenLastCalledWith(8);
+    // It is still the way to the composer: that is where a new chat starts.
+    expect(document.activeElement).toBe(composer());
+  });
+
+  test("New chat pressed twice makes one conversation, not two", async () => {
+    stubApi({ items: ANSWERED });
+    vi.mocked(api.getAssistantItems).mockImplementation(async (id) => ({
+      items: id === 8 ? ANSWERED : [],
+      turn: null,
+    }));
+    const create = vi.spyOn(api, "createConversation").mockResolvedValue(conversation(9, null));
+    await ask();
+    await click(newChatButton());
+    await until(() => vi.mocked(api.getAssistantItems).mock.calls.some(([id]) => id === 9));
+    await settle();
+    await click(newChatButton());
+    await settle();
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  test("New chat while a conversation is still being read does not guess that it is empty", async () => {
+    stubApi({ items: ANSWERED });
+    let land: (value: { items: ChatItem[]; turn: null }) => void = () => {};
+    vi.mocked(api.getAssistantItems).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          land = resolve;
+        }),
+    );
+    const create = vi.spyOn(api, "createConversation").mockResolvedValue(conversation(9, null));
+    await ask();
+    await click(newChatButton());
+    await settle();
+    expect(create).toHaveBeenCalledTimes(1);
+    land({ items: ANSWERED, turn: null });
+  });
+
   test("deleting another conversation from the history keeps the open one", async () => {
     stubApi({ items: ANSWERED, conversations: [...CONVERSATIONS, conversation(6, "Deploys")] });
     const remove = vi.spyOn(api, "deleteConversation").mockResolvedValue(undefined);
@@ -462,7 +513,12 @@ describe("AssistantPage", () => {
   });
 
   test("a chat started with New chat takes its first message as its title, before the list knows it", async () => {
-    stubApi({ items: [] });
+    // From a conversation with something said: New chat on an empty one makes no other.
+    stubApi({ items: ANSWERED });
+    vi.mocked(api.getAssistantItems).mockImplementation(async (id) => ({
+      items: id === 8 ? ANSWERED : [],
+      turn: null,
+    }));
     vi.spyOn(api, "createConversation").mockResolvedValue(conversation(9, null));
     vi.spyOn(api, "sendAssistantMessage").mockResolvedValue({ turn_id: 4 });
     const rename = vi.spyOn(api, "renameConversation").mockResolvedValue(conversation(9, "x"));
@@ -534,6 +590,69 @@ describe("the assistant's Drawer, inside a project", () => {
     await settle(300);
     expect(drawer()).toBeNull();
     expect(mounted.where()).toBe("/projects/9041/tickets");
+  });
+
+  async function openDrawer(at: string) {
+    const mounted = await mountInAssistant(<DrawerOpener />, { at });
+    view = mounted.view;
+    await click(byText(view.container, "button", "Open the Drawer"));
+    await until(() => drawer()?.querySelector("textarea"));
+    await opened(mounted.client);
+    await settle();
+    return mounted;
+  }
+
+  test("an unsent message is still in the field when the Drawer opens again", async () => {
+    stubApi({ items: ANSWERED });
+    await openDrawer("/projects/9041/tickets");
+    await type(drawer()?.querySelector("textarea"), "half a thought");
+    await click(drawer()?.querySelector('[aria-label="Close"]'));
+    await settle(300);
+    expect(drawer()).toBeNull();
+    await click(byText(view?.container ?? document.body, "button", "Open the Drawer"));
+    await until(() => drawer()?.querySelector("textarea"));
+    expect(drawer()?.querySelector("textarea")?.value).toBe("half a thought");
+  });
+
+  test("Maximize widens the Drawer and gives the conversation its width, and Restore undoes it", async () => {
+    stubApi({ items: ANSWERED });
+    await openDrawer("/projects/9041/tickets");
+    const column = () => drawer()?.querySelector("[data-item-stream] > div");
+    expect(drawer()?.className).toContain("w-[54rem]");
+    expect(column()?.className).toContain("max-w-4xl");
+    await click(drawer()?.querySelector('[aria-label="Maximize"]'));
+    expect(drawer()?.className).toContain("md:w-[95vw]");
+    expect(column()?.className).not.toContain("max-w-4xl");
+    await click(drawer()?.querySelector('[aria-label="Restore width"]'));
+    expect(drawer()?.className).toContain("w-[54rem]");
+    expect(column()?.className).toContain("max-w-4xl");
+  });
+
+  test("the foot says which project a message is about, from a project's page", async () => {
+    stubApi({ items: ANSWERED });
+    vi.spyOn(api, "getProject").mockResolvedValue({ id: 9041, name: "acme/api" } as never);
+    await openDrawer("/projects/9041/tickets");
+    await until(() => drawer()?.textContent?.includes("Asking about"));
+    expect(drawer()?.querySelector("[data-asking-about]")?.textContent).toBe(
+      "Asking about acme/api",
+    );
+  });
+
+  test("a ticket's page names the project the ticket is in", async () => {
+    stubApi({ items: ANSWERED });
+    vi.spyOn(api, "getTicket").mockResolvedValue({ id: 212, project_id: 9041 } as never);
+    vi.spyOn(api, "getProject").mockResolvedValue({ id: 9041, name: "acme/api" } as never);
+    await openDrawer("/tickets/212");
+    await until(() => drawer()?.textContent?.includes("Asking about"));
+    expect(drawer()?.querySelector("[data-asking-about]")?.textContent).toBe(
+      "Asking about acme/api",
+    );
+  });
+
+  test("a page in no project says nothing about one", async () => {
+    stubApi({ items: ANSWERED });
+    await openDrawer("/overview");
+    expect(drawer()?.querySelector("[data-asking-about]")).toBeNull();
   });
 
   test("a link in the Drawer closes it on the way to the page", async () => {

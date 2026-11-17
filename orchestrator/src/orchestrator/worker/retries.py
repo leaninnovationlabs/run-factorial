@@ -28,12 +28,19 @@ from orchestrator.db.models import Event, StepKind, StepRun, StepRunStatus, Tick
 from orchestrator.events import EventType
 from orchestrator.predicates import Unmet, evaluate
 from orchestrator.worker.action_steps import _start_action
-from orchestrator.worker.agent_steps import _BLOCKED_BY, _start_attempt
+from orchestrator.worker.agent_steps import (
+    _BLOCKED_BY,
+    _held_by_limit,
+    _placement,
+    _returned_to_gate,
+    _start_attempt,
+)
 from orchestrator.worker.check_steps import _start_check
 from orchestrator.worker.completions import answer_checked
 from orchestrator.worker.exits import RESETS, pending_request, request_run
 from orchestrator.worker.inputs import retry_briefing
 from orchestrator.worker.runtime_adapters import RuntimeRefused
+from orchestrator.worker.sandbox_limit import LimitReached
 from orchestrator.worker.tick_context import (
     _FAILED_STATUSES,
     _next_attempt,
@@ -64,6 +71,10 @@ class RetryRefusal(StrEnum):
     SPAWN_REFUSED = "spawn_refused"
     SPAWN_FAILED = "spawn_failed"
     UNAVAILABLE = "unavailable"
+    SANDBOX_LIMIT = "sandbox_limit"
+    #: The failed run was a conflict fix whose pull request needs none now: the ticket went
+    #: back to its gate instead (`_returned_to_gate`).
+    CONFLICT_FIXED = "conflict_fixed"
 
 
 #: A step retry request, then what answers it.
@@ -126,7 +137,7 @@ async def retry_refusal(
 
 async def answer_step_retry(tick: _Tick, request: Event) -> bool:
     """Answer `request`. True when it started an attempt, or tried to and the runtime refused
-    the spawn, which blocked the ticket."""
+    the spawn, which blocked the ticket, or the ticket went back to its gate."""
     try:
         return await answer_checked(
             tick,
@@ -163,6 +174,10 @@ async def _answer(tick: _Tick, request: Event) -> bool:
         await _refuse(tick, request, refusal)
         return False
     assert run is not None
+    attempt = await _next_attempt(tick.session, tick.ticket.id, run.step_name)
+    if isinstance(step, AgentStep) and await _returned_to_gate(tick, step, attempt):
+        await _refuse(tick, request, RetryRefusal.CONFLICT_FIXED)
+        return True
     if isinstance(step, AgentStep) and step.preconditions is not None:
         result = await _observed(
             evaluate(step.preconditions, tick.ctx),
@@ -173,10 +188,18 @@ async def _answer(tick: _Tick, request: Event) -> bool:
                 tick, request, RetryRefusal.PRECONDITIONS_UNMET, **Unmet.of(result).details()
             )
             return False
+    placement = None
+    if isinstance(step, AgentStep):
+        # Asked before `_start_attempt`, whose None at the limit reads like a lost race. Not
+        # queued: the person presses again once a sandbox frees.
+        placement = await _placement(tick)
+        reached = await _held_by_limit(tick, placement) if placement is not None else None
+        if reached is not None:
+            await _refuse_at_limit(tick, request, reached)
+            return False
 
     before = TicketStatus(tick.ticket.status)
     tick.ticket.status = TicketStatus.RUNNING
-    attempt = await _next_attempt(tick.session, tick.ticket.id, run.step_name)
     if isinstance(step, AgentStep):
         started = await _start_attempt(
             tick,
@@ -184,9 +207,16 @@ async def _answer(tick: _Tick, request: Event) -> bool:
             attempt=attempt,
             rework_of=run,
             briefing=await retry_briefing(tick, run),
+            announce_hold=False,
+            placed=(placement,),
         )
         if started is not None:
             return True
+        if tick.held_by_limit is not None:
+            # Met since the check above: a run another ticket started has committed.
+            tick.ticket.status = before
+            await _refuse_at_limit(tick, request, tick.held_by_limit)
+            return False
         if tick.ticket.status == TicketStatus.BLOCKED:
             # `_block_on_refusal` labelled the ticket and said why on it.
             await _refuse(tick, request, RetryRefusal.SPAWN_REFUSED)
@@ -201,6 +231,17 @@ async def _answer(tick: _Tick, request: Event) -> bool:
         assert isinstance(step, ActionStep)
         await _start_action(tick, step, attempt=attempt)
     return True
+
+
+async def _refuse_at_limit(tick: _Tick, request: Event, reached: LimitReached) -> None:
+    await _refuse(
+        tick,
+        request,
+        RetryRefusal.SANDBOX_LIMIT,
+        scope=reached.scope,
+        limit=reached.limit,
+        running=reached.running,
+    )
 
 
 async def _refuse(

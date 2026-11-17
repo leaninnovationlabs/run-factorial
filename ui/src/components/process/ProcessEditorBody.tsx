@@ -11,6 +11,7 @@ import {
 } from "../../api/queries";
 import type { EditorDraftPayload, ProjectDetail } from "../../api/types";
 import { shortSha } from "../../format";
+import { usePointEntries } from "../assistant/AssistantProvider";
 import {
   Code,
   CodeEditor,
@@ -290,6 +291,18 @@ export function ProcessEditorBody({
   const makingKind = making && "kind" in making ? making.kind : null;
   /** The folder whose menu a right-click opened, and where the pointer was. */
   const [menu, setMenu] = useState<{ node: TreeNode; at: { x: number; y: number } } | null>(null);
+  // The tree's menu takes the right-click from the dashboard's own, so it carries the assistant's
+  // two entries itself.
+  const pointEntries = usePointEntries();
+  const assistantEntries = (node: TreeNode): MenuEntry[] => {
+    const group = pointEntries(() => ({
+      label: node.name,
+      text: node.path,
+      page: null,
+      file: node.path,
+    }));
+    return group ? [group] : [];
+  };
   const shells = templates.data?.shells ?? {};
   // The body each edited file is compared against to tell a genuine edit from one that simply
   // has not been refreshed yet (`bundleDraft.ts`'s `reconcile`). Anchored once, the moment a file
@@ -570,9 +583,10 @@ export function ProcessEditorBody({
     });
   }
 
-  function replaceWithTemplate(templateKey: string, laneKey: string) {
+  function replaceWithTemplate(templateKey: string) {
     const template = templates.data?.templates.find((entry) => entry.key === templateKey);
-    const lane = template?.lanes.find((entry) => entry.key === laneKey);
+    // The editor holds one lane at a time, so a template with several gives its first.
+    const lane = template?.lanes[0];
     if (!template || !lane) return;
     const previous = text;
     // An existing lane keeps its own name, so the commit replaces that lane rather than adding
@@ -1188,6 +1202,7 @@ export function ProcessEditorBody({
                 )}
                 <CodeEditor
                   label="process.yaml"
+                  file={processPath}
                   value={text}
                   onChange={readOnly || retiring ? undefined : setText}
                   readOnly={readOnly || retiring}
@@ -1273,7 +1288,7 @@ export function ProcessEditorBody({
       <ContextMenu
         at={menu?.at ?? null}
         label={menu ? `Actions for ${menu.node.name}` : ""}
-        items={menu ? menuFor(menu.node, menu.at) : []}
+        items={menu ? [...menuFor(menu.node, menu.at), ...assistantEntries(menu.node)] : []}
         onClose={() => setMenu(null)}
       />
       {confirmingDelete && (

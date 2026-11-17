@@ -21,6 +21,7 @@ for the worker's pass.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -52,6 +53,7 @@ from orchestrator.api.schemas import (
     RequestOut,
     RestartIn,
     RestartPreviewOut,
+    SandboxWaitOut,
     StepRunOut,
     TicketDetail,
     TicketIssueOut,
@@ -66,28 +68,34 @@ from orchestrator.api.services import tickets as ticket_requests
 from orchestrator.api.services.actor import Actor
 from orchestrator.api.services.errors import Conflict
 from orchestrator.api.wakes import await_pass, wake_for_request
-from orchestrator.config import ProcessConfig
+from orchestrator.config import GateStep, ProcessConfig
 from orchestrator.config.conditions import AllOf
 from orchestrator.db.models import (
     TICKET_STATUSES,
+    Event,
     ProcessVersion,
     Project,
+    StepKind,
     StepRun,
+    StepRunStatus,
     Ticket,
     TicketSource,
     TicketSourceKind,
     TicketStatus,
 )
 from orchestrator.events import (
+    EventType,
     in_flight_runs,
     pipeline_board,
     project_spend,
     project_tickets,
+    sandbox_waits,
     ticket_park_reason,
     ticket_timeline,
 )
 from orchestrator.factorial.registry import lane_head
 from orchestrator.predicates.words import describe
+from orchestrator.worker.gate_conflicts import pending_conflict_fix
 from orchestrator.worker.redos import redo_target
 
 router = APIRouter(tags=["tickets"])
@@ -181,6 +189,7 @@ async def _ticket_detail(session: SessionDep, ticket: Ticket) -> TicketDetail:
         logger.debug("ticket %s: its pinned process does not parse", ticket.id)
         config = None
 
+    wait = (await sandbox_waits(session, ticket_id=ticket.id)).get(ticket.id)
     # Field by field, not `model_validate(ticket)`: `Ticket.step_runs` is `lazy="raise"`, so
     # letting Pydantic read the attribute would raise instead of using the query above.
     return TicketDetail(
@@ -204,8 +213,54 @@ async def _ticket_detail(session: SessionDep, ticket: Ticket) -> TicketDetail:
         park_reason=await ticket_park_reason(session, ticket.id),
         redo_target=_redo_target(ticket, config),
         waiting_on=_waiting_on(ticket, config, repo),
-        step_runs=[StepRunOut.model_validate(run) for run in runs],
+        sandbox_wait=(
+            None if wait is None else SandboxWaitOut.model_validate(wait)
+        ),
+        step_runs=await _step_runs_out(session, ticket, runs, config),
     )
+
+
+async def _step_runs_out(
+    session: AsyncSession, ticket: Ticket, runs: Sequence[StepRun], config: ProcessConfig | None
+) -> list[StepRunOut]:
+    """The runs, with the conflict facts of the gate runs among them: two queries for the ticket,
+    never one per run."""
+    gate_ids = [run.id for run in runs if run.kind == StepKind.HUMAN_GATE]
+    sent_back: set[int] = set()
+    readings: dict[int, tuple[str, str | None]] = {}
+    if gate_ids:
+        events = await session.execute(
+            select(Event.step_run_id, Event.type, Event.details)
+            .where(
+                Event.ticket_id == ticket.id,
+                Event.step_run_id.in_(gate_ids),
+                Event.type.in_((EventType.GATE_CONFLICT_SENT_BACK, EventType.GATE_MERGEABILITY)),
+            )
+            .order_by(Event.id)
+        )
+        for run_id, kind, details in events:
+            if kind == EventType.GATE_CONFLICT_SENT_BACK:
+                sent_back.add(run_id)
+            else:
+                readings[run_id] = (details.get("state"), details.get("base_ref"))
+    out: list[StepRunOut] = []
+    for run in runs:
+        item = StepRunOut.model_validate(run)
+        item.conflict_send_back = run.id in sent_back and run.status == StepRunStatus.REJECTED
+        if run.kind == StepKind.HUMAN_GATE and run.status == StepRunStatus.WAITING:
+            step = None if config is None else config.find_step(run.step_name)
+            if isinstance(step, GateStep) and step.gate.on_approve.merge:
+                assert config is not None
+                state, base_ref = readings.get(run.id, (None, None))
+                if state == "conflicting" or state == "behind":
+                    item.mergeability = state
+                item.base_ref = base_ref
+                item.can_fix_conflict = config.conflict_fix_step(run.step_name) is not None
+                item.conflict_fix_pending = (
+                    await pending_conflict_fix(session, ticket.id, run.id) is not None
+                )
+        out.append(item)
+    return out
 
 
 def _redo_target(ticket: Ticket, config: ProcessConfig | None) -> str | None:

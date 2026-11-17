@@ -1,7 +1,7 @@
 # Review agent instructions
 
 Operational context. The orchestrator verified the pull request (PR) is open before starting
-you, will read your verdict comment and the repository's CI checks against the process
+you, will read your verdict comment and the plan's task boxes against the process
 postconditions, and owns all labels, assignment and promotion.
 
 ## GitHub or GitLab

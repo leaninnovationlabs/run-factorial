@@ -12,6 +12,8 @@ import { useEffect, useState } from "react";
 
 export const PHONE = "(max-width: 767.98px)";
 export const BELOW_LG = "(max-width: 1023.98px)";
+/** Narrower than this, the assistant docked beside a page leaves the page too little room. */
+export const BELOW_XL = "(max-width: 1279.98px)";
 
 /** Whether `query` matches now. False where there is no `window`: node and the server render. */
 export function matchesMedia(query: string): boolean {

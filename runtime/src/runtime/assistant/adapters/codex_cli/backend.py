@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -46,6 +46,7 @@ from runtime.assistant.adapters.codex_cli.config import build_assistant_config
 from runtime.assistant.adapters.codex_cli.env import build_child_env
 from runtime.assistant.adapters.codex_cli.events import CommandLeaked, EventMapper
 from runtime.assistant.adapters.codex_cli.exec_cli import (
+    FLAG_IMAGE,
     FLAG_JSON,
     FLAG_SKIP_GIT_REPO_CHECK,
     STDIN_PROMPT,
@@ -87,6 +88,7 @@ class CodexCliBackend:
     supports_resume: ClassVar[bool] = False
     supports_cancel: ClassVar[bool] = True
     supports_effort: ClassVar[bool] = False
+    supports_images: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -161,7 +163,9 @@ class CodexCliBackend:
             )
             write_private(config_dir / CONFIG_FILE, document)
             prompt = _prompt(spec)
-            argv = _argv(spec, cwd)
+            # Beside the turn's config, which goes when the turn does: not in the worktree, where
+            # the bytes would wait for the conversation's next turn to be cleared.
+            argv = _argv(spec, cwd, write_images(spec, config_dir))
             env = build_child_env(
                 auth_mode=spec.auth_mode,
                 credential=spec.credential.get_secret_value(),
@@ -231,7 +235,26 @@ def _prompt(spec: ChatTurnSpec) -> str:
     return "\n".join(parts)
 
 
-def _argv(spec: ChatTurnSpec, cwd: Path) -> tuple[str, ...]:
+_SUFFIX: Final = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def write_images(spec: ChatTurnSpec, directory: Path) -> list[Path]:
+    """Each of the turn's images as a file only this user can read, in the order attached."""
+    written: list[Path] = []
+    for image in spec.images:
+        path = directory / f"{image.name}{_SUFFIX[image.media_type]}"
+        path.touch(mode=0o600)
+        path.write_bytes(image.content)
+        written.append(path)
+    return written
+
+
+def _argv(spec: ChatTurnSpec, cwd: Path, images: Sequence[Path] = ()) -> tuple[str, ...]:
     return (
         SUBCMD_EXEC,
         FLAG_JSON,
@@ -242,6 +265,7 @@ def _argv(spec: ChatTurnSpec, cwd: Path) -> tuple[str, ...]:
         FLAG_SANDBOX,
         VALUE_SANDBOX_WORKSPACE,
         FLAG_SKIP_GIT_REPO_CHECK,
+        *(f"{FLAG_IMAGE}={path}" for path in images),
         STDIN_PROMPT,
     )
 

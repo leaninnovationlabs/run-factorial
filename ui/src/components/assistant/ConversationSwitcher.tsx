@@ -31,6 +31,7 @@ export function ConversationSwitcher({
   conversations,
   currentId,
   isCreating = false,
+  spacing = "default",
   onSelect,
   onNew,
   onDelete,
@@ -38,6 +39,8 @@ export function ConversationSwitcher({
   conversations: ChatConversation[] | undefined;
   currentId: number | null;
   isCreating?: boolean;
+  /** `compact` in a frame beside the page, whose header is narrow. */
+  spacing?: "default" | "compact";
   onSelect: (id: number) => void;
   onNew: () => void;
   onDelete: (id: number) => void;
@@ -54,6 +57,7 @@ export function ConversationSwitcher({
         ref={newChat}
         icon="plus"
         label="New chat"
+        spacing={spacing}
         isLoading={isCreating}
         onClick={onNew}
       />
@@ -74,6 +78,7 @@ export function ConversationSwitcher({
               }}
               icon="history"
               label="Conversation history"
+              spacing={spacing}
               isSelected={open}
               onClick={() => setOpen((value) => !value)}
             />

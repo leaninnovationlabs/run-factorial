@@ -20,6 +20,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PositiveInt,
     SecretStr,
     WithJsonSchema,
     field_validator,
@@ -76,6 +77,8 @@ __all__ = [
     "ConfigFilesOut",
     "ConfigPreviewIn",
     "ConfigPreviewOut",
+    "ConflictFixIn",
+    "ConflictFixOut",
     "CostReport",
     "CredentialCheckOut",
     "CredentialTestOut",
@@ -182,6 +185,7 @@ __all__ = [
     "RuntimeProjectOut",
     "RuntimeProvidedSecret",
     "RuntimeTemplateBuildOut",
+    "SandboxWaitOut",
     "SecretList",
     "SecretName",
     "SecretValueIn",
@@ -332,6 +336,17 @@ class StepRunOut(_Out):
     #: The ticket generation the run belongs to (`TicketDetail.generation`). The loop acts on
     #: the current generation's runs only.
     generation: int
+    #: A gate run that a conflict send-back ended, not a reviewer: its `status` reads `rejected`.
+    conflict_send_back: bool = False
+    #: On a WAITING merging gate, the pull request's last recorded state: `conflicting` or
+    #: `behind`; null when it was last read clean, was never read, or the run is not that gate.
+    mergeability: Literal["conflicting", "behind"] | None = None
+    #: The branch the pull request merges into, from the gate's newest mergeability reading.
+    base_ref: str | None = None
+    #: The waiting gate merges and its lane has a step to send the work to: Fix conflicts applies.
+    can_fix_conflict: bool = False
+    #: A conflict-fix request waits for the loop to answer it.
+    conflict_fix_pending: bool = False
 
 
 class PinOut(_Out):
@@ -382,6 +397,9 @@ class TicketDetail(_Out):
     #: snapshot: what the step waits on before it starts. Names them, never says which is false,
     #: which only an evaluation against GitHub can.
     waiting_on: list[str] = []
+    #: Set while the ticket waits for a sandbox on the Factorial-managed key: its start is held
+    #: by a limit and no attempt is spent (`events.sandbox_waits`). Null otherwise.
+    sandbox_wait: SandboxWaitOut | None = None
     step_runs: list[StepRunOut]
 
 
@@ -656,6 +674,13 @@ class ChangeRequestIn(BaseModel):
         return value
 
 
+class ConflictFixIn(BaseModel):
+    """Send a merging gate's pull request to its agent step to fix a conflict. The key is chosen
+    once per press, as `ChangeRequestIn`'s is."""
+
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class ResumeSessionIn(BaseModel):
     """Resume a parked session. `answer`, when given, is the resumed turn: the
     agent receives it as a human's words, framed as data (decision 26)."""
@@ -748,6 +773,17 @@ class ChangeRequestOut(RequestOut):
     """`RequestOut`, plus what became of this request by the time the woken pass landed:
     `accepted` (the gate rejected and the rework is starting), `refused` with the loop's
     `reason`, or `pending` when the pass has not reached it yet."""
+
+    request_id: int
+    outcome: Literal["pending", "accepted", "refused"]
+    reason: str | None = None
+
+
+class ConflictFixOut(RequestOut):
+    """`RequestOut`, plus what became of a conflict-fix request by the time the woken pass
+    landed: `accepted` (the gate sent the work back), `refused` with the loop's `reason`
+    (`no_fix_step`, `no_pull_request`, `already_merged`, `mergeable`, `newer_attempt`,
+    `unsafe_branch`), or `pending`."""
 
     request_id: int
     outcome: Literal["pending", "accepted", "refused"]
@@ -1362,6 +1398,19 @@ class ProjectDashboardOut(_Out):
 # ----------------------------------------------------------------------------- overview
 
 
+class SandboxWaitOut(_Out):
+    """Why a ticket waits for a sandbox now: the Factorial-managed key's limit
+    (`events.sandbox_waits`). `scope` is `organization` or `pool`; a `limit` of 0 means the key is
+    not available to the organization."""
+
+    scope: str
+    limit: int
+    running: int
+    #: The waiting runtime's slug, and its id while it exists, for a link to its page.
+    runtime: str
+    runtime_id: int | None = None
+
+
 class OverviewProjectOut(_Out):
     id: int
     name: str
@@ -1392,6 +1441,8 @@ class OverviewTicketOut(_Out):
     minutes: float
     #: See `TicketDetail.quarantined_at`.
     quarantined_at: datetime | None = None
+    #: See `TicketDetail.sandbox_wait`.
+    sandbox_wait: SandboxWaitOut | None = None
 
 
 class OverviewResponse(_Out):
@@ -2102,6 +2153,9 @@ class OrganizationOut(_Out):
     created_at: datetime
     updated_at: datetime
     role: str | None = None
+    #: Active runs the organization may have at one time on the Factorial-managed key; 0 when the
+    #: key is not available to it, null when the deployment provides none.
+    managed_sandbox_limit: int | None = None
 
 
 class OrganizationDetail(OrganizationOut):
@@ -2445,6 +2499,8 @@ class RuntimeCheckIn(BaseModel):
 class RuntimeOptionsOut(_Out):
     #: `<runtime.type>@<details.isolation>` entries this deployment offers, sorted.
     offered: list[str]
+    #: The offered entries the Factorial-managed key covers, sorted; empty when it covers none.
+    managed_sandbox: list[str]
 
 
 class RuntimePatch(BaseModel):
@@ -2509,6 +2565,15 @@ class RuntimeOut(_Out):
     #: the projects list's Runtime column and `GET /runtimes/{id}/projects` read.
     connected_projects: int
     last_auth_failure: AuthFailureOut | None = None
+    #: Whose E2B team the sandboxes run in. A managed runtime stores no E2B_API_KEY and no
+    #: `details.template`: the deployment provides both.
+    sandbox_key: Literal["own", "managed"]
+    #: The build a new sandbox boots: `details.template` for an own key, the deployment's build
+    #: for a managed one.
+    template: str | None
+    #: Why a managed runtime cannot start a new sandbox, or null. An own runtime's gaps read as
+    #: before, from `credential_names` and `template`.
+    sandbox_gap: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2718,6 +2783,8 @@ class AssistantReadyOut(_Out):
     ready_to_send: bool
     #: The sentence a send would be refused with (`assistant_not_ready`), null when it would go.
     refusal: str | None
+    #: Whether the saved backend takes an image attached to a message; a text file always goes.
+    accepts_images: bool
 
 
 class AssistantCredentialIn(BaseModel):
@@ -2801,11 +2868,46 @@ class TurnCredentialOut(BaseModel):
     credential: str
 
 
+class ChatPointedIn(BaseModel):
+    """Something on the dashboard the person pointed at, as their browser read it off the page.
+    All of it is kept on the item; `assistant/prompt.py` decides what the model is told."""
+
+    #: The chip's words.
+    label: str = Field(min_length=1, max_length=80)
+    #: What was there to read.
+    text: str = Field(default="", max_length=2000)
+    page: str | None = Field(default=None, max_length=512)
+    #: The nearest dashboard link: a row's ticket, say.
+    href: str | None = Field(default=None, max_length=512)
+    #: The control's `data-assist-anchor`, where it carries one.
+    anchor: str | None = Field(default=None, max_length=64)
+    #: In the config editor: the file, and the first and last line pointed at.
+    file: str | None = Field(default=None, max_length=256)
+    lines: tuple[PositiveInt, PositiveInt] | None = None
+
+
+class ChatAttachmentIn(BaseModel):
+    """A file attached to a message, in the request itself: `data` is its bytes in base64, which
+    for the largest image the assistant takes, 3.75 MB, is five million characters. What the file
+    is, and whether it is too large, `assistant/attachments.py` decides from the bytes."""
+
+    name: str = Field(min_length=1, max_length=120)
+    data: str = Field(min_length=1, max_length=5_400_000)
+
+
 class ChatMessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=8000)
+    text: str = Field(default="", max_length=8000)
     #: The dashboard route the message was sent from. A path that is not a dashboard page is
     #: kept on the item but never reaches the model.
     page: str | None = Field(default=None, max_length=512)
+    context: list[ChatPointedIn] = Field(default_factory=list, max_length=5)
+    attachments: list[ChatAttachmentIn] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def _says_something(self) -> ChatMessageIn:
+        if not self.text.strip() and not self.context and not self.attachments:
+            raise ValueError("a message needs words, something pointed at or a file")
+        return self
 
 
 class ChatMessageAccepted(_Out):

@@ -43,6 +43,7 @@ from orchestrator.github.state import (
     CheckRunState,
     CommentState,
     IssueState,
+    Mergeability,
     PullRequestState,
     RepoPermission,
     ReviewState,
@@ -1307,3 +1308,46 @@ async def test_file_text_escapes_the_path_once_and_refuses_a_dot_segment(
     assert sent == [
         b"/repos/acme/widgets/contents/docs/plans/12%20x%3Fa%3Db%23c%25d.md?ref=spec%2F42-x"
     ]
+
+
+@pytest.mark.parametrize(
+    ("mergeable", "state", "expected"),
+    [
+        (False, "dirty", Mergeability.CONFLICTING),
+        (False, "blocked", Mergeability.CONFLICTING),  # `mergeable` is about conflicts alone
+        (True, "behind", Mergeability.BEHIND),
+        (None, "unknown", Mergeability.UNKNOWN),
+        (True, "unknown", Mergeability.UNKNOWN),
+        (True, "blocked", Mergeability.CLEAN),
+        (True, "clean", Mergeability.CLEAN),
+        (True, "unstable", Mergeability.CLEAN),
+    ],
+)
+async def test_github_mergeability_reads_the_single_pull_request(
+    monkeypatch: pytest.MonkeyPatch,
+    mergeable: bool | None,
+    state: str,
+    expected: Mergeability,
+) -> None:
+    asked: list[int] = []
+
+    class _Pulls:
+        async def async_get(self, owner: str, name: str, number: int) -> SimpleNamespace:
+            asked.append(number)
+            body = {"mergeable": mergeable, "mergeable_state": state}
+            return SimpleNamespace(content=json.dumps(body).encode())
+
+    class _Api:
+        rest = SimpleNamespace(pulls=_Pulls())
+
+    source = GitHubStateSource(GitHubClient(None), "acme/widgets", 42)
+
+    async def fake_api() -> _Api:
+        return _Api()
+
+    monkeypatch.setattr(source, "_api", fake_api)
+
+    assert await source.pr_mergeability(7) == expected
+    assert await source.pr_mergeability(7) == expected
+    assert asked == [7]  # memoized per tick
+    assert source.approvals_bound_to_head is True

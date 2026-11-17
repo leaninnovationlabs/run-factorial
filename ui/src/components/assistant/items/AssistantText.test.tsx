@@ -75,6 +75,47 @@ describe("AssistantText", () => {
     expect(where()).toBe("/tickets/212");
   });
 
+  test("a line that starts with a bullet character is a list item", async () => {
+    const { view } = await render("Blocked tickets:\n• one\n• two\n  ◦ nested");
+    const items = [...view.container.querySelectorAll("li")];
+    expect(items.map((item) => item.firstChild?.textContent?.trim())).toEqual([
+      "one",
+      "two",
+      "nested",
+    ]);
+    expect(view.container.querySelector("p")?.textContent).toBe("Blocked tickets:");
+  });
+
+  test("a bullet character inside a code fence stays as written", async () => {
+    const { view } = await render("```\n• keep me\n```");
+    expect(view.container.querySelector("li")).toBeNull();
+    expect(view.container.querySelector("pre")?.textContent).toContain("• keep me");
+  });
+
+  test("a numbered list keeps its number after a code block", async () => {
+    const { view } = await render("1. first\n\n```\ncode\n```\n\n2. second\n3. third");
+    const lists = [...view.container.querySelectorAll("ol")];
+    expect(lists).toHaveLength(2);
+    expect(lists[1]?.getAttribute("start")).toBe("2");
+  });
+
+  test("a task item shows its checkbox and no disc", async () => {
+    const { view } = await render("- [ ] todo\n- [x] done");
+    const items = [...view.container.querySelectorAll("li")];
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.querySelector('input[type="checkbox"]')).not.toBeNull();
+      expect(item.className).toContain("list-none");
+    }
+  });
+
+  test("fenced code is a code block the reader can copy", async () => {
+    const { view } = await render("```yaml\nname: simple\nruntime: claude_cli\n```");
+    const block = view.container.querySelector("figure");
+    expect(block?.querySelector("pre")?.textContent).toBe("name: simple\nruntime: claude_cli");
+    expect(block?.querySelector("button")?.getAttribute("aria-label")).toContain("Copy");
+  });
+
   test("AssistantText never loads an image, whatever its address", async () => {
     const { view } = await render("![the chart](https://evil.example/p.png?secret=1)");
     expect(view.container.querySelector("img")).toBeNull();

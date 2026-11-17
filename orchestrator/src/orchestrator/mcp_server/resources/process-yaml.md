@@ -222,6 +222,8 @@ Waits for a person to approve or reject a PR. All controls live under `gate:`.
       rerunStep: plan
       inputs: [pr_review_comments]
       ticketLabel: "factorial:spec-rework"
+    onConflict:                                    # optional; only on a gate that merges
+      rerunStep: build
 ```
 
 `pr_approval` is the only gate type. Anything a person must approve is expressed as a gate on a PR, or it is not expressed at all. Ordering between gates comes from the graph, not from a condition.
@@ -232,9 +234,13 @@ Waits for a person to approve or reject a PR. All controls live under `gate:`.
 
 **An approval counts only on the commit that it approves.** The gate reads the PR's current head. A commit that someone pushes after an approval needs a new approval. This holds whether or not the base branch dismisses stale approvals. So two gates on one PR, with commits between them, each need their own approval. When `onApprove` asks for a merge, the gate merges the approved commit.
 
-**A refused merge keeps the gate waiting.** GitHub can refuse the merge after the approval. For example, a required check failed, a CODEOWNERS review is missing, or the branch is out of date. Then the gate stays at its step, and the ticket gets one comment with GitHub's reason and a `gate_merge_refused` event. The gate tries the merge again on every poll, and it announces a refusal again only when the reason or the head changes. Fix the cause on GitHub; nothing on the ticket needs to change.
+**A refused merge keeps the gate waiting.** The forge can refuse the merge after the approval. For example, a required check failed, a CODEOWNERS review is missing, or the branch is out of date. Then the gate stays at its step, and the ticket gets one comment with the forge's reason and a `gate_merge_refused` event. The gate tries the merge again on every poll, and it announces a refusal again only when the reason or the head changes. Fix the cause on the forge; nothing on the ticket needs to change. A conflict has its own path: see `onConflict` below.
 
 A gate step has no `timeout`, `retry` or `onFailure`, because it waits for a person and there is nothing to retry. `defaults` does not reach it.
+
+`onConflict` names the agent step that fixes the PR when it conflicts with its target branch, so the gate cannot merge it. It takes the same outcome keys as `onReject` (`ticketLabel`, `assign`, `comment`) and `rerunStep`, and nothing else. It is valid only when `onApprove.merge` is `true`, and `rerunStep` must name an agent step. It adds no graph edge, so reachability does not change. When `onConflict` is absent, the fix step is the `onReject.rerunStep` of the same gate. If that gate has no `onReject`, the fix step is the `onReject.rerunStep` of the nearest earlier gate. In each case the step must be an agent step. If no step qualifies, the gate has no fix step.
+
+A merging gate reads whether its open PR conflicts with, or is behind, its target. It records a change of state once for each head and comments once on the ticket. A person's Fix conflicts or Update branch button on the ticket page sends the ticket to the fix step. With `onConflict` set, the gate sends a conflicting PR by itself, up to 3 times in a row at one gate. A PR that is only behind its target never goes by itself: for it, `onConflict` only names the step that the Update branch button uses. On a forge whose approvals are not bound to a commit (GitLab's native approvals), the gate never sends it by itself: there `onConflict` only names the fix step, and the button is the only start. A send-back for a conflict is never a rejection. The fix run is a fresh session that starts at the PR's head. The orchestrator replaces the step's instructions with its own: merge the target into the checkout and push it with `git push origin HEAD:<head branch>`. It also posts its own comment in place of the step's `onStart` comment. The run is accepted when the PR is open, its head moved and it merges cleanly. A run that fails retries on the step's retry policy. When a person merges or closes the PR during the run, the run completes and the gate decides. After acceptance, the ticket goes straight back to the same gate, and the steps between do not run again.
 
 `onReject.rerunStep` must name a real step, and it creates a graph edge (see reachability
 below). `onReject.inputs` is the rework bundle the re-run attempt receives on top of its own
@@ -1003,6 +1009,8 @@ it found in one error rather than the first:
 8. `request_approval()` appears only in an agent step's `postconditions`, never under `not:`.
    Only the acceptance of an agent's run reads the approval, so anywhere else it would be false
    for ever, and under `not:` an approval would fail the run.
+
+9. `gate.onConflict` appears only on a gate with `onApprove.merge: true`, and its `rerunStep` names an agent step. It is not a graph edge.
 
 Rule 7 is the one that catches a half-finished edit: a step you renamed but forgot to point at is
 an orphan, and the file will not load.

@@ -15,10 +15,13 @@ export function CodeEditor({
   onChange,
   readOnly = false,
   placeholder,
+  file,
   className,
 }: {
   /** The textarea's accessible name. */
   label: string;
+  /** The file the text is, when it is one: a script that reads a line can then say where it is. */
+  file?: string;
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
@@ -46,6 +49,8 @@ export function CodeEditor({
         ))}
       </div>
       <textarea
+        data-code-editor
+        data-code-file={file}
         aria-label={label}
         value={value}
         onChange={(event) => onChange?.(event.target.value)}

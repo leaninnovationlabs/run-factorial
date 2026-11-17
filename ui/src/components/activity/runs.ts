@@ -6,6 +6,32 @@ export function isLive(run: StepRun): boolean {
   return run.status === "running" || run.status === "idle";
 }
 
+/**
+ * The run's agent is at work now. Not an idle run, whose agent waits on a person, and not a check
+ * step's `running`, which is the loop's own wait on observed state with no agent behind it.
+ */
+export function isWorking(run: StepRun): boolean {
+  return run.kind === "agent" && run.status === "running" && !run.superseded_at;
+}
+
+/** The events that set an agent working: its spawn, a resume after a stop, and a reply that woke
+ *  an idle session. */
+const SET_WORKING = new Set(["agent_spawned", "agent_resumed", "agent_active"]);
+
+/**
+ * When the agent's current stretch of work began: the newest event that set it working, else the
+ * run's start. Not the run's start alone, which would count the time a stopped or idle session
+ * spent waiting on a person as work.
+ */
+export function workingSince(run: StepRun, entries: readonly TimelineEntry[]): string | null {
+  let since: TimelineEntry | undefined;
+  for (const entry of entries) {
+    // By id, not position: the panel hands the rows newest first by default.
+    if (SET_WORKING.has(entry.type) && (since === undefined || entry.id > since.id)) since = entry;
+  }
+  return since?.created_at ?? run.started_at;
+}
+
 /** The runs whose files the worker records: `worker/branches.py::ENDED`. An interrupted run has
  *  not ended, since its resume may still push. */
 const ENDED = new Set<string>(["succeeded", "failed", "timeout", "cancelled"]);

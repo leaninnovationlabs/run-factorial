@@ -53,6 +53,11 @@ export function run(id: number, step_name: string, attempt: number, status: stri
     ended_at: null,
     created_at: "2026-08-25T09:00:00Z",
     generation: 1,
+    mergeability: null,
+    base_ref: null,
+    can_fix_conflict: false,
+    conflict_fix_pending: false,
+    conflict_send_back: false,
     ...extra,
   };
 }

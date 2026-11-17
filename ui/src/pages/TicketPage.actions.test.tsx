@@ -720,3 +720,97 @@ describe("a change request sent from the Output drawer (#453)", () => {
     expect(scrolled).toHaveBeenCalledWith(toLatest);
   });
 });
+
+describe("a gate whose pull request cannot merge", () => {
+  const gate = (extra: Record<string, unknown>) => [
+    run(1, "plan", 1, "succeeded"),
+    run(3, "spec_gate", 1, "waiting", { kind: "human_gate", ...extra }),
+  ];
+  const conflicting = { mergeability: "conflicting", base_ref: "main", can_fix_conflict: true };
+  const answered = {
+    status: "requested",
+    landed: false,
+    request_id: 1,
+    outcome: "pending",
+    reason: null,
+  } as const;
+
+  it("offers Fix conflicts once, with the lozenge naming the target", async () => {
+    const send = vi.spyOn(api, "requestConflictFix").mockResolvedValue(answered);
+    const root = await page({ step_runs: gate(conflicting) });
+    expect(root.textContent).toContain("Conflicts with main");
+
+    await click(byText(root, "button", "Fix conflicts"));
+    await settle();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(3, expect.stringMatching(/^[0-9a-f]{32}$/));
+  });
+
+  it("reads Update branch when the pull request is behind", async () => {
+    const root = await page({
+      step_runs: gate({ ...conflicting, mergeability: "behind", base_ref: null }),
+    });
+    expect(root.textContent).toContain("Behind its target");
+    expect(byText(root, "button", "Update branch")).toBeTruthy();
+  });
+
+  it("offers nothing on a gate with no mergeability", async () => {
+    const root = await page({ step_runs: gate({}) });
+    expect(root.textContent).not.toContain("Fix conflicts");
+    expect(root.textContent).not.toContain("Update branch");
+  });
+
+  it("disables the button and says what it waits for while a request is pending", async () => {
+    const root = await page({ step_runs: gate({ ...conflicting, conflict_fix_pending: true }) });
+    const button = byText(root, "button", "Fix conflicts") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(root.textContent).toContain("Waiting for the next check of the pull request.");
+  });
+
+  it("gives the lozenge and a hand-fix line, and no button, where the lane has no fix step", async () => {
+    const root = await page({ step_runs: gate({ ...conflicting, can_fix_conflict: false }) });
+    expect(root.textContent).toContain("Conflicts with main");
+    expect(root.textContent).toContain(
+      "This lane has no step that can fix it. Merge the target branch into the pull request by hand.",
+    );
+    expect(root.textContent).not.toContain("Fix conflicts");
+  });
+
+  it("says why the API refused the press, beside the button", async () => {
+    vi.spyOn(api, "requestConflictFix").mockRejectedValue(
+      new ApiError(409, "spec_gate isn't waiting for review."),
+    );
+    const root = await page({ step_runs: gate(conflicting) });
+    await click(byText(root, "button", "Fix conflicts"));
+    await settle();
+    expect(alerts(root).join(" ")).toContain("spec_gate isn't waiting for review.");
+  });
+
+  it("words an immediate refusal", async () => {
+    vi.spyOn(api, "requestConflictFix").mockResolvedValue({
+      ...answered,
+      outcome: "refused",
+      reason: "mergeable",
+    });
+    const root = await page({ step_runs: gate(conflicting) });
+    await click(byText(root, "button", "Fix conflicts"));
+    await settle();
+    expect(root.textContent).toContain(
+      "Conflict fix not started: the pull request can already merge.",
+    );
+  });
+
+  it("never shows a conflict send-back as a rejection", async () => {
+    const root = await page({
+      step_runs: [
+        run(1, "plan", 1, "succeeded"),
+        run(3, "spec_gate", 1, "rejected", { kind: "human_gate", conflict_send_back: true }),
+        run(4, "plan", 2, "running"),
+      ],
+      current_step: "plan",
+      status: "running",
+    });
+    expect(root.textContent).toContain("Sent back for a conflict fix");
+    expect(root.textContent).not.toContain("Rejected");
+  });
+});

@@ -21,8 +21,7 @@
 #
 # One branch, `sp/{ticket}-{slug}`, carries the whole ticket. The brainstorm step creates it and
 # each later step continues it, so the design, the plan and the code merge together in the one
-# pull request the build step opens against `main` (on GitLab, a merge request). The build and
-# review steps need this repository's own CI on pull requests.
+# pull request the build step opens against `main` (on GitLab, a merge request).
 
 specVersion: factorial/v1
 kind: Process
@@ -144,7 +143,6 @@ steps:
         # Every task box in the plan ticked. The agent ticks a task's boxes in the commit that
         # completes it, so the plan merged with the code says what was done.
         - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
-        - ci_green("sp/{ticket}-*")
 
   # ------------------------------------------------------------------ 4. review (agent)
   - name: review
@@ -167,10 +165,9 @@ steps:
     postconditions:
       all:
         # The verdict comment proves the review ran; its text is not checked. Its fixes must
-        # leave the plan done and CI green.
+        # leave the plan done.
         - pr_comment_contains("sp/{ticket}-*", "## Review Verdict")
         - checklist_done("docs/superpowers/plans/{ticket}-*-plan.md", "sp/{ticket}-*")
-        - ci_green("sp/{ticket}-*")
     onSuccess:
       ticketLabel: "factorial:code-review"
       assign: ["{roles.code_reviewers}"]
@@ -199,6 +196,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:build-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

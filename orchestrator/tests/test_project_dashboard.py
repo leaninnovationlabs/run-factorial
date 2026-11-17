@@ -664,6 +664,62 @@ async def test_gate_waits_count_a_cancelled_wait_and_open_gates_wait_oldest_firs
     ]
 
 
+async def test_a_wait_a_conflict_send_back_ended_is_no_gate_wait(
+    async_session: AsyncSession,
+) -> None:
+    """The loop ended that wait, no person decided it, so it enters neither the gate's wait
+    figures nor the longest gate."""
+    project = await seed_project(async_session)
+    ticket = await seed_ticket(async_session, project, step="review")
+    t0 = datetime.now(UTC) - timedelta(days=2)
+    approved, rejected, sent_back = (
+        make_run(
+            ticket.id,
+            "review",
+            attempt,
+            cost=None,
+            kind=StepKind.HUMAN_GATE,
+            status=status,
+            source=None,
+            tokens=None,
+            started_at=t0 + timedelta(hours=12 * attempt),
+            took=timedelta(hours=wait),
+        )
+        for attempt, status, wait in (
+            (1, StepRunStatus.APPROVED, 1),
+            (2, StepRunStatus.REJECTED, 3),
+            (3, StepRunStatus.REJECTED, 10),
+        )
+    )
+    async_session.add_all([approved, rejected, sent_back])
+    await async_session.flush()
+    async_session.add_all(
+        [
+            Event(
+                project_id=project.id,
+                ticket_id=ticket.id,
+                step_run_id=rejected.id,
+                type=EventType.GATE_REJECTED,
+                details={},
+            ),
+            Event(
+                project_id=project.id,
+                ticket_id=ticket.id,
+                step_run_id=sent_back.id,
+                type=EventType.GATE_CONFLICT_SENT_BACK,
+                details={},
+            ),
+        ]
+    )
+    await async_session.flush()
+
+    _, gate_waits = await step_medians(async_session, project.id, since=t0)
+    assert [(g.step, g.runs, g.max_seconds) for g in gate_waits] == [("review", 2, 3 * 3600.0)]
+    extremes = await run_extremes(async_session, project.id, since=None)
+    assert extremes.longest_gate is not None
+    assert (extremes.longest_gate.attempt, extremes.longest_gate.seconds) == (2, 3 * 3600.0)
+
+
 async def test_under_a_span_an_outcome_counts_only_tickets_that_ran_in_it(
     async_session: AsyncSession,
 ) -> None:

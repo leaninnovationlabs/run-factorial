@@ -32,6 +32,7 @@ process holds no master key, so every stored secret is opaque to it.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -265,7 +266,12 @@ async def get_items(
     "/assistant/conversations/{conversation_id}/messages",
     response_model=ChatMessageAccepted,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={409: {"description": "turn_live or not_configured"}, 429: {}, 503: {}},
+    responses={
+        409: {"description": "turn_live or not_configured"},
+        422: {"description": "attachment_refused"},
+        429: {},
+        503: {},
+    },
 )
 @needs(Permission.ASSISTANT_USE)
 async def send_message(
@@ -275,6 +281,13 @@ async def send_message(
     principal: PrincipalDep,
     settings: SettingsDep,
 ) -> ChatMessageAccepted | JSONResponse:
+    try:
+        attachments = [
+            (file.name, base64.b64decode(file.data, validate=True)) for file in body.attachments
+        ]
+    # `binascii.Error` for bytes that are not base64, plain `ValueError` for text that is not ASCII.
+    except ValueError:
+        return _refused(422, "attachment_refused", "An attached file could not be read.")
     # Serialises two sends on one conversation, so the live-turn check below holds.
     await _owned(session, conversation_id, principal, lock="write")
     try:
@@ -284,6 +297,8 @@ async def send_message(
             principal,
             text=body.text,
             page=body.page,
+            context=[pointed.model_dump(exclude_none=True) for pointed in body.context],
+            attachments=attachments,
             multi_org=settings.multi_org.enabled,
         )
     except SendRefused as refusal:

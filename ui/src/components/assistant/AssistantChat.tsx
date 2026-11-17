@@ -1,10 +1,18 @@
 /**
  * The assistant's conversation: the Factorial mark and the title, with New chat and the
  * conversation history, in its header; the conversation in its body, which scrolls on its own;
- * and the composer at its foot. Two frames for the same parts: the whole of the assistant's page
+ * and the composer at its foot. Four frames for the same parts: the whole of the assistant's page
  * (`AssistantPage`), where the conversation and the composer keep to a reading width down the
- * middle, and the modal `Drawer` (decision 50) that opens over a project's pages, from the
- * project's navigation.
+ * middle; the modal `Drawer` (decision 50) that opens over a project's pages, from the
+ * project's navigation; and the two the Drawer's Dock and Float take the conversation to, which
+ * leave the page usable and draw the text at the size the reader chose, without avatars: the
+ * column docked beside the page (`DockPanel`), and the small window floating over it
+ * (`MiniWindow`), which has no room for the history.
+ *
+ * The Drawer's header also has Minimize, which every frame has and which puts the conversation
+ * away as a bar in the page's corner, and Maximize, which takes the Drawer to its full width and
+ * lifts the conversation's reading width with it. Over the composer, a line names the project a
+ * message is about (`AskingAbout`).
  *
  * It opens on the conversation the provider holds, or the most recent one. A message is sent with
  * the dashboard page the reader came from as its context (`AssistantSession.contextPage`), and a conversation with none yet is made by the first
@@ -21,7 +29,7 @@
  * composer waiting until the stream shows that turn end: the stream is what says when it is over.
  */
 
-import { type MutableRefObject, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import logoUrl from "../../../logo.svg";
 import { ApiError } from "../../api/client";
 import { useCan } from "../../api/organizationQueries";
@@ -34,14 +42,36 @@ import {
   useRenameConversation,
   useSendMessage,
 } from "../../api/queries";
-import { Drawer, ErrorMessage, SectionMessage } from "../ui";
-import { DashboardLink } from "./AssistantProvider";
+import type { ChatPointed } from "../../api/types";
+import { Drawer, ErrorMessage, IconButton, SectionMessage } from "../ui";
+import { useIsPhone } from "../ui/media";
+import { AskingAbout } from "./AskingAbout";
+import { type AssistantSession, DashboardLink, useAssistant } from "./AssistantProvider";
 import { Composer } from "./Composer";
 import { ConversationSwitcher } from "./ConversationSwitcher";
+import { DockPanel } from "./DockPanel";
+import type { Draft, Pointed } from "./draft";
+import { TextStepContext } from "./frames";
 import { ItemStream } from "./ItemStream";
-import { isLive, useConversationStream } from "./useConversationStream";
+import { MiniWindow } from "./MiniWindow";
+import { isBlank, isLive } from "./useConversationStream";
+import { ViewOptions } from "./ViewOptions";
 
 const TITLE_MAX = 80;
+
+/** What was pointed at, as the API takes it: nothing that is not there. */
+function told(pointed: Pointed): ChatPointed {
+  const { label, text, page, href, anchor, file, lines } = pointed;
+  return {
+    label,
+    text,
+    ...(page ? { page } : {}),
+    ...(href ? { href } : {}),
+    ...(anchor ? { anchor } : {}),
+    ...(file ? { file } : {}),
+    ...(lines ? { lines } : {}),
+  };
+}
 
 function titleFrom(text: string): string {
   const line = text.trim().split("\n", 1)[0]?.trim() ?? "";
@@ -49,21 +79,22 @@ function titleFrom(text: string): string {
 }
 
 export function AssistantChat({
-  conversationId,
-  onConversation,
-  scrollTop,
-  contextPage,
+  session,
   variant = "page",
   onClose = () => {},
 }: {
-  conversationId: number | null;
-  onConversation: (id: number | null) => void;
-  scrollTop: MutableRefObject<number | null>;
-  contextPage: MutableRefObject<string | null>;
-  /** `page`: the whole of the assistant's page. `drawer`: the modal Drawer over a project's page. */
-  variant?: "page" | "drawer";
+  /** What the provider holds for every frame. */
+  session: AssistantSession;
+  /** `page`: the whole of the assistant's page. `drawer`: the modal Drawer over a project's page.
+   *  `dock`: the column beside it. `mini`: the small window floating over it. */
+  variant?: "page" | "drawer" | "dock" | "mini";
   onClose?: () => void;
 }) {
+  const { conversationId, onConversation, scrollTop, contextPage, draft, setDraft } = session;
+  const { isWide, setWide, stream, startsNew, wantsFocus, pointedCount } = session;
+  const assistant = useAssistant();
+  const phone = useIsPhone();
+  const beside = variant === "mini" || variant === "dock";
   const settings = useAssistantReady();
   const canConfigure = useCan("assistant:configure");
   const conversations = useConversations();
@@ -72,7 +103,6 @@ export function AssistantChat({
   const remove = useDeleteConversation();
   const message = useSendMessage();
   const cancel = useCancelTurn();
-  const stream = useConversationStream(conversationId);
   const composer = useRef<HTMLTextAreaElement>(null);
   const [focusAsked, askFocus] = useState(0);
   /** The turn the stream showed when the API said another was under way. */
@@ -88,8 +118,10 @@ export function AssistantChat({
   const madeHere = useRef(new Set<number>());
 
   const picked = useRef(conversationId !== null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `startsNew` is a ref the provider holds
   useEffect(() => {
-    if (picked.current || !conversations.data) return;
+    // A conversation the person asked to start is the empty one, not the latest.
+    if (picked.current || startsNew.current || !conversations.data) return;
     picked.current = true;
     const latest = conversations.data[0];
     if (latest) onConversation(latest.id);
@@ -98,6 +130,14 @@ export function AssistantChat({
   useEffect(() => {
     if (focusAsked > 0) composer.current?.focus();
   }, [focusAsked]);
+  // Something was pointed at: the chip is in the composer, and the person writes next. On mount
+  // too, for a frame the pointing opened.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the count is the event; the ref says whether it is still owed
+  useEffect(() => {
+    if (!wantsFocus.current) return;
+    wantsFocus.current = false;
+    composer.current?.focus();
+  }, [pointedCount]);
 
   const configured = settings.data;
   const refusal = message.error instanceof ApiError ? message.error.code : null;
@@ -117,10 +157,16 @@ export function AssistantChat({
 
   function open(id: number | null) {
     scrollTop.current = null;
+    // Whatever opens a conversation settles which one: the latest is not looked for after it.
+    picked.current = true;
+    if (id !== null) startsNew.current = false;
     onConversation(id);
   }
 
-  async function send(text: string, page: string | null = contextPage.current): Promise<boolean> {
+  async function send(
+    { text, pointed, files }: Draft,
+    page: string | null = contextPage.current,
+  ): Promise<boolean> {
     let id = conversationId;
     try {
       if (id === null) {
@@ -128,7 +174,13 @@ export function AssistantChat({
         madeHere.current.add(id);
         open(id);
       }
-      await message.mutateAsync({ id, text, page });
+      await message.mutateAsync({
+        id,
+        text,
+        page,
+        context: pointed.map(told),
+        attachments: files.map(({ name, data }) => ({ name, data })),
+      });
     } catch (error) {
       if (id !== null && error instanceof ApiError && error.code === "turn_live") {
         setRefusedAt({ conversation: id, turn: stream.turn?.id ?? 0 });
@@ -144,7 +196,8 @@ export function AssistantChat({
     const listed = conversations.data?.find((conversation) => conversation.id === sent);
     if (listed ? !listed.title : madeHere.current.has(sent)) {
       madeHere.current.delete(sent);
-      rename.mutate({ id: sent, title: titleFrom(text) });
+      const named = text || pointed[0]?.label || files[0]?.name || "";
+      rename.mutate({ id: sent, title: titleFrom(named) });
     }
     return true;
   }
@@ -154,16 +207,25 @@ export function AssistantChat({
       conversations={conversations.data?.filter((conversation) => !deleting.has(conversation.id))}
       currentId={conversationId}
       isCreating={create.isPending}
+      spacing={beside ? "compact" : "default"}
       onSelect={open}
-      onNew={() =>
+      onNew={() => {
+        // Nothing said here yet, or no conversation yet: this is the new chat already, and
+        // another press must not leave an empty conversation behind it in the history.
+        if (conversationId === null || isBlank(stream)) {
+          startsNew.current = conversationId === null;
+          picked.current = true;
+          askFocus((asked) => asked + 1);
+          return;
+        }
         create.mutate(undefined, {
           onSuccess: (made) => {
             madeHere.current.add(made.id);
             open(made.id);
             askFocus((asked) => asked + 1);
           },
-        })
-      }
+        });
+      }}
       onDelete={(id) => {
         setDeleting((ids) => new Set(ids).add(id));
         if (id === conversationId) {
@@ -205,8 +267,10 @@ export function AssistantChat({
           key={conversationId ?? "new"}
           items={stream.items}
           turn={stream.turn}
-          onRetry={(text, page) => void send(text, page)}
+          onRetry={(text, page, pointed) => void send({ text, pointed, files: [] }, page)}
           scrollTop={scrollTop}
+          wide={variant === "drawer" && isWide}
+          dense={beside}
         />
       )}
     </>
@@ -221,19 +285,26 @@ export function AssistantChat({
       )}
     </SectionMessage>
   ) : (
-    <Composer
-      inputRef={composer}
-      turn={stream.turn}
-      isBlocked={blocked}
-      error={
-        create.error ??
-        (refusal === "turn_live" || refusal === "not_configured" ? null : message.error) ??
-        stopError ??
-        remove.error
-      }
-      onSend={(text) => send(text)}
-      onStop={(turnId) => cancel.mutateAsync(turnId)}
-    />
+    <div className="space-y-2">
+      <AskingAbout page={contextPage.current} />
+      <Composer
+        inputRef={composer}
+        draft={draft}
+        onDraft={setDraft}
+        compact={beside}
+        acceptsImages={configured?.accepts_images !== false}
+        turn={stream.turn}
+        isBlocked={blocked}
+        error={
+          create.error ??
+          (refusal === "turn_live" || refusal === "not_configured" ? null : message.error) ??
+          stopError ??
+          remove.error
+        }
+        onSend={(written) => send(written)}
+        onStop={(turnId) => cancel.mutateAsync(turnId)}
+      />
+    </div>
   );
 
   if (variant === "drawer") {
@@ -245,15 +316,96 @@ export function AssistantChat({
             Factorial Assistant
           </span>
         }
-        width="medium"
+        width={isWide ? "full" : "medium"}
         bare
         initialFocusRef={composer}
         onClose={onClose}
-        actions={switcher}
+        actions={
+          <>
+            {switcher}
+            {!phone && (
+              <>
+                {assistant.canDock && (
+                  <IconButton icon="dock" label="Dock to the side" onClick={assistant.dock} />
+                )}
+                <IconButton icon="float" label="Float" onClick={assistant.float} />
+                <IconButton icon="minimize" label="Minimize" onClick={assistant.minimize} />
+                <IconButton
+                  icon="maximize"
+                  label={isWide ? "Restore width" : "Maximize"}
+                  onClick={() => setWide(!isWide)}
+                />
+              </>
+            )}
+          </>
+        }
         footer={foot}
       >
         {conversation}
       </Drawer>
+    );
+  }
+
+  const besideActions = (
+    <>
+      <IconButton icon="minimize" label="Minimize" spacing="compact" onClick={assistant.minimize} />
+      <IconButton
+        icon="maximize"
+        label="Open in the drawer"
+        spacing="compact"
+        onClick={assistant.openDrawer}
+      />
+      <IconButton icon="close" label="Close" spacing="compact" onClick={onClose} />
+    </>
+  );
+
+  if (variant === "dock") {
+    return (
+      <TextStepContext.Provider value={assistant.prefs.text}>
+        <DockPanel
+          width={assistant.prefs.dock}
+          onResize={(dock) => assistant.setPrefs({ dock })}
+          actions={
+            <>
+              {switcher}
+              <ViewOptions />
+              <IconButton icon="float" label="Float" spacing="compact" onClick={assistant.float} />
+              {besideActions}
+            </>
+          }
+          footer={foot}
+        >
+          {conversation}
+        </DockPanel>
+      </TextStepContext.Provider>
+    );
+  }
+
+  if (variant === "mini") {
+    return (
+      <TextStepContext.Provider value={assistant.prefs.text}>
+        <MiniWindow
+          size={assistant.prefs.mini}
+          onResize={(mini) => assistant.setPrefs({ mini })}
+          before={<ViewOptions windowSize />}
+          after={
+            <>
+              {assistant.canDock && (
+                <IconButton
+                  icon="dock"
+                  label="Dock to the side"
+                  spacing="compact"
+                  onClick={assistant.dock}
+                />
+              )}
+              {besideActions}
+            </>
+          }
+          footer={foot}
+        >
+          {conversation}
+        </MiniWindow>
+      </TextStepContext.Provider>
     );
   }
 

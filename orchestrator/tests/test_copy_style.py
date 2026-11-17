@@ -100,16 +100,11 @@ ALLOWED: list[tuple[str, str, str]] = [
 ]
 
 VERDICT = "## Test Verdict"
-VERDICT_PAIRS = [
-    (
-        ORCHESTRATOR
-        / "config/scaffold/templates/process-templates/simple/processes/process-simple.yaml",
-        ORCHESTRATOR / "config/scaffold/templates/agents/test-agent/base-target/instructions.md",
-    ),
-    (
-        REPO_ROOT / "docs/samples/factorial-simple/processes/process-simple.yaml",
-        REPO_ROOT / "docs/samples/factorial-simple/agents/test-agent/instructions.md",
-    ),
+#: The one shipped process with a test step: no template has one.
+VERDICT_PROCESS = REPO_ROOT / "docs/samples/factorial-simple/processes/process-simple.yaml"
+VERDICT_AGENTS = [
+    ORCHESTRATOR / "config/scaffold/templates/agents/test-agent/base-target/instructions.md",
+    REPO_ROOT / "docs/samples/factorial-simple/agents/test-agent/instructions.md",
 ]
 
 
@@ -199,7 +194,7 @@ def test_every_allowlist_entry_still_matches() -> None:
     assert unused == []
 
 
-@pytest.mark.parametrize("process, agent", VERDICT_PAIRS, ids=lambda p: _at(p))
-def test_the_verdict_marker_survives(process: Path, agent: Path) -> None:
-    assert f'"{VERDICT}")' in process.read_text()
+@pytest.mark.parametrize("agent", VERDICT_AGENTS, ids=_at)
+def test_the_verdict_marker_survives(agent: Path) -> None:
+    assert f'"{VERDICT}")' in VERDICT_PROCESS.read_text()
     assert VERDICT in agent.read_text().splitlines()

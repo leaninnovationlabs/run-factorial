@@ -36,6 +36,7 @@ from orchestrator.adapters.state import (
     CheckRunState,
     CommentState,
     IssueState,
+    Mergeability,
     PullRequestState,
     RepoPermission,
     ReviewState,
@@ -445,6 +446,10 @@ class RepoListings:
 class GitHubStateSource(StateSource):
     """Observes one issue and its repository. `issue_number` is the ticket's `external_key`."""
 
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return True
+
     def __init__(
         self,
         client: GitHubClient,
@@ -475,6 +480,7 @@ class GitHubStateSource(StateSource):
         # `_pr_review_comments` is the separate inline-comments endpoint; `_pr_reviews` composes
         # both into the public `ReviewState` shape.
         self._pull_reviews = AsyncKeyedMemo(self._fetch_reviews)
+        self._mergeability = AsyncKeyedMemo(self._fetch_mergeability)
         self._pr_review_comments = AsyncKeyedMemo(self._fetch_review_comments)
         self._pr_reviews = AsyncKeyedMemo(self._fetch_pr_reviews)
         self._permissions = AsyncKeyedMemo(self._fetch_permission)
@@ -528,6 +534,9 @@ class GitHubStateSource(StateSource):
             },
             bots=frozenset(login for login, review in verdict.items() if review.bot),
         )
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        return await self._mergeability.get(number)
 
     async def repo_permission(self, login: str) -> RepoPermission:
         return await self._permissions.get(login.casefold())
@@ -607,6 +616,26 @@ class GitHubStateSource(StateSource):
             )
             for pr in simple
         )
+
+    async def _fetch_mergeability(self, pull_number: int) -> Mergeability:
+        """The single-PR GET: the listing carries neither `mergeable` nor `mergeable_state`.
+
+        `mergeable` speaks of conflicts alone, so `blocked` (a missing review or check) with
+        `mergeable: true` is still clean. `mergeable: null` is GitHub computing, never clean."""
+        api = await self._api()
+        response = await api.rest.pulls.async_get(self._owner, self._name, pull_number)
+        body = json.loads(response.content)
+        mergeable = body.get("mergeable")
+        state = body.get("mergeable_state")
+        if mergeable is False:
+            return Mergeability.CONFLICTING
+        if mergeable is None or state == "unknown":
+            return Mergeability.UNKNOWN
+        if state == "dirty":
+            return Mergeability.CONFLICTING
+        if state == "behind":
+            return Mergeability.BEHIND
+        return Mergeability.CLEAN
 
     async def _fetch_reviews(self, pull_number: int) -> tuple[_Review, ...]:
         """Every review on one PR, paginated once, as `_Review` records — the single source both

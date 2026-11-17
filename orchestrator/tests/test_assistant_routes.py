@@ -4,6 +4,7 @@ stream has its own module, `test_assistant_stream.py`."""
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -13,12 +14,15 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.api.routes import settings as settings_routes
+from orchestrator.api.services import assistant_send
 from orchestrator.api.services import assistant_settings as svc
 from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.items import append_item
 from orchestrator.db.models import (
     AppSetting,
+    ChatAttachment,
     ChatConversation,
     ChatItem,
     ChatItemKind,
@@ -35,7 +39,8 @@ pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
 API = "/api/assistant"
 #: The list and the create are an organization's; a conversation's own routes keep `API`.
-CONVERSATIONS = "/api/orgs/default/assistant/conversations"
+ORG = "/api/orgs/default"
+CONVERSATIONS = f"{ORG}/assistant/conversations"
 #: Who a bearer-token request is (decision 12): its conversations are `api-token`'s.
 ME = "api-token"
 
@@ -382,6 +387,154 @@ async def test_a_message_must_have_text_and_fit(
             f"{API}/conversations/{conversation}/messages", json={"text": text}, headers=auth
         )
         assert response.status_code == 422
+
+
+async def test_a_message_can_be_only_what_was_pointed_at_and_keeps_it(
+    client: AsyncClient, auth: dict[str, str], enabled_assistant: AssistantSettings
+) -> None:
+    conversation = await new_conversation(client, auth)
+    pointed = {
+        "label": "Ticket #212 · Checkout total ignores the discount code",
+        "text": "Blocked at build",
+        "page": "/projects/5/tickets",
+        "href": "/tickets/212",
+    }
+    url = f"{API}/conversations/{conversation}/messages"
+    response = await client.post(url, json={"text": "", "context": [pointed]}, headers=auth)
+    assert response.status_code == 202, response.text
+    items = (await client.get(f"{API}/conversations/{conversation}/items", headers=auth)).json()
+    [item] = items["items"]
+    assert item["payload"] == {"text": "", "page": None, "context": [pointed]}
+
+
+async def test_what_is_pointed_at_has_limits(
+    client: AsyncClient, auth: dict[str, str], enabled_assistant: AssistantSettings
+) -> None:
+    conversation = await new_conversation(client, auth)
+    url = f"{API}/conversations/{conversation}/messages"
+    one = {"label": "A row", "text": "words"}
+    for body in (
+        {"text": "   "},
+        {"text": "hi", "context": [one] * 6},
+        {"text": "hi", "context": [{**one, "label": "x" * 81}]},
+        {"text": "hi", "context": [{**one, "label": ""}]},
+        {"text": "hi", "context": [{**one, "text": "x" * 2001}]},
+        {"text": "hi", "context": [{**one, "lines": [0, 3]}]},
+    ):
+        response = await client.post(url, json=body, headers=auth)
+        assert response.status_code == 422, body
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+LOG = b"12:00 started\n12:01 timed out\n"
+
+
+def attached(name: str, content: bytes) -> dict[str, str]:
+    return {"name": name, "data": base64.b64encode(content).decode()}
+
+
+async def test_a_message_keeps_its_files_and_loses_them_with_its_conversation(
+    client: AsyncClient,
+    auth: dict[str, str],
+    enabled_assistant: AssistantSettings,
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    conversation = await new_conversation(client, auth)
+    response = await client.post(
+        f"{API}/conversations/{conversation}/messages",
+        json={"text": "", "attachments": [attached("shot.png", PNG), attached("worker.log", LOG)]},
+        headers=auth,
+    )
+    assert response.status_code == 202, response.text
+    items = (await client.get(f"{API}/conversations/{conversation}/items", headers=auth)).json()
+    [item] = items["items"]
+    assert item["payload"] == {
+        "text": "",
+        "page": None,
+        "attachments": [
+            {"name": "shot.png", "media_type": "image/png", "size": len(PNG)},
+            {"name": "worker.log", "media_type": "text/plain", "size": len(LOG)},
+        ],
+    }
+    async with maker() as session:
+        rows = (
+            await session.scalars(
+                select(ChatAttachment)
+                .where(ChatAttachment.item_id == item["id"])
+                .order_by(ChatAttachment.id)
+            )
+        ).all()
+    assert [(row.name, row.media_type, row.content) for row in rows] == [
+        ("shot.png", "image/png", PNG),
+        ("worker.log", "text/plain", LOG),
+    ]
+
+    await client.delete(f"{API}/conversations/{conversation}", headers=auth)
+    async with maker() as session:
+        assert (await session.scalars(select(ChatAttachment))).all() == []
+
+
+async def test_a_file_the_assistant_cannot_take_refuses_the_message_and_stores_nothing(
+    client: AsyncClient,
+    auth: dict[str, str],
+    enabled_assistant: AssistantSettings,
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    conversation = await new_conversation(client, auth)
+    url = f"{API}/conversations/{conversation}/messages"
+    for files, says in (
+        ([attached("page.png", b"<html>hi</html>")], "`page.png` is not a PNG"),
+        ([attached("empty.txt", b"")], None),
+        ([{"name": "x.png", "data": "not base64!"}], "could not be read"),
+        ([{"name": "x.png", "data": "caf\u00e9"}], "could not be read"),
+        ([attached("worker.log", LOG)] * 5, None),
+        ([attached("../../" + "x" * 130, LOG)], None),
+    ):
+        response = await client.post(url, json={"text": "hi", "attachments": files}, headers=auth)
+        assert response.status_code == 422, files
+        if says:
+            assert response.json()["code"] == "attachment_refused"
+            assert says in response.json()["detail"]
+    assert await turns_of(maker, conversation) == []
+    async with maker() as session:
+        assert (await session.scalars(select(ChatAttachment))).all() == []
+        assert (
+            await session.scalars(select(ChatItem).where(ChatItem.conversation_id == conversation))
+        ).all() == []
+
+
+async def test_an_image_for_a_backend_that_takes_none_is_refused_and_a_text_file_is_not(
+    client: AsyncClient,
+    auth: dict[str, str],
+    enabled_assistant: AssistantSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The saved backend and sign-in, as one that is handed no images. Which those are is
+    `vocabulary.takes_images`, whose own test lists every one a deployment can offer."""
+    monkeypatch.setattr(assistant_send, "takes_images", lambda backend, auth_mode: False)
+    monkeypatch.setattr(settings_routes, "takes_images", lambda backend, auth_mode: False)
+    conversation = await new_conversation(client, auth)
+    url = f"{API}/conversations/{conversation}/messages"
+    refused = await client.post(
+        url, json={"text": "see", "attachments": [attached("shot.png", PNG)]}, headers=auth
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "attachment_refused"
+    assert "takes no images" in refused.json()["detail"]
+    taken = await client.post(
+        url, json={"text": "see", "attachments": [attached("worker.log", LOG)]}, headers=auth
+    )
+    assert taken.status_code == 202, taken.text
+
+    ready = (await client.get(f"{ORG}/settings/assistant/ready", headers=auth)).json()
+    assert ready["accepts_images"] is False
+
+
+async def test_the_ready_answer_says_the_backend_takes_images(
+    client: AsyncClient, auth: dict[str, str], enabled_assistant: AssistantSettings
+) -> None:
+    ready = (await client.get(f"{ORG}/settings/assistant/ready", headers=auth)).json()
+    assert ready["accepts_images"] is True
 
 
 async def test_deleting_a_conversation_does_not_give_back_the_daily_budget(

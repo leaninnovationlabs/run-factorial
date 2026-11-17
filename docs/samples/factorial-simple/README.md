@@ -11,7 +11,8 @@ equal the file's own `name:`, so `processes/process-hotfix.yaml` declares `name:
 issue enters it by carrying `factorial:process:hotfix`. Adding a second lane is adding a second
 file; each keeps its own history of commits. This sample ships two: `simple`, and `primary`,
 which is `simple` without its test step. The project's `default_process` setting names one of
-them, and an issue with no process label enters that one.
+them, and an issue with no process label enters that one. The editor's Simple template ships
+`primary` alone. `simple` stays here as the commented reference for the format.
 
 **Copying this by hand is no longer the only way to get a folder.** The process builder's commit
 to `factorial` writes your process file plus an `agents/<name>/` folder for every
@@ -26,10 +27,11 @@ commented-but-empty `agent.yaml` it always would. Those prompts declare
 `skills/project-constitution/`, itself variant-per-lane, and the same commit writes whichever
 copy matches: a copy of the one below, with its naming table pointed at your lane's own branches.
 
-**This sample's lanes are the editor's Simple template, and the variant that serves them is
-`base-target`.** The editor's **Simple template** is this folder's process files, one lane each,
-with comments written for operators and each `runtime:` line commented out as an example; tests
-hold each template lane to the sample lane of the same name, once that line is turned on. Every `pr_open`
+**This sample's `primary` lane is the editor's Simple template, and the variant that serves
+both lanes is `base-target`.** The editor's **Simple template** is this folder's
+`process-primary.yaml`, with comments written for operators and its `runtime:` line commented
+out as an example; a test holds the template lane to the sample lane, once that line is turned
+on. Every `pr_open`
 in it targets `main` outright, never a branch glob. Gate 1 merges the spec
 to the base branch, and the implementation branches from there. That is the
 shape `base-target` describes. Commit the `simple` lane into a repo with no config, every
@@ -38,7 +40,8 @@ lane's file, which that lane's own commit writes (the seeded
 `factorial` branch carries its own): all three of `plan-agent`, `build-agent`, and `test-agent`
 with the text that sits here, which a test keeps equal, the same `speckit-*`
 skills, and `skills/spec-page/`, which the plan agent declares to write the summary page its
-plan step shows (docs/enable-previews.md). The one other difference is the MCP server, which needs an endpoint, a
+plan step shows (docs/enable-previews.md). A commit of the template writes the same paths
+without `test-agent`, which the `primary` lane does not name. The one other difference is the MCP server, which needs an endpoint, a
 secret and an allowlist entry: the commit writes it as the inert `mcp/product-docs.yaml.example`,
 and leaves `plan-agent`'s `mcp:` block commented out until you set it up. The **`stacked`**
 variant remains a separate, leaner prompt set for the other lane shape, where the implementation
@@ -56,7 +59,7 @@ copy alone unless you edit that file in the builder yourself.
   processes/                   # one file per ADLC lane; the stem minus `process-` is its name
     process-simple.yaml        # THE workflow definition, and the commented reference
                                #   for the format
-    process-primary.yaml       # `simple` without its test step
+    process-primary.yaml       # `simple` without its test step; the editor's Simple template
   skills/                      # skills shared by every agent in this process
     project-constitution/SKILL.md
     spec-page/SKILL.md         #   the plan step's summary page (see its `preview.files`)
@@ -140,6 +143,5 @@ and how to give the section to another agent.
 repository's suite on a normal checkout and posts one pass/fail comment, `## Test Verdict`. It
 pushes nothing. The comment is the acceptance gate of the step: `pr_comment_contains` checks
 that the verdict exists, not what it says, so a `FAIL` verdict still moves the ticket to
-`code_review_gate`, where the reviewer reads it. The step carries `ci_green` commented out:
-turn it on for a repository that runs CI on pull requests, and the step then waits for green
-checks too. The `primary` lane has no test step, for a repository with no suite to run.
+`code_review_gate`, where the reviewer reads it. The step does not wait for CI. The `primary`
+lane has no test step.

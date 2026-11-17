@@ -223,6 +223,7 @@ async def redo(tick: _Tick, request: Event) -> None:
         run.status = StepRunStatus.CANCELLED
         run.ended_at = run.ended_at or tick.now
         run.failure_reason = _REDO_CANCEL_REASON
+        tick.deps.mergeability_seen.pop(run.id, None)
         await release_run_credential(tick, run.id)
     await _answer_overtaken(tick, ended)
     await stop_awake_previews(

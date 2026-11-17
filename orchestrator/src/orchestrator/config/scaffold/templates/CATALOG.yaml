@@ -12,7 +12,7 @@
 # The version identifies which shipped content a file came from. Bump it on any content change.
 agents:
   plan-agent:
-    version: 9
+    version: 10
     variants:
       stacked:
         lane: stacked
@@ -26,7 +26,7 @@ agents:
           Every pull request, or merge request on GitLab, targets the base branch; the spec
           merges at the first gate and the implementation branches from it.
   build-agent:
-    version: 8
+    version: 9
     variants:
       stacked:
         lane: stacked
@@ -40,7 +40,7 @@ agents:
           Branches from the base branch after the spec has merged, and opens its pull request
           against the base branch.
   test-agent:
-    version: 6
+    version: 7
     variants:
       base-target:
         lane: base-target
@@ -50,7 +50,7 @@ agents:
   # The Superpowers template's four agents. One branch carries the whole ticket, so each names
   # its step's own branch prefix and base branch and no lane-wide fact.
   sp-brainstorm-agent:
-    version: 2
+    version: 3
     variants:
       base-target:
         lane: base-target
@@ -58,7 +58,7 @@ agents:
           Agrees a design with the ticket's owner in the run's terminal, pushes it on a new
           branch, and asks for a review in the dashboard.
   sp-planning-agent:
-    version: 2
+    version: 3
     variants:
       base-target:
         lane: base-target
@@ -66,7 +66,7 @@ agents:
           Turns the approved design into a plan of small test-first tasks on the ticket's
           branch, and asks for a review in the dashboard.
   sp-implement-agent:
-    version: 2
+    version: 3
     variants:
       base-target:
         lane: base-target
@@ -74,7 +74,7 @@ agents:
           Builds the approved plan one task at a time, test first, and opens the pull request
           against the base branch.
   sp-review-agent:
-    version: 2
+    version: 3
     variants:
       base-target:
         lane: base-target

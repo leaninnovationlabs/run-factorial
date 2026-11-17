@@ -2,7 +2,7 @@
 
 ## Report a vulnerability
 
-Do not open a public issue or discussion for a vulnerability. This repository takes no issues.
+Do not open a public issue or discussion for a vulnerability.
 
 Report it privately on GitHub:
 

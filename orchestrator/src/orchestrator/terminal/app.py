@@ -4,8 +4,9 @@ The probe answers under `APP_PREFIX` too, where the load balancer forwards; its 
 one the target group checks, which an old image answered as well (decision 74).
 
 It reaches a sandbox only through a relay: `host` attaches to tmux on this machine, `e2b`
-through a `TerminalSandboxClient` holding the run's runtime's current E2B key, which cannot wake
-a paused sandbox (decision 25). Its shutdown closes every client it attached before it returns.
+through a `TerminalSandboxClient` holding the key the run's runtime now resolves to
+(`factorial.sandbox_team`), which cannot wake a paused sandbox (decision 25). Its shutdown
+closes every client it attached before it returns.
 """
 
 from __future__ import annotations
@@ -21,11 +22,12 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
 
+from orchestrator.db.models import Runtime
 from orchestrator.events.terminals import TerminalRun
 from orchestrator.factorial.runtimes import E2B_CREDENTIAL
+from orchestrator.factorial.sandbox_team import sandbox_team
 from orchestrator.logs import bind
-from orchestrator.secrets import store
-from orchestrator.settings import APP_PREFIX, Settings
+from orchestrator.settings import APP_PREFIX, ManagedSandbox, Settings
 from orchestrator.terminal.connection import Gateway, Relays, Timing, serve
 from runtime.adapters.e2b.client import E2bTerminalClient
 from runtime.contract import TerminalTarget
@@ -49,9 +51,11 @@ class SubstrateRelays:
         *,
         host: TerminalRelay | None = None,
         e2b: Callable[[str], TerminalRelay] = _e2b_relay,
+        managed: ManagedSandbox | None = None,
     ) -> None:
         self._host = host or HostTmuxRelay()
         self._e2b = e2b
+        self._managed = managed or ManagedSandbox()
 
     async def relay_for(
         self, session: AsyncSession, run: TerminalRun, target: TerminalTarget
@@ -62,13 +66,21 @@ class SubstrateRelays:
             raise ValueError(f"no relay attaches to a {target.substrate!r} terminal")
         if run.runtime_id is None:
             raise ValueError("an E2B run with no runtime row names no key to reach it with")
+        row = await session.get(Runtime, run.runtime_id)
+        if row is None:
+            raise ValueError(f"runtime {run.runtime_id} no longer exists")
         # The runtime's key now, not the one the run spawned with: a team the runtime moved
         # away from is unreachable here (decision 25).
-        key = await store.get_for_runtime(session, run.runtime_id, E2B_CREDENTIAL)
-        if key is None:
+        team = await sandbox_team(session, row, self._managed)
+        if team.api_key is None:
             # An operator's fix, not a moment's: retrying cannot reach the sandbox.
-            raise ValueError(f"runtime {run.runtime_id} holds no {E2B_CREDENTIAL}")
-        return self._e2b(key.get_secret_value())
+            raise ValueError(
+                f"runtime {run.runtime_id} is on the Factorial-managed key, which this "
+                "deployment does not provide"
+                if team.managed
+                else f"runtime {run.runtime_id} holds no {E2B_CREDENTIAL}"
+            )
+        return self._e2b(team.api_key.get_secret_value())
 
 
 async def _healthz(_: Request) -> JSONResponse:
@@ -85,7 +97,7 @@ def create_app(
     gateway = Gateway(
         settings=settings,
         session_factory=session_factory,
-        relays=relays or SubstrateRelays(),
+        relays=relays or SubstrateRelays(managed=settings.runtime.e2b.managed),
         timing=timing or Timing(),
     )
 

@@ -113,7 +113,7 @@ Open the project's **Process config** page, under **Project settings**. If the r
 
 - **From `<default branch>`** shows when the default branch has a config folder. Press
   **Import `<default branch>`'s config**. It copies that folder unchanged and syncs it.
-- **A template**, for example **Simple lane**. A template names no runtime. Select one in
+- **A template**, for example **Simple template**. A template names no runtime. Select one in
   **Runtime** beside **Import process template**, then press that button. The import makes the
   branch and commits each process of the template with that runtime. If the project does
   not allow the runtime yet, the button says `Permit <slug> and import`, and the import allows
@@ -334,12 +334,13 @@ to `factorial` and press **Sync config**.
    checks on every edited, new and deleted file and lists each problem under the file it is in.
    Drag the file panel's right border to make it wider, up to two fifths of the editor; a name
    the panel cuts short shows in full when the pointer is over it.
-   Choose **Simple lane** under **Replace with
-   template** at the top of the editor, or paste an existing process file. On an existing lane, the
-   template keeps the name of that lane, so the commit replaces it. The template is the lane of
-   `docs/samples/factorial-simple/`, with its comments. The server takes the exact text, comments
-   included. On a repo with no config yet, a commit of the template with every file ticked writes
-   the whole sample folder. The template needs nothing set up outside the repository. A Runtime,
+   Choose **Simple template** under **Import** at the top of the editor, or paste an existing
+   process file. On an existing lane, the template keeps the name of that lane, so the commit
+   replaces it. The template is the `primary` lane of `docs/samples/factorial-simple/`, with its
+   comments. The server takes the exact text, comments included. On a repo with no config yet, a
+   commit of the template with every file ticked writes the sample folder, without the sample's
+   `simple` lane and the `test-agent` that only that lane names. The template needs nothing set
+   up outside the repository. A Runtime,
    the previews and the MCP server are examples in comments, and the MCP server file is
    `mcp/product-docs.yaml.example`, which the orchestrator does not read.
 2. **Preview.** Each time the text validates, the page calls `POST /projects/{id}/config-preview`

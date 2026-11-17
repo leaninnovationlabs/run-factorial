@@ -54,7 +54,13 @@ from orchestrator.github import (
 from orchestrator.github.client import GitHubClient, RunToken
 from orchestrator.github.contents import ComparedFile, Comparison, RepoContents
 from orchestrator.github.media import Fetched, ItemRef, MediaRef, Unavailable, media_refs
-from orchestrator.github.state import CommentState, RepoPermission, ReviewState, ReviewVerdict
+from orchestrator.github.state import (
+    CommentState,
+    Mergeability,
+    RepoPermission,
+    ReviewState,
+    ReviewVerdict,
+)
 from orchestrator.secrets.store import put
 from orchestrator.worker.context import ProjectGitHub, ReconcileDeps, SessionPolicy
 from orchestrator.worker.parked import ParkedListings
@@ -667,6 +673,10 @@ class FakeGitHub:
     #: exactly like `SnapshotState.review_verdicts_by_number`. `approve`/
     #: `request_changes` write here; a test that seeds a PR pre-approved writes here directly.
     verdicts: dict[int, ReviewVerdict] = field(default_factory=dict)
+    #: What every PR's mergeability read answers; `mergeability_reads` counts the reads.
+    mergeability: Mergeability = Mergeability.CLEAN
+    mergeability_reads: int = 0
+    approvals_bound_to_head: bool = True
     #: `login -> the repository role GitHub reports`; a login not listed has none.
     permissions: dict[str, RepoPermission] = field(default_factory=dict)
     #: Every permission lookup, in order — what the cost assertions count.
@@ -974,6 +984,15 @@ class _CountedIssue:
     async def pr_review_verdict(self, number: int) -> ReviewVerdict:
         self._repo_read()
         return await self.inner.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        self._repo_read()
+        self.github.mergeability_reads += 1
+        return self.github.mergeability
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self.github.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         self._repo_read()
@@ -1810,19 +1829,23 @@ async def _ensure_leased(session: AsyncSession, ticket: Ticket) -> None:
 
 async def run_tick(world: World, *, listings: bool = False) -> None:
     """One reconciliation, in its own transaction — the shape `loop.tick` uses. `listings`
-    hands the reconcile a per-tick parked cache over the fake, as production's tick does."""
-    async with world.sessions() as session:
-        ticket = await session.get(Ticket, world.ticket_id)
-        assert ticket is not None
-        await _ensure_leased(session, ticket)
-        await reconcile_ticket(
-            session,
-            ticket,
-            world.deps,
-            lease_owner=_LEASE_OWNER,
-            lease_ttl=_LEASE_TTL,
-            listings=ParkedListings(lambda _client: world.github) if listings else None,
-        )
+    hands the reconcile a per-tick parked cache over the fake, as production's tick does. Its
+    managed-key reservation ends with the transaction, as `loop._reconcile_leased`'s does."""
+    try:
+        async with world.sessions() as session:
+            ticket = await session.get(Ticket, world.ticket_id)
+            assert ticket is not None
+            await _ensure_leased(session, ticket)
+            await reconcile_ticket(
+                session,
+                ticket,
+                world.deps,
+                lease_owner=_LEASE_OWNER,
+                lease_ttl=_LEASE_TTL,
+                listings=ParkedListings(lambda _client: world.github) if listings else None,
+            )
+    finally:
+        world.deps.sandbox_starts.release(world.ticket_id)
 
 
 async def ticket_row(world: World) -> Ticket:
@@ -2051,6 +2074,14 @@ class _RaisingStateSource:
     async def pr_review_verdict(self, number: int) -> ReviewVerdict:
         self._trip("pr_review_verdict")
         return await self.inner.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        self._trip("pr_mergeability")
+        return await self.inner.pr_mergeability(number)
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self.inner.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         self._trip("repo_permission")

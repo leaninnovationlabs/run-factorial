@@ -3,6 +3,7 @@
  *  Close and exit once the pull request closed without a merge; and which messages a scope draws. */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TicketDetail } from "../../api/types";
 import { click, type Mounted, mount, settle } from "../../testDom";
@@ -23,16 +24,18 @@ async function show(review: Props["review"], extra: Partial<Props> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   view = await mount(
     <QueryClientProvider client={qc}>
-      <TicketMessages
-        ticket={TICKET}
-        condition="waiting_gate"
-        failing={false}
-        gatePr="42"
-        repo="acme/app"
-        onRequeue={() => {}}
-        review={review}
-        {...extra}
-      />
+      <MemoryRouter>
+        <TicketMessages
+          ticket={TICKET}
+          condition="waiting_gate"
+          failing={false}
+          gatePr="42"
+          repo="acme/app"
+          onRequeue={() => {}}
+          review={review}
+          {...extra}
+        />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   await settle();
@@ -41,6 +44,62 @@ async function show(review: Props["review"], extra: Partial<Props> = {}) {
 
 const named = (controls: HTMLElement[], text: string) =>
   controls.find((control) => control.textContent?.trim() === text);
+
+describe("a ticket waiting for a sandbox", () => {
+  const waiting = (wait: Partial<NonNullable<TicketDetail["sandbox_wait"]>> | null) =>
+    show(null, {
+      ticket: {
+        id: 7,
+        sandbox_wait:
+          wait === null
+            ? null
+            : {
+                scope: "organization",
+                limit: 2,
+                running: 2,
+                runtime: "codex-e2b",
+                runtime_id: 5,
+                ...wait,
+              },
+      } as unknown as TicketDetail,
+      condition: null,
+    });
+  const message = () => document.querySelector("section");
+  const link = () => message()?.querySelector("a");
+
+  it("says the organization's limit and links the runtime", async () => {
+    await waiting({});
+    expect(message()?.textContent).toContain(
+      "Waiting for a sandbox. The Factorial-managed key runs 2 at a time.",
+    );
+    expect(message()?.getAttribute("data-appearance")).toBe("information");
+    expect(link()?.textContent).toBe("Open the runtime");
+    expect(link()?.getAttribute("href")).toBe("/runtimes/codex-e2b");
+  });
+
+  it("says the pool is full", async () => {
+    await waiting({ scope: "pool", limit: 40 });
+    expect(message()?.textContent).toContain(
+      "Waiting for a sandbox. The Factorial-managed key is at its limit for all organizations.",
+    );
+  });
+
+  it("warns that a limit of zero needs the organization's own key", async () => {
+    await waiting({ limit: 0 });
+    expect(message()?.textContent).toContain(
+      "The Factorial-managed key is not available to this organization. Store your own sandbox key on the runtime.",
+    );
+    expect(message()?.getAttribute("data-appearance")).toBe("warning");
+  });
+
+  it("offers no link once the runtime is gone, and no message when nothing waits", async () => {
+    await waiting({ runtime_id: null });
+    expect(link()).toBeNull();
+    await view?.unmount();
+    await waiting(null);
+    expect(message()).toBeNull();
+  });
+});
 
 describe("the waiting-gate message", () => {
   it("offers the preview and Request changes beside the pull request", async () => {

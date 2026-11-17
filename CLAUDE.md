@@ -61,7 +61,10 @@ gate for agent output — the orchestrator trusts predicates, never the agent's 
 one exception is a person's dashboard Force complete, recorded as `step_run.forced_by` and never
 counted as a success (decision 78). `request_approval()` reads a person's dashboard Approve from
 the event log, bound to the run and its branch's head; it is observed input, not a gate, and
-merges nothing (design.md §7.20).
+merges nothing (design.md §7.20). A
+merging gate can also send a conflicting pull request back to an agent step for a conflict fix;
+that run is judged on mergeability, and its instructions are the one place the orchestrator
+writes an agent's instructions (design.md §4).
 
 **Everything is an event.** The `event` table is append-only (no UPDATE/DELETE). The dashboard,
 audit trail, and cost-per-issue reporting are read models derived from it, never separately

@@ -88,6 +88,11 @@ export interface IssueNode {
    */
   parkReason?: string | null;
   /**
+   * `OverviewTicket.sandbox_wait !== null`: the ticket's start waits on the Factorial-managed
+   * key's limit. Never changes the lane. Optional like `quarantined`.
+   */
+  sandboxWaiting?: boolean;
+  /**
    * `OverviewTicket.runs`. Only the 0 case is load-bearing here: 0 is exactly "admitted but
    * never run". See `attempt` below for why this is not the retry signal.
    */

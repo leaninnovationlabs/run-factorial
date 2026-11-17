@@ -79,6 +79,7 @@ from orchestrator.predicates import EvalContext, evaluate, needs
 from orchestrator.worker.action_steps import _action_step
 from orchestrator.worker.agent_steps import (
     _agent_step,
+    _returned_to_gate,
     parked_recheck_due,
     recheck_parked,
     spawn_cleared,
@@ -618,7 +619,7 @@ async def _completion_requested(tick: _Tick, request: Event) -> bool:
             tick,
             request,
             CompletionRefusal.UNAVAILABLE,
-            "GitHub could not be read to check the postconditions",
+            "The forge could not be read to check the postconditions",
         ),
         what="completion request",
     )
@@ -827,10 +828,13 @@ async def _grant_attempt(tick: _Tick, gesture: _Gesture, **details: object) -> b
     re-block, or visible truth on the ticket — never a ticket left RUNNING forever with no event,
     no spawn, and nothing for a human to read.
 
-    `current_step` is never touched, so the ticket resumes exactly where it was blocked, and no
-    `step_run` row is created, deleted or mutated here — every branch only reads the latest one.
-    The one attempt falls out of dispatch logic that already exists, and its failure escalates
-    again because `_ordinal` already counts past the budget, in three cases:
+    With one exception, `current_step` is never touched, so the ticket resumes exactly where it
+    was blocked, and no `step_run` row is created, deleted or mutated here — every branch only
+    reads the latest one. The exception is a conflict fix whose pull request needs none any more
+    (`_fix_not_needed`): the ticket moves back to its gate in this tick, the event's `step` is
+    still the step it left, and `next_attempt` is null because none is granted. The one attempt
+    falls out of dispatch logic that already exists, and its failure escalates again because
+    `_ordinal` already counts past the budget, in three cases:
 
     * An agent, action or check step's FAILED branch starts a new attempt only when a retry
       policy exists AND the backoff has elapsed. With NO retry policy configured at all (both
@@ -869,8 +873,20 @@ async def _grant_attempt(tick: _Tick, gesture: _Gesture, **details: object) -> b
     # path — see the emit at the end.
     due_at: datetime | None = None
 
+    #: The gate a conflict fix went back to because its pull request needs none any more.
+    returned_to: str | None = None
+    #: None when the forge has not said yet whether a conflict fix is still needed.
+    not_needed: bool | None = False
+    if isinstance(step, AgentStep):
+        not_needed = await _fix_not_needed(tick, step, next_attempt)
     if isinstance(step, GateStep):
         tick.plan.comments.append(f"{gesture.verb}: reopening `{step.name}` for a fresh review.")
+    elif not_needed:
+        returned_to = tick.ticket.current_step
+        tick.plan.comments.append(
+            f"{gesture.verb}: the pull request needs no fix now, so `{step.name}` does not run "
+            f"again and the ticket goes back to `{returned_to}`."
+        )
     else:
         retry = _retry_policy(tick.config, step)
         if (
@@ -878,6 +894,15 @@ async def _grant_attempt(tick: _Tick, gesture: _Gesture, **details: object) -> b
             and StepRunStatus(latest.status) in _FAILED_STATUSES
             and retry is None
         ):
+            if not_needed is None:
+                # The fix may need no attempt at all, so a restart from the first step is the
+                # wrong remedy to name. Refused all the same: with no retry rule nothing would
+                # ask the forge again, and the ticket would run on in silence.
+                tick.plan.comments.append(
+                    f"{gesture.noun} `{step.name}` refused for now: the forge has not said yet "
+                    "whether the pull request still needs a fix. Try again in a minute."
+                )
+                return False
             # Refuse outright — see this function's docstring. The remedy the comment names must
             # respect config pinning: this ticket keeps the process version stamped at admission,
             # so an edit to its process file reaches it only through a restart.
@@ -930,6 +955,14 @@ async def _grant_attempt(tick: _Tick, gesture: _Gesture, **details: object) -> b
                 # backoff cleared, and a timer that runs out on nothing happening is the same
                 # misdirection the sentence above exists to avoid.
                 due_at = None
+        if not_needed is None:
+            # Neither a retry nor a return can be promised: `_start_attempt` decides when the
+            # forge answers.
+            comment = (
+                f"{gesture.verb}: the forge has not said yet whether the pull request still "
+                f"needs a fix. `{step.name}` (attempt {next_attempt}) runs only if it does."
+            )
+            due_at = None
         tick.plan.comments.append(comment)
 
     await tick.emit(
@@ -938,12 +971,40 @@ async def _grant_attempt(tick: _Tick, gesture: _Gesture, **details: object) -> b
         run=None,
         step=step.name,
         attempt=latest.attempt if latest is not None else None,
-        next_attempt=next_attempt,
+        # No attempt is granted when the ticket went back to its gate.
+        next_attempt=None if returned_to is not None else next_attempt,
         due_at=None if due_at is None else due_at.isoformat(),
         **details,
     )
     tick.ticket.status = TicketStatus.RUNNING
     return True
+
+
+async def _fix_not_needed(tick: _Tick, step: AgentStep, attempt: int) -> bool | None:
+    """Whether a release found its conflict fix's pull request merged, closed or already clean,
+    and moved the ticket back to the gate (`_returned_to_gate`). None when the forge gave no
+    answer: it has not judged a moved head yet, which is routine in the seconds after a push,
+    or a read of it failed. Caught locally, as the preconditions read in `_grant_attempt` is: an
+    unreadable forge must not put the blocked label back over the person's own release, and
+    `_start_attempt` asks again before anything spawns."""
+    try:
+        return await _returned_to_gate(tick, step, attempt)
+    except _EvaluationUnavailable as exc:
+        logger.info(
+            "ticket %s step %s: no answer on the conflict fix's pull request during a release (%s)",
+            tick.ticket.external_key,
+            step.name,
+            exc,
+        )
+        return None
+    except Exception:
+        logger.exception(
+            "ticket %s step %s: the conflict fix's pull request could not be read during a "
+            "release; proceeding as a retry",
+            tick.ticket.external_key,
+            step.name,
+        )
+        return False
 
 
 async def _terminal(tick: _Tick) -> None:

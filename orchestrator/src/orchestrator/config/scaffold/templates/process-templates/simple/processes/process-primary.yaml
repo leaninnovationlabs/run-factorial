@@ -1,6 +1,29 @@
-# The Primary lane: plan, spec review, build, code review, done, without a test step. Choose it
-# for a repository with no test suite for an agent to run.
-# Its Runtime is left for the editor's Runtime select to set.
+# The Primary lane: plan, spec review, build, code review, done.
+#
+# Started from the factorial editor's Simple template. https://www.runfactorial.com/docs/processes/
+# describes every field, and https://www.runfactorial.com/docs/previews/ the previews below.
+#
+# `name:` names the lane, and must match the file: `processes/process-<name>.yaml`. An issue
+# enters the lane by carrying `factorial:process:<name>`, or no process label at all while the
+# project's default process is this lane. `entry.when` decides readiness only, never the lane.
+#
+# A step moves to its `next` once its postconditions hold on GitHub or GitLab. The orchestrator
+# checks them itself and never trusts an agent's own report. A ticket keeps the commit it was
+# admitted under until it is done, so an edit here reaches new tickets only.
+#
+# Templates: {ticket} is the issue number, {repo} the repository, {ticket_owner} the assignee at
+# admission, {pr_url} the step's pull request (on GitLab, its merge request). {slug} is the part
+# of a branch name the agent chooses, so predicates match it with `*`.
+#
+# `assign:` REPLACES the issue's assignees, so the ticket always sits with whoever acts next.
+# A gate advances on one qualifying approval: a person in `approvers`, or anyone with the
+# `approverPermission` role or a stronger one on the repository.
+#
+# What needs something set up outside this repository is left commented out as an example: a
+# Runtime below, the app preview on the build step, and the MCP server named in
+# agents/plan-agent/agent.yaml. One check is off the same way: a person's approval in the
+# dashboard on the plan step.
+
 specVersion: factorial/v1
 kind: Process
 name: primary
@@ -13,6 +36,9 @@ name: primary
 # `ignored`, never `off`: YAML reads a bare `off` as the boolean false.
 policy:
   branchProtection: advisory
+# Name the Runtime the agents run on: its type says which CLI runs them, and it supplies the
+# vendor key. A slug names a Runtime from the dashboard's Runtimes page, which sync requires to
+# exist. The editor's Runtime select writes the line under this example.
 # runtime: claude-api
 description: Plan, spec review, build, code review, done
 
@@ -111,6 +137,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:spec-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: plan
 
   # ------------------------------------------------------------------ 3. build (agent)
   - name: build
@@ -177,6 +205,8 @@ steps:
           - pr_review_comments
         ticketLabel: "factorial:build-rework"
         assign: ["{ticket_owner}"]
+      onConflict:
+        rerunStep: build
 
 terminal:
   step: done

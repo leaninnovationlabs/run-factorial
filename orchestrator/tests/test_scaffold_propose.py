@@ -237,9 +237,8 @@ def _template_lanes(key: str) -> dict[str, str]:
     return {lane.key: lane.text for lane in template.lanes}
 
 
-@pytest.mark.parametrize("lane", ["primary", "simple"])
-def test_both_forges_get_the_same_prompts_and_they_name_both_clis(lane: str):
-    text = _template_lanes("simple")[lane]
+def test_both_forges_get_the_same_prompts_and_they_name_both_clis():
+    text = _template_lanes("simple")["primary"]
     github, gitlab = _propose(text).files, _propose(text, forge="gitlab").files
     assert {path: f.body for path, f in github.items()} == {
         path: f.body for path, f in gitlab.items()

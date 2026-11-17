@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
+import { holding } from "../api/organization.fixture";
 import { keys } from "../api/queries";
 import type { Runtime, RuntimeProject } from "../api/types";
 import { RUNTIME_TYPES } from "../components/runtimes/runtimes";
@@ -57,6 +58,9 @@ function runtime(
     credentials: names.map((name) => ({ name, created_at: STORED_AT, updated_at: STORED_AT })),
     connected_projects,
     last_auth_failure: null,
+    sandbox_key: "own",
+    template: null,
+    sandbox_gap: null,
     created_at: STORED_AT,
     updated_at: STORED_AT,
   };
@@ -84,10 +88,15 @@ const PROJECTS: Record<number, RuntimeProject[]> = {
 
 const OFFERED_EVERYWHERE = RUNTIME_TYPES.flatMap((type) => [`${type}@local_cli`, `${type}@e2b`]);
 
-function render(url: string, rows: Runtime[] = RUNTIMES): string {
+function render(
+  url: string,
+  rows: Runtime[] = RUNTIMES,
+  seed: (qc: QueryClient) => void = () => {},
+): string {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed(qc);
   qc.setQueryData(keys.runtimes, rows);
-  qc.setQueryData(keys.runtimeOptions, { offered: OFFERED_EVERYWHERE });
+  qc.setQueryData(keys.runtimeOptions, { offered: OFFERED_EVERYWHERE, managed_sandbox: [] });
   for (const row of rows) qc.setQueryData(keys.runtimeProjects(row.id), PROJECTS[row.id] ?? []);
   return renderToString(
     <QueryClientProvider client={qc}>
@@ -156,14 +165,14 @@ describe("the list", () => {
 
 describe("the create page", () => {
   it("asks CLI, Authentication and Sandbox on cards", () => {
-    const html = render("/runtimes/new");
+    const html = render("/runtimes/new", RUNTIMES, holding);
     for (const card of [
       "Claude Code",
       "Codex",
       "API key",
       "Subscription",
       "On the host",
-      "Managed cloud sandbox",
+      "Your own E2B sandbox",
     ]) {
       expect(html).toContain(card);
     }
@@ -178,7 +187,7 @@ describe("the create page", () => {
 
   it("renders no secret field with a value", () => {
     // A key in the markup would sit in the DOM, the page source and every snapshot of it.
-    const html = render("/runtimes/new");
+    const html = render("/runtimes/new", RUNTIMES, holding);
     expect(html).toMatch(/<input[^>]*type="password"/);
     expect(html).not.toMatch(/<input(?=[^>]*type="password")[^>]*value=/);
   });

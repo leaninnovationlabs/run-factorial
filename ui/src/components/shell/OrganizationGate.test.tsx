@@ -20,6 +20,7 @@ const organization = (slug: string, name: string): Organization => ({
   project_count: 0,
   runtime_count: 0,
   updated_by: "migration",
+  managed_sandbox_limit: null,
   created_at: "2026-10-17T00:00:00Z",
   updated_at: "2026-10-17T00:00:00Z",
   role: null,

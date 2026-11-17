@@ -22,6 +22,7 @@ from runtime.contract import AdapterUnavailable, SpawnError, SpawnReason
 from runtime.hostgit import host_environment
 
 __all__ = [
+    "FLAG_IMAGE",
     "FLAG_JSON",
     "FLAG_SKIP_GIT_REPO_CHECK",
     "STDIN_PROMPT",
@@ -40,6 +41,9 @@ FLAG_WITH_API_KEY: Final = "--with-api-key"
 FLAG_JSON: Final = "--json"
 #: `exec` exits 1 outside a git checkout without it, on `exec` and `exec resume` both.
 FLAG_SKIP_GIT_REPO_CHECK: Final = "--skip-git-repo-check"
+#: An image for the first prompt. Written `--image=<path>`, one word per file: the flag takes
+#: every following word as another file, and the next word is the prompt's `-`.
+FLAG_IMAGE: Final = "--image"
 #: The prompt argument that means "read stdin": argv is neither private (`ps`) nor large enough.
 STDIN_PROMPT: Final = "-"
 

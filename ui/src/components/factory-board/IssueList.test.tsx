@@ -98,6 +98,14 @@ describe("IssueList", () => {
     expect(render({ kind: "cell", lane: "error", projectId: 1 })).toContain("widgets / Error");
   });
 
+  it("marks a ticket that waits for a sandbox, and no other", () => {
+    const html = render({ kind: "lane", lane: "gate" }, [
+      { ...(NODES[0] as IssueNode), sandboxWaiting: true },
+      NODES[1] as IssueNode,
+    ]);
+    expect(count(html, "Waiting for a sandbox")).toBe(1);
+  });
+
   it("links each row to the ticket page", () => {
     const html = render({ kind: "lane", lane: "gate" });
     expect(html).toContain('href="/tickets/41"');

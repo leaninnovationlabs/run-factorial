@@ -311,7 +311,7 @@ def test_sample_durations_parse(sample_process: ProcessConfig) -> None:
 def test_sample_agent_manifest() -> None:
     manifest = load_agent(SAMPLE / "agents" / "plan-agent" / "agent.yaml")
     assert manifest.name == "plan-agent"
-    assert manifest.model == "claude-sonnet-5-5"
+    assert manifest.model == "claude-opus-5-5"
     assert manifest.limits.max_duration is None
     assert manifest.limits.max_turns == 200
     assert manifest.skills.shared == ("project-constitution", "spec-page")
@@ -327,7 +327,7 @@ def test_sample_test_agent_manifest() -> None:
     """`test-agent` follows the same runtime-neutral shape as its siblings."""
     manifest = load_agent(SAMPLE / "agents" / "test-agent" / "agent.yaml")
     assert manifest.name == "test-agent"
-    assert manifest.model == "claude-sonnet-5-5"
+    assert manifest.model == "claude-opus-5-5"
     assert manifest.limits.max_duration is None
     assert manifest.limits.max_turns == 200
     assert manifest.skills.shared == ("project-constitution",)
@@ -1891,6 +1891,103 @@ def test_a_gate_without_onreject_reruns_nothing() -> None:
 
 def test_a_gate_whose_rerun_step_is_no_agent_reruns_nothing() -> None:
     assert _gate_rerunning("check").rerun_agent_step("spec_gate") is None
+
+
+def _stacked_raw() -> dict[str, Any]:
+    """The stacked lane cut to its four steps: a non-merging gate, `build`, a merging gate with
+    `onReject`, and a merging gate with none."""
+    raw = yaml.safe_load(STACKED_PROCESS.read_text(encoding="utf-8"))
+    raw["steps"] = [step for step in raw["steps"] if step["name"] != "plan"]
+    raw["entry"]["step"] = "spec_review_gate"
+    by_name = {step["name"]: step for step in raw["steps"]}
+    del by_name["spec_review_gate"]["gate"]["onReject"]
+    by_name["spec_merge_gate"]["gate"].pop("onReject", None)
+    return raw
+
+
+def _stacked_gate(raw: dict[str, Any], name: str) -> dict[str, Any]:
+    return next(step for step in raw["steps"] if step["name"] == name)["gate"]
+
+
+def test_on_conflict_parses_on_a_merging_gate() -> None:
+    raw = _stacked_raw()
+    _stacked_gate(raw, "spec_merge_gate")["onConflict"] = {"rerunStep": "build"}
+    config = ProcessConfig.model_validate(raw)
+    gate = config.step("spec_merge_gate")
+    assert isinstance(gate, GateStep)
+    assert gate.gate.on_conflict is not None
+    assert gate.gate.on_conflict.rerun_step == "build"
+
+
+def test_on_conflict_is_refused_on_a_gate_that_does_not_merge() -> None:
+    raw = _stacked_raw()
+    _stacked_gate(raw, "spec_review_gate")["onConflict"] = {"rerunStep": "build"}
+    with pytest.raises(ValidationError, match=r"onApprove\.merge"):
+        ProcessConfig.model_validate(raw)
+
+
+def test_on_conflict_must_name_an_agent_step() -> None:
+    raw = _stacked_raw()
+    _stacked_gate(raw, "spec_merge_gate")["onConflict"] = {"rerunStep": "code_review_gate"}
+    with pytest.raises(ValidationError, match="agent step"):
+        ProcessConfig.model_validate(raw)
+
+
+def test_on_conflict_adds_no_edge() -> None:
+    raw = _stacked_raw()
+    raw["steps"].append(
+        {
+            "name": "stray",
+            "kind": "agent",
+            "agent": "build-agent",
+            "next": "done",
+            "workspace": {"repo": "{repo}", "base": "main", "branch": "x/{ticket}"},
+            "preconditions": "ticket_has_assignee()",
+        }
+    )
+    _stacked_gate(raw, "spec_merge_gate")["onConflict"] = {"rerunStep": "stray"}
+    with pytest.raises(ValidationError, match="unreachable"):
+        ProcessConfig.model_validate(raw)
+
+
+def test_conflict_fix_step_prefers_on_conflict_then_on_reject_then_the_earlier_gate() -> None:
+    raw = _stacked_raw()
+    del _stacked_gate(raw, "spec_merge_gate")["onConflict"]
+    stacked = ProcessConfig.model_validate(raw)
+    fix = stacked.conflict_fix_step("spec_merge_gate")
+    assert fix is not None and fix.name == "build"
+    fix = stacked.conflict_fix_step("code_review_gate")
+    assert fix is not None and fix.name == "build"
+
+    _stacked_gate(raw, "code_review_gate")["onConflict"] = {"rerunStep": "other"}
+    raw["steps"].insert(
+        0,
+        {
+            "name": "other",
+            "kind": "agent",
+            "agent": "build-agent",
+            "next": "spec_review_gate",
+            "workspace": {"repo": "{repo}", "base": "main", "branch": "o/{ticket}"},
+            "preconditions": "ticket_has_assignee()",
+        },
+    )
+    raw["entry"]["step"] = "other"
+    _stacked_gate(raw, "spec_review_gate")["onReject"] = {"rerunStep": "other"}
+    explicit = ProcessConfig.model_validate(raw)
+    fix = explicit.conflict_fix_step("code_review_gate")
+    assert fix is not None and fix.name == "other"
+    fix = explicit.conflict_fix_step("spec_merge_gate")
+    assert fix is not None and fix.name == "build"
+
+
+def test_conflict_fix_step_is_none_when_no_gate_sends_work_back() -> None:
+    raw = _stacked_raw()
+    del _stacked_gate(raw, "code_review_gate")["onReject"]
+    del _stacked_gate(raw, "spec_merge_gate")["onConflict"]
+    config = ProcessConfig.model_validate(raw)
+    assert config.conflict_fix_step("spec_merge_gate") is None
+    assert config.conflict_fix_step("build") is None
+    assert config.conflict_fix_step("no_such_step") is None
 
 
 def test_a_manifest_that_still_declares_max_duration_parses() -> None:

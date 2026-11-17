@@ -45,7 +45,7 @@ A runtime is three choices: a CLI, a way to sign in, and a sandbox. Not every de
 every combination. The first three columns are the `local_cli` isolation, which the dashboard
 calls "On the host".
 
-| CLI · authentication (type) | Host machine | Local container | ECS task | Managed cloud sandbox (`e2b`) | Self-hosted sandbox | The runtime stores | Entry in `FACTORIAL_RUNTIME__OFFERED` |
+| CLI · authentication (type) | Host machine | Local container | ECS task | E2B sandbox (`e2b`) | Self-hosted sandbox | The runtime stores | Entry in `FACTORIAL_RUNTIME__OFFERED` |
 |---|---|---|---|---|---|---|---|
 | Claude Code · API key (`claude_api`) | Yes | Yes | Yes | Yes | Not yet | `ANTHROPIC_API_KEY` | `claude_api@local_cli`, `claude_api@e2b` |
 | Claude Code · Subscription (`claude_subscription`) | Yes | Yes | Yes | Yes | Not yet | `CLAUDE_CODE_OAUTH_TOKEN` | `claude_subscription@local_cli`, `claude_subscription@e2b` |
@@ -88,14 +88,85 @@ The conditions:
   ([`local-container.md`](local-container.md#codex_cli-in-the-container)). Without the profile,
   the worker refuses each codex run and the ticket shows why.
 - **ECS task.** Fargate cannot apply a seccomp profile, so a codex runtime on the host does not
-  run there (tech-stack decision 52). Use the managed cloud sandbox for codex.
-- **Managed cloud sandbox.** The deployment sets `FACTORIAL_RUNTIME__E2B__DEPLOYMENT`. The
-  runtime also stores the `E2B_API_KEY` of its E2B team and pins a template from that team. The
+  run there (tech-stack decision 52). Use an E2B sandbox for codex.
+- **E2B sandbox.** The deployment sets `FACTORIAL_RUNTIME__E2B__DEPLOYMENT`. The
+  runtime also stores the `E2B_API_KEY` of its E2B team and pins a template from that team, or
+  it uses the deployment's managed key ([below](#a-managed-sandbox-key)). The
   project's `runtime_allowlist` must name the runtime, because the run sends the repository's
   code to a third party (tech-stack decision 25).
 - **Self-hosted sandbox.** Not built yet.
 - **AWS Bedrock.** Not on `main` yet. The first version is for Codex on the host only. Claude
   Code on Bedrock, and Bedrock in a sandbox, are later work.
+
+---
+
+## A managed sandbox key
+
+An operator can provide one E2B key for all organizations, so that a new organization needs no
+E2B account and no template. Without the key, nothing changes: each runtime stores its own.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `FACTORIAL_RUNTIME__E2B__MANAGED__API_KEY` | The E2B key. It is a secret | Unset |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES` | JSON with one pin for each CLI family, for example `{"claude": "<name>:<build id>", "codex": "<name>:<build id>"}` | None |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__ORG_LIMIT` | Active runs at one time for each organization. `0` is allowed | `2` |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__POOL_LIMIT` | Active runs at one time for all organizations together. At least `1` | `8` |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__ORG_LIMITS` | JSON from organization slug to a number. `0` turns one organization off | None |
+
+To set it up:
+
+1. Put the key in the secret store, not in a file that the repository holds. On AWS it is one
+   more key of the app secret, like the master key.
+2. Offer sandbox runtimes only. The app does not start when this key is set and
+   `FACTORIAL_RUNTIME__OFFERED` has an `@local_cli` entry, because an agent on the host can
+   read the settings of the deployment. Before you set the key, also remove each runtime that
+   runs on the host. The check reads the offers, not the runtimes, and a host runtime that
+   exists still runs beside the key.
+3. Build the templates with `python -m orchestrator.e2b_template` in the E2B project of the
+   key. For each family, put the `<name>:<build id>` that the command prints in
+   `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES`.
+4. Set the spending limit of the E2B project in the E2B dashboard. It is the hard stop. The
+   limits above are soft.
+5. Tell customers where their code runs. The terms and the privacy page must say that a run
+   sends the repository's code, the model key and the repository token to E2B.
+
+The key covers `claude_api@e2b` and `codex_api@e2b` when the deployment offers them and the
+family has a template. The Sandbox step of the Create runtime page then offers
+"Factorial-managed sandbox" as the default and "Your own E2B sandbox" as the other choice. A runtime on the managed key stores no
+sandbox key and no template. At a limit a ticket waits on its step and the ticket page says
+why.
+
+The limits count runs that work. A session that waits for a person does not count, and a
+session that a person resumes is not checked against the limit. So the sandboxes that are alive
+in E2B can be more than the limit: the active runs, and the sessions that wait at their prompt
+until the idle park pauses them. A resumed session can also take an organization over its limit
+for a time, and new starts wait until the active runs are below it again. The project limit and
+the spending limit of the E2B project are the hard stops. A run that never ends, for example
+on a quarantined ticket, holds its place until someone ends it.
+
+A limit of `0` turns an organization off for new starts. To cut it off at once, also end
+its sandboxes in the E2B dashboard: each one has the organization slug in its `factorial_org`
+metadata.
+
+All sandboxes of the key run in one E2B project, and E2B has no restricted keys. The key can
+list, open and read every sandbox in the project. If other runtimes in the same project store
+their own copy of the key, the spending limit also stops them, and a rotation must replace
+their copy too.
+
+When you rebuild a template:
+
+1. Build the new template with `python -m orchestrator.e2b_template`.
+2. Put the new pin in `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES`.
+3. Deploy again.
+4. Only then delete the old build.
+
+Every organization on the managed key shares the setting, and customers cannot see or change
+it. If you delete a build that the setting still names, no new run starts for any of them.
+Sandboxes that already run continue.
+
+If you unset the key, a managed runtime starts nothing, and the reaper stops listing the
+project. Move those runtimes to their own keys, or wait 7 days for the kept sandboxes to
+expire, before you unset it.
 
 ---
 
@@ -317,6 +388,11 @@ Why the blind clone is the boundary, and why the check that proves it runs host-
 The GitHub App above is for GitHub projects. A project whose ticket source is GitLab
 does not use the App: it uses `FACTORIAL_GITLAB__*` and the project's `GITLAB_TOKEN`.
 See `docs/gitlab.md`. The App settings stay as they are for every GitHub project.
+
+On GitLab, turn on "Remove all approvals when commits are added to the source branch" in the
+project's merge request settings. GitLab keeps an approval across a push otherwise, so an
+approval would carry over the push of a conflict fix that a person starts with the button. A
+conflict fix never starts by itself on GitLab, even with `onConflict` set.
 
 ## Accounts and organizations
 

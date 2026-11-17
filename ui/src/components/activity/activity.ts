@@ -28,9 +28,11 @@ export {
 export {
   type ActivityTotals,
   isLive,
+  isWorking,
   type Spawn,
   spawnsFrom,
   totalsFrom,
+  workingSince,
 } from "./runs";
 export {
   type ActivityOrder,

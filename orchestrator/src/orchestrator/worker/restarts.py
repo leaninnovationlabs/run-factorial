@@ -187,6 +187,7 @@ async def _start_fresh(
     ticket.generation += 1
     ticket.process_version_id = target.id
     ticket.current_step = config.entry.step
+    tick.conflict_windows.clear()
     note(
         step=ticket.current_step, process_version_id=target.id, step_run_id=None, attempt=None
     )

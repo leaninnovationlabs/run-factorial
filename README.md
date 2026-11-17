@@ -120,7 +120,7 @@ The architecture and its numbered decisions live in [`docs/design.md`](docs/desi
 
 > [!NOTE]
 > We build Run-Factorial in a private repository and publish its code here. This repository
-> does not accept issues or pull requests. To report a security problem, follow
+> accepts issues and does not accept pull requests. To report a security problem, follow
 > [SECURITY.md](SECURITY.md). The documentation is at
 > [runfactorial.com/docs](https://www.runfactorial.com/docs).
 

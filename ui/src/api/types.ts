@@ -45,6 +45,9 @@ export interface Organization {
   updated_at: string;
   /** The reader's role in it; null for the operator's token, and while multi-org is off. */
   role: string | null;
+  /** Runs it may have active at one time on the Factorial-managed key: null when the deployment
+   *  provides none, 0 when the key is not available to this organization. */
+  managed_sandbox_limit: number | null;
 }
 
 /** One organization with what the reader may do in it (`GET /api/orgs/{org}`): the dashboard
@@ -658,6 +661,18 @@ export interface StepRun {
   /** The ticket's generation when the run started (`TicketDetail.generation`). Attempt numbers
    *  keep counting across a restart, so this, not the number, tells a run from before one. */
   generation: number;
+  /** A waiting merging gate's pull request cannot merge as it stands, or null: it conflicts with
+   *  its target or is behind it. Read from the newest observation, so it can be a push stale. */
+  mergeability: "conflicting" | "behind" | null;
+  /** The branch `mergeability` is measured against, when the observation named it. */
+  base_ref: string | null;
+  /** The gate's lane has a step that can fix a conflict: the button is offered only then. */
+  can_fix_conflict: boolean;
+  /** A conflict fix was asked for and the loop has not answered yet. */
+  conflict_fix_pending: boolean;
+  /** The gate sent its pull request to the lane's fix step. `status` reads `rejected`, which
+   *  is not a reviewer's rejection and is never shown as one. */
+  conflict_send_back: boolean;
 }
 
 /** A session waiting at its prompt with its postconditions unmet. */
@@ -774,6 +789,8 @@ export interface TicketDetail {
   /** The current step's preconditions from the pinned config, in words, with the ticket's own
    *  values filled in; empty when the step has none. Optional only for an API older than it. */
   waiting_on?: string[];
+  /** Set while the ticket's start waits on the Factorial-managed key's limit; null otherwise. */
+  sandbox_wait?: SandboxWait | null;
   step_runs: StepRun[];
 }
 
@@ -947,7 +964,15 @@ export type Span = "4w" | "12w" | "all";
 /** `db.models.EnteredBy`: how an attempt came to be. `reject_rerun` and `redo` are rework,
  *  `retry` follows a failure, and `restart` is a new generation's first attempt (#321); a row
  *  older than the column is null, and is none of them. */
-export type EnteredBy = "next" | "reject_rerun" | "admission" | "retry" | "restart" | "redo";
+export type EnteredBy =
+  | "next"
+  | "reject_rerun"
+  | "admission"
+  | "retry"
+  | "restart"
+  | "redo"
+  | "conflict_fix"
+  | "conflict_fixed";
 
 /** `done`, `exited`, or else `open`: a complement, not a stored status. */
 export type TicketOutcome = "done" | "open" | "exited";
@@ -1257,6 +1282,18 @@ export interface OverviewProject {
 /**
  * One ticket as the factory board draws it (`GET /api/orgs/{org}/overview`).
  */
+/** Why a ticket waits for a sandbox now (`events.sandbox_waits`). A `limit` of 0 means the
+ *  Factorial-managed key is not available to the organization; scope `pool` means every managed
+ *  sandbox the deployment allows is in use. */
+export interface SandboxWait {
+  scope: "organization" | "pool";
+  limit: number;
+  running: number;
+  /** The waiting runtime's slug, and its id while it exists. */
+  runtime: string;
+  runtime_id: number | null;
+}
+
 export interface OverviewTicket {
   ticket_id: number;
   project_id: number;
@@ -1289,6 +1326,8 @@ export interface OverviewTicket {
   minutes: number;
   /** See `TicketDetail.quarantined_at`. */
   quarantined_at: string | null;
+  /** See `TicketDetail.sandbox_wait`. Optional: an older API omits it. */
+  sandbox_wait?: SandboxWait | null;
 }
 
 export interface OverviewResponse {
@@ -1338,6 +1377,13 @@ export interface Runtime {
   connected_projects: number;
   /** The newest run on this runtime that failed or idled on a refused credential. */
   last_auth_failure: AuthFailure | null;
+  /** Whose sandbox key an E2B runtime runs on. A managed one stores no key and no template. */
+  sandbox_key: "own" | "managed";
+  /** The build a sandbox boots: `details.template` for an own runtime, the deployment's build
+   *  for a managed one. */
+  template: string | null;
+  /** For a managed runtime that cannot start a sandbox, why. */
+  sandbox_gap: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1420,6 +1466,9 @@ export interface RuntimeCheckOut {
 /** `GET /api/runtime-options`: `<runtime.type>@<details.isolation>` entries, sorted. */
 export interface RuntimeOptions {
   offered: string[];
+  /** The `<type>@e2b` offers the Factorial-managed sandbox key covers; empty when the deployment
+   *  provides none. */
+  managed_sandbox: string[];
 }
 
 /** A present `details` or `metadata` replaces the whole map. */
@@ -1590,6 +1639,11 @@ export interface ChangeRequestResult extends RequestResult {
   outcome: "pending" | "accepted" | "refused";
   reason: string | null;
 }
+
+/** `POST /step-runs/{id}/conflict-fix`: `outcome` and `reason` as for a change request, with the
+ *  reasons `no_fix_step`, `no_pull_request`, `already_merged`, `mergeable`, `newer_attempt` and
+ *  `unsafe_branch`. */
+export type ConflictFixResult = ChangeRequestResult;
 
 /** `POST /step-runs/{id}/complete` and its poll: a Force complete and what the loop made of it
  *  (decision 78). `refused` carries `reason`, and every false leaf in `failures` when the
@@ -1863,6 +1917,26 @@ export interface AssistantReadyOut {
   ready_to_send: boolean;
   /** The sentence a send would be refused with. Absent from an API older than the field. */
   refusal?: string | null;
+  /** Whether the saved backend takes an image attached to a message. Absent from an older API,
+   *  which is read as yes: the API refuses an image itself. */
+  accepts_images?: boolean;
+}
+
+/** Something on the dashboard a person pointed at (`api.schemas.ChatPointedIn`). */
+export interface ChatPointed {
+  label: string;
+  text: string;
+  page?: string | null;
+  href?: string | null;
+  anchor?: string | null;
+  file?: string | null;
+  lines?: [number, number] | null;
+}
+
+/** A file attached to a message, its bytes in base64 (`api.schemas.ChatAttachmentIn`). */
+export interface ChatAttachmentIn {
+  name: string;
+  data: string;
 }
 
 export interface ChatItem {

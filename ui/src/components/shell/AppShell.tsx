@@ -12,7 +12,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { usePageTransition } from "../../pageTransition";
 import { usePersistentState } from "../../storage";
-import { AssistantProvider } from "../assistant/AssistantProvider";
+import { AssistantDock, AssistantProvider } from "../assistant/AssistantProvider";
 import { cx, ErrorBoundary, FlagGroup, Spinner } from "../ui";
 import { BELOW_LG, PHONE, useMedia } from "../ui/media";
 import { ConnectionBanner } from "./ConnectionBanner";
@@ -214,6 +214,7 @@ export function AppShell({
                 </div>
               </div>
             </main>
+            <AssistantDock />
           </div>
           {narrow && !focused && <TabBar menuOpen={overlayOpen} onMenu={toggleNav} />}
           <FlagGroup />

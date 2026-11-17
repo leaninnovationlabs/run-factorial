@@ -50,6 +50,8 @@ from orchestrator.api.schemas import (
     ChangeRequestOut,
     CompletionIn,
     CompletionOut,
+    ConflictFixIn,
+    ConflictFixOut,
     InspectOut,
     OutputEntryOut,
     OutputsOut,
@@ -75,6 +77,7 @@ from orchestrator.api.services.tickets import refuse_while_quarantined
 from orchestrator.api.services.waits import session_waits
 from orchestrator.api.sessions import mint_terminal_ticket, sign_page_link
 from orchestrator.api.wakes import wake_and_wait
+from orchestrator.config import GateStep
 from orchestrator.db.models import (
     Event,
     Project,
@@ -120,6 +123,11 @@ from orchestrator.events.workspaces import (
 )
 from orchestrator.settings import Settings
 from orchestrator.worker.completions import CompletionAnswer, completion_outcome
+from orchestrator.worker.gate_conflicts import (
+    conflict_fix_by_key,
+    conflict_fix_outcome,
+    pending_conflict_fix,
+)
 from orchestrator.worker.interrupts import pending_resume_request
 from runtime.contract import (
     PAGE_MAX_BYTES,
@@ -983,6 +991,79 @@ async def request_changes(
     landed = await wake_and_wait(session, ticket)
     outcome, reason = await change_request_outcome(session, ticket.id, request.id)
     return ChangeRequestOut(
+        status="requested", landed=landed, request_id=request.id, outcome=outcome, reason=reason
+    )
+
+
+@router.post(
+    "/step-runs/{step_run_id}/conflict-fix",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ConflictFixOut,
+)
+@needs(Permission.TICKETS_OPERATE)
+async def request_conflict_fix(
+    step_run_id: int, body: ConflictFixIn, session: SessionDep, principal: PrincipalDep
+) -> ConflictFixOut:
+    """Send a waiting merging gate's pull request to its lane's agent step to fix a conflict.
+
+    Recorded against the WAITING gate run, where the loop reads it (`worker.gate_conflicts`). The
+    route never reads the forge: whether the pull request conflicts is the loop's to decide, and
+    it refuses a request for one that merges cleanly. Like a change request, it grants no approval
+    or merge: the fixed head still needs a person's approval. One unanswered request per gate
+    run, and a repeated `idempotency_key` returns the first request's outcome.
+    """
+    row = await _run(session, step_run_id)
+    ticket = await ticket_of(session, row)
+    refuse_while_quarantined(ticket, "send a conflict fix on")
+
+    request = await conflict_fix_by_key(session, ticket.id, body.idempotency_key)
+    if request is None:
+        config = await pinned_config(session, ticket)
+
+        def refuse_unless_it_applies() -> None:
+            if row.kind != StepKind.HUMAN_GATE:
+                raise Conflict(f"{row.step_name} isn't a gate, so it has no pull request to fix.")
+            if row.status != StepRunStatus.WAITING:
+                raise Conflict(f"{row.step_name} isn't waiting for review.")
+            step = config.find_step(row.step_name)
+            if not isinstance(step, GateStep) or not step.gate.on_approve.merge:
+                raise Conflict(f"{row.step_name} doesn't merge a pull request.")
+            if config.conflict_fix_step(row.step_name) is None:
+                raise Conflict(f"This lane has no agent step to send {row.step_name}'s work to.")
+
+        refuse_unless_it_applies()
+        # Read again under the lock: a tick may have decided the gate since the read above, and a
+        # request on a run that is no longer waiting would never be answered.
+        await session.refresh(row, with_for_update=True)
+        refuse_unless_it_applies()
+        request = await conflict_fix_by_key(session, ticket.id, body.idempotency_key)
+        if request is None:
+            if await pending_conflict_fix(session, ticket.id, row.id) is not None:
+                raise Conflict(
+                    "A conflict fix for this review is already being sent.",
+                    code="conflict_fix_pending",
+                )
+            request = await append(
+                session,
+                type=EventType.CONFLICT_FIX_REQUESTED,
+                project_id=ticket.project_id,
+                ticket_id=ticket.id,
+                step_run_id=row.id,
+                step=row.step_name,
+                attempt=row.attempt,
+                requested_by=principal,
+                idempotency_key=body.idempotency_key,
+            )
+            await session.commit()
+    if request.step_run_id != row.id:
+        raise Conflict(
+            "That request was already sent for another run. Reload and try again.",
+            code="key_reused",
+        )
+
+    landed = await wake_and_wait(session, ticket)
+    outcome, reason = await conflict_fix_outcome(session, ticket.id, request.id)
+    return ConflictFixOut(
         status="requested", landed=landed, request_id=request.id, outcome=outcome, reason=reason
     )
 

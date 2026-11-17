@@ -6,6 +6,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { organizationDetail } from "../../api/organization.fixture";
 import { keys } from "../../api/queries";
 import type {
   CredentialTest,
@@ -33,6 +34,9 @@ function e2bRuntime(overrides: Partial<Runtime> = {}): Runtime {
     ],
     connected_projects: 0,
     last_auth_failure: null,
+    sandbox_key: "own",
+    template: null,
+    sandbox_gap: null,
     created_at: AT,
     updated_at: AT,
     ...overrides,
@@ -42,10 +46,12 @@ function e2bRuntime(overrides: Partial<Runtime> = {}): Runtime {
 let view: Mounted | null = null;
 let patches: unknown[] = [];
 let tested: CredentialTest | null = null;
+let patchRefusal: { status: number; detail: string } | null = null;
 
 beforeEach(() => {
   patches = [];
   tested = null;
+  patchRefusal = null;
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string, init?: RequestInit) => {
@@ -55,6 +61,12 @@ beforeEach(() => {
       if (init?.method !== "PATCH") return Promise.reject(new TypeError("offline"));
       const body = JSON.parse(String(init.body)) as { details: Record<string, unknown> };
       patches.push(body);
+      if (patchRefusal) {
+        const refusal = { detail: patchRefusal.detail };
+        return Promise.resolve(
+          new Response(JSON.stringify(refusal), { status: patchRefusal.status }),
+        );
+      }
       const saved = e2bRuntime({ details: body.details });
       return Promise.resolve(new Response(JSON.stringify(saved), { status: 200 }));
     }),
@@ -71,11 +83,17 @@ async function page(
   runtime: Runtime,
   builds?: RuntimeTemplateBuild[],
   projects: RuntimeProject[] = [],
+  deployment: { managed: string[]; limit: number | null } = { managed: [], limit: null },
 ): Promise<HTMLElement> {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
   qc.setQueryData(keys.runtimeProjects(runtime.id), projects);
+  qc.setQueryData(keys.runtimeOptions, { offered: [], managed_sandbox: deployment.managed });
+  qc.setQueryData(keys.organization, {
+    ...organizationDetail(),
+    managed_sandbox_limit: deployment.limit,
+  });
   if (builds) qc.setQueryData(keys.runtimeTemplates(runtime.id), builds);
   view = await mount(
     <QueryClientProvider client={qc}>
@@ -295,5 +313,119 @@ describe("Test credential", () => {
     );
     const link = [...root.querySelectorAll("a")].find((a) => a.textContent === "acme/app#42");
     expect(link?.getAttribute("href")).toBe("/tickets/7");
+  });
+});
+
+describe("the Factorial-managed sandbox key", () => {
+  const managedRuntime = (overrides: Partial<Runtime> = {}) =>
+    e2bRuntime({
+      details: { isolation: "e2b", sandbox_key: "managed" },
+      credential_names: ["ANTHROPIC_API_KEY"],
+      credentials: [{ name: "ANTHROPIC_API_KEY", created_at: AT, updated_at: AT }],
+      sandbox_key: "managed",
+      template: "factorial-claude-2:abcd1234",
+      ...overrides,
+    });
+  const deployment = { managed: ["claude_api@e2b"], limit: 5 };
+
+  it("reads as a managed row with one action and a read-only template", async () => {
+    const root = await page(managedRuntime(), undefined, [], deployment);
+    expect(root.textContent).toContain("Provided by Factorial. 5 runs at a time.");
+    expect(button(root, "Use your own key")).not.toBeNull();
+    expect(root.textContent).toContain("Managed");
+    expect(root.textContent).toContain("factorial-claude-2:abcd1234");
+    expect(root.textContent).not.toContain("Needed to run");
+    expect(button(root, "Change")).toBeNull();
+    expect(button(root, "Use the Factorial-managed key")).toBeNull();
+  });
+
+  it("says where the sandboxes run: Factorial's account on the managed key, the key's team on an own key", async () => {
+    const managed = await page(managedRuntime(), undefined, [], deployment);
+    expect(managed.textContent).toContain(
+      "Sandboxes run in Factorial's sandbox account, from a template Factorial provides.",
+    );
+    expect(managed.textContent).not.toContain("the team this key belongs to");
+    await view?.unmount();
+    view = null;
+    const own = await page(e2bRuntime(), undefined, [], deployment);
+    expect(own.textContent).toContain(
+      "Sandboxes run in the team this key belongs to, from a template built in that team.",
+    );
+  });
+
+  it("says one run in the singular, and names no limit when it is unknown", async () => {
+    const one = await page(managedRuntime(), undefined, [], { ...deployment, limit: 1 });
+    expect(one.textContent).toContain("Provided by Factorial. 1 run at a time.");
+    await view?.unmount();
+    view = null;
+    const unknown = await page(managedRuntime(), undefined, [], { ...deployment, limit: null });
+    expect(unknown.textContent).toContain("Provided by Factorial.");
+    expect(unknown.textContent).not.toContain("at a time");
+  });
+
+  it("shows the sentence of a managed runtime that cannot start a sandbox", async () => {
+    const root = await page(
+      managedRuntime({
+        template: null,
+        sandbox_gap: "The managed key has no template for Claude.",
+      }),
+      undefined,
+      [],
+      deployment,
+    );
+    expect(root.textContent).toContain("The managed key has no template for Claude.");
+    expect(button(root, "Use your own key")).not.toBeNull();
+  });
+
+  it("opens the key form behind Use your own key", async () => {
+    const root = await page(managedRuntime(), undefined, [], deployment);
+    expect(root.querySelector("#field-credential-e2b")).toBeNull();
+    await click(button(root, "Use your own key"));
+    expect(root.querySelector("#field-credential-e2b")).not.toBeNull();
+  });
+
+  it("offers the move to the managed key only to a covered own-key runtime, and sends the PATCH after the confirm", async () => {
+    const uncovered = await page(e2bRuntime(), undefined, [], { managed: [], limit: 5 });
+    expect(button(uncovered, "Use the Factorial-managed key")).toBeNull();
+    await view?.unmount();
+    const noLimit = await page(e2bRuntime(), undefined, [], { ...deployment, limit: 0 });
+    expect(button(noLimit, "Use the Factorial-managed key")).toBeNull();
+    await view?.unmount();
+
+    const root = await page(e2bRuntime(), undefined, [], deployment);
+    await click(button(root, "Use the Factorial-managed key"));
+    expect(patches).toEqual([]);
+    expect(document.body.textContent).toContain(
+      "The runtime's own sandbox key and its template are removed. Sandboxes then run in Factorial's sandbox account, up to 5 runs at a time for this organization.",
+    );
+    await click(button(document.body, "Use the managed key"));
+    await settle();
+    expect(patches).toEqual([{ details: { isolation: "e2b", sandbox_key: "managed" } }]);
+  });
+
+  it("keeps the runtime's other details and sends no template", async () => {
+    const root = await page(
+      e2bRuntime({ details: { isolation: "e2b", template: "t:1", note: "kept" } }),
+      undefined,
+      [],
+      deployment,
+    );
+    await click(button(root, "Use the Factorial-managed key"));
+    await click(button(document.body, "Use the managed key"));
+    await settle();
+    expect(patches).toEqual([
+      { details: { isolation: "e2b", note: "kept", sandbox_key: "managed" } },
+    ]);
+  });
+
+  it("shows the API's sentence in the dialog when it refuses the move", async () => {
+    patchRefusal = { status: 409, detail: "Runtime 'claude-e2b' has live step run(s) (1)." };
+    const root = await page(e2bRuntime(), undefined, [], deployment);
+    await click(button(root, "Use the Factorial-managed key"));
+    await click(button(document.body, "Use the managed key"));
+    await settle();
+    expect(document.body.textContent).toContain("Runtime 'claude-e2b' has live step run(s) (1).");
+    expect(button(document.body, "Use the managed key")).not.toBeNull();
+    expect(button(root, "Use the Factorial-managed key")).not.toBeNull();
   });
 });

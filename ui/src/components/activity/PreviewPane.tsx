@@ -28,6 +28,7 @@
  */
 
 import { useEffect, useId, useRef, useState } from "react";
+import { newIdempotencyKey } from "../../api/idempotency";
 import {
   usePreviewAction,
   useRequestChanges,
@@ -577,13 +578,6 @@ function LivePreview({
   );
 }
 
-function newKey(): string {
-  // `getRandomValues`, not `randomUUID`: the dashboard may be served over plain http off
-  // localhost, where `randomUUID` does not exist.
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * The key is made once per form and kept through a failed send, so a retry after a lost answer
  * is the same request to the API rather than a second one. A refusal is an answer: the next send
@@ -610,7 +604,7 @@ export function ChangeRequestForm({
 }) {
   const [open, setOpen] = useState(startOpen);
   const [feedback, setFeedback] = useState("");
-  const [key, setKey] = useState(newKey);
+  const [key, setKey] = useState(newIdempotencyKey);
   const [refusal, setRefusal] = useState<string | null>(null);
   const request = useRequestChanges(ticketId);
 
@@ -639,7 +633,7 @@ export function ChangeRequestForm({
           { stepRunId: run.id, feedback, idempotencyKey: key },
           {
             onSuccess: (result) => {
-              setKey(newKey());
+              setKey(newIdempotencyKey());
               if (result.outcome === "refused") {
                 setRefusal(
                   result.reason

@@ -1,12 +1,19 @@
 /** The create page's aside: what the choices add up to, what will be stored, and the buttons. */
 
 import { Button, Code, FormFooter, Icon, LinkButton, Panel } from "../ui";
-import { type Choice, choiceLabels, typeFor } from "./runtimeChoice";
+import {
+  type Choice,
+  choiceLabels,
+  managedLimitNote,
+  typeFor,
+  usesManagedKey,
+} from "./runtimeChoice";
 
 export function CreateSummary({
   choice,
   secrets,
   hasTemplate,
+  limit,
   problem,
   isPending,
 }: {
@@ -14,6 +21,8 @@ export function CreateSummary({
   /** The credential names Create sends. */
   secrets: string[];
   hasTemplate: boolean;
+  /** The organization's limit on the managed key. */
+  limit: number | null;
   /** Why the choice cannot be created; Create is disabled while there is one. */
   problem: string | null;
   isPending: boolean;
@@ -25,6 +34,7 @@ export function CreateSummary({
     ["Authentication", labels.auth],
     ["Sandbox", labels.sandbox],
   ];
+  const managed = usesManagedKey(choice);
   return (
     <Panel title="Summary" className="lg:sticky lg:top-4">
       <div className="space-y-4 p-4">
@@ -53,7 +63,8 @@ export function CreateSummary({
         {cloud && (
           <ul className="space-y-2 text-body-sm text-subtle">
             <Note>Each project must permit this runtime before its steps can use it.</Note>
-            {!hasTemplate && <Note>Needs a template before it can run.</Note>}
+            {managed && limit !== null && <Note>{managedLimitNote(limit)}</Note>}
+            {!managed && !hasTemplate && <Note>Needs a template before it can run.</Note>}
           </ul>
         )}
         {problem && (

@@ -21,6 +21,7 @@ from githubkit_schemas.latest.types import (
     ReposOwnerRepoIssuesIssueNumberPatchBodyPropAssigneesItemsOneof1Type as _AssigneeRef,
 )
 
+from orchestrator.adapters.merges import MergeRefused, refusal_message
 from orchestrator.github.client import GitHubClient, split_repo
 
 __all__ = [
@@ -253,27 +254,9 @@ class GitHubProjector:
 #: its head is no longer the requested `sha` (409). Every other failure is infrastructure.
 _MERGE_REFUSALS: Final = frozenset({405, 409})
 
-#: GitHub's message reaches an issue comment and an event; bound it like any untrusted text.
-_MAX_REFUSAL_CHARS: Final = 300
-
-
-class MergeRefused(Exception):
-    """GitHub declined a gate's merge. A state of the pull request, not an outage: the gate keeps
-    waiting and says why, rather than failing the tick (worker/gates.py)."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(f"HTTP {status}: {message}")
-        self.status = status
-        self.message = message
-
-
 def _refusal_message(exc: RequestFailed) -> str:
-    fallback = f"HTTP {exc.response.status_code}"
     try:
         body = exc.response.json()
     except Exception:  # a refusal with no JSON body still has to say something
-        return fallback
-    message = body.get("message") if isinstance(body, dict) else None
-    if not isinstance(message, str) or not message.strip():
-        return fallback
-    return message.strip()[:_MAX_REFUSAL_CHARS]
+        body = None
+    return refusal_message(exc.response.status_code, body)

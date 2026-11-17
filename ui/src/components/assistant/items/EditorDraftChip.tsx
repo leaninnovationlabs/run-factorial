@@ -2,7 +2,8 @@
  * An editor card (`factorial_editor_open`): a process draft the assistant prepared for a person to
  * review and commit in the process editor, because only a person may commit it. The press opens
  * the project's process config page at `?draft=`, which loads it into the editor
- * (`useEditorDraft`).
+ * (`useEditorDraft`). The Drawer closes for it, because it covers the editor; a conversation
+ * docked or floating beside the page stays, since the draft is read beside what was said of it.
  */
 
 import { useNavigate } from "react-router-dom";
@@ -12,7 +13,7 @@ import { Button } from "../../ui";
 import { useAssistant } from "../AssistantProvider";
 
 export function EditorDraftChip({ item }: { item: ChatItem }) {
-  const { close } = useAssistant();
+  const { close, frame } = useAssistant();
   const navigate = useNavigate();
   const { project_id: projectId, process, would_write: files } = item.payload;
   if (typeof projectId !== "number") return null;
@@ -22,7 +23,7 @@ export function EditorDraftChip({ item }: { item: ChatItem }) {
       <Button
         iconBefore="edit"
         onClick={() => {
-          close();
+          if (frame === "drawer") close();
           navigate(`${configurationHref(projectId, "process")}?draft=${item.id}`);
         }}
       >

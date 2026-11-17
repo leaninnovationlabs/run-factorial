@@ -185,6 +185,8 @@ async def cancel_live_run(tick: _Tick, *, reason: str, force: bool) -> LiveRunSt
     latest.status = StepRunStatus.CANCELLED
     latest.ended_at = tick.now
     latest.failure_reason = reason
+    # A gate run's mergeability reading, kept for the worker's life otherwise.
+    tick.deps.mergeability_seen.pop(latest.id, None)
     await release_run_credential(tick, latest.id)
     return LiveRunStop(latest=latest, cancelled=latest, unstoppable=unstoppable)
 

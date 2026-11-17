@@ -502,6 +502,9 @@ function runtimeRow(slug: string, type: Runtime["type"]): Runtime {
     credentials: [],
     connected_projects: 0,
     last_auth_failure: null,
+    sandbox_key: "own",
+    template: null,
+    sandbox_gap: null,
     created_at: "2026-09-01T00:00:00Z",
     updated_at: "2026-09-01T00:00:00Z",
   };
@@ -569,6 +572,7 @@ function sectionTree({
   laneless = false,
   lanes = true,
   runtimes = RUNTIMES,
+  templates = [SIMPLE_TEMPLATE],
   allowlist = [],
   initialText,
   initialTitle,
@@ -578,6 +582,8 @@ function sectionTree({
   pinnedUnread = false,
 }: {
   stale: string[];
+  /** The templates the editor's Import menu offers. */
+  templates?: (typeof SIMPLE_TEMPLATE)[];
   /** An assistant's draft the editor opens on. */
   initialDraft?: EditorDraftPayload;
   /** The editor's way back, when a test watches for the editor closing itself. */
@@ -611,7 +617,7 @@ function sectionTree({
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   holding(qc);
   qc.setQueryData(keys.runtimes, runtimes);
-  qc.setQueryData(keys.processTemplates, { templates: [SIMPLE_TEMPLATE], shells: SHELLS });
+  qc.setQueryData(keys.processTemplates, { templates, shells: SHELLS });
   qc.setQueryData(keys.processVersion(PROJECT_ID, LATEST_ID), {
     project_id: PROJECT_ID,
     version: 3,
@@ -749,9 +755,9 @@ function textareaFor(path: string): HTMLTextAreaElement | null {
   return document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${path}"]`);
 }
 
-/** The editor's Replace with template menu opened, and its Simple lane item. */
+/** The editor's Import menu opened, and its Simple lane item. */
 async function openTemplateItem(): Promise<Element | undefined> {
-  await click(byText(document.body, "button", "Replace with template"));
+  await click(byText(document.body, "button", "Import"));
   return [...document.querySelectorAll('[role="menuitem"]')].find((element) =>
     element.textContent?.startsWith("Simple lane"),
   );
@@ -938,6 +944,40 @@ describe("ProcessEditorBody templates", () => {
     expect(textareaFor("process.yaml")?.value).toBe(SIMPLE_LANE.yaml);
     await view.unmount();
     clearFlags();
+  });
+
+  it("offers each template once, and a template with two processes gives its first", async () => {
+    const pair = {
+      ...SIMPLE_TEMPLATE,
+      lanes: [
+        { ...SIMPLE_LANE, key: "feature", yaml: SIMPLE_LANE.yaml.replace("simple", "feature") },
+        { ...SIMPLE_LANE, key: "hotfix", yaml: SIMPLE_LANE.yaml.replace("simple", "hotfix") },
+      ],
+    };
+    const second = { ...SIMPLE_TEMPLATE, key: "superpowers", title: "Superpowers template" };
+    const view = await mountSection({
+      stale: [],
+      runtime: null,
+      laneless: true,
+      templates: [pair, second],
+    });
+    await click(byText(document.body, "button", "Import"));
+    const items = [...document.querySelectorAll('[role="menuitem"]')];
+    expect(items.map((item) => item.textContent?.replace(pair.description, ""))).toEqual([
+      "Simple lane",
+      "Superpowers template",
+    ]);
+    await click(items[0]);
+    expect(textareaFor("process.yaml")?.value).toBe(pair.lanes[0]?.yaml);
+    await view.unmount();
+    clearFlags();
+  });
+
+  it("shows no file menu: Import a file, Export and Copy are not offered", async () => {
+    const view = await mountSection({ stale: [], runtime: null });
+    expect(document.querySelector('[aria-label="Editor actions"]')).toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    await view.unmount();
   });
 });
 
@@ -3016,7 +3056,7 @@ describe("ProcessSection, for a reader who may not change the config", () => {
       "No changes to commit",
       "Permit and commit",
       "Discard edits",
-      "Replace with template",
+      "Import",
     ]) {
       expect(byText(document.body, "button", label)).toBeNull();
     }
@@ -3039,7 +3079,7 @@ describe("ProcessSection, for a reader who may not change the config", () => {
     await click(byText(document.body, "button", "Edit config"));
     await settle(50);
     expect(textareaFor("process.yaml")?.readOnly).toBe(false);
-    expect(byText(document.body, "button", "Replace with template")).not.toBeNull();
+    expect(byText(document.body, "button", "Import")).not.toBeNull();
     expect(document.querySelector('[aria-label="New file"]')).not.toBeNull();
     await view.unmount();
     localStorage.clear();

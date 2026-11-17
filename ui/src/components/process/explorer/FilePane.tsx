@@ -132,6 +132,7 @@ export function FilePane({
       ) : (
         <CodeEditor
           label={file.path}
+          file={file.path}
           value={body}
           onChange={onChange}
           readOnly={!editable}

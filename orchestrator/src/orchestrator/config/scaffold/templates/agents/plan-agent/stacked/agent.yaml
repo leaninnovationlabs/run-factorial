@@ -20,7 +20,7 @@ skills:
 
 # Concrete model id, never a size alias: an alias resolves to a name the API rejects,
 # and the agent fails on its first turn. A Codex runtime needs a Codex model id.
-model: claude-sonnet-5-5
+model: claude-opus-5-5
 
 limits:
   # A turn is one model request on Claude, one prompt round on Codex; the run fails past the limit.

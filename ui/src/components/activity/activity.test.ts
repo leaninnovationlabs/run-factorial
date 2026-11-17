@@ -10,6 +10,7 @@ import {
   factsFor,
   gatePullNumber,
   heldAt,
+  isWorking,
   linkFor,
   linkPulse,
   segmentsFrom,
@@ -18,6 +19,7 @@ import {
   statusDot,
   totalsFrom,
   waitingGatePr,
+  workingSince,
 } from "./activity";
 import { cancelledRetries } from "./retry";
 
@@ -318,6 +320,27 @@ describe("factsFor", () => {
       ev(1, "next_step_waiting", { unmet: ['pr_merged("spec/204-*", "main") = false'] }),
     );
     expect(older.primary).toBe('pr_merged("spec/204-*", "main") = false');
+  });
+
+  it("words a held sandbox start by its scope, and a limit of zero as unavailable", () => {
+    const wait = (details: Record<string, unknown>) =>
+      factsFor(
+        ev(1, "sandbox_limit_waiting", { step: "plan", attempt: 1, running: 2, ...details }),
+      );
+    expect(wait({ scope: "organization", limit: 2 }).label).toBe("Waiting for a sandbox");
+    expect(wait({ scope: "organization", limit: 2 }).primary).toBe(
+      "limit of 2 for this organization",
+    );
+    expect(wait({ scope: "pool", limit: 40 }).primary).toBe("the shared pool is full");
+    expect(wait({ scope: "organization", limit: 0 }).primary).toBe(
+      "not available to this organization",
+    );
+  });
+
+  it("words a retry refused for the sandbox limit", () => {
+    expect(factsFor(ev(1, "step_retry_refused", { reason: "sandbox_limit" })).primary).toBe(
+      "No sandbox is free on the Factorial-managed key. Try again when one frees.",
+    );
   });
 
   it("words what a refused retry still needs, falling back to the rules on an older row", () => {
@@ -655,6 +678,62 @@ describe("totalsFrom", () => {
 
   it("reports no runs, so the header can stay empty rather than showing zeroes", () => {
     expect(totalsFrom([]).runs).toBe(0);
+  });
+});
+
+describe("isWorking", () => {
+  it("is an agent run that is running", () => {
+    expect(isWorking(run("build", 1, "running"))).toBe(true);
+  });
+
+  it("is not an agent that waits on a person, or one that stopped or ended", () => {
+    for (const status of ["idle", "interrupted", "succeeded", "failed", "cancelled"] as const) {
+      expect(isWorking(run("build", 1, status)), status).toBe(false);
+    }
+  });
+
+  it("is not a check step's running, which is the loop's own wait with no agent", () => {
+    expect(isWorking(run("ci", 1, "running", { kind: "check" }))).toBe(false);
+  });
+
+  it("is not a run a redo set aside", () => {
+    expect(isWorking(run("build", 1, "running", { superseded_at: "2026-08-25T09:30:00Z" }))).toBe(
+      false,
+    );
+  });
+});
+
+describe("workingSince", () => {
+  const at = (id: number, type: string, created_at: string): TimelineEntry => ({
+    ...ev(id, type, { step: "build", attempt: 1 }),
+    created_at,
+  });
+  const started = run("build", 1, "running", { started_at: "2026-08-25T09:00:00Z" });
+
+  it("counts from the spawn, not from the step's start before it", () => {
+    const entries = [
+      at(1, "step_started", "2026-08-25T09:00:00Z"),
+      at(2, "agent_spawned", "2026-08-25T09:00:20Z"),
+    ];
+    expect(workingSince(started, entries)).toBe("2026-08-25T09:00:20Z");
+  });
+
+  it("counts from the newest resume or reply, not the time the session sat waiting", () => {
+    const entries = [
+      at(2, "agent_spawned", "2026-08-25T09:00:20Z"),
+      at(3, "agent_parked", "2026-08-25T09:10:00Z"),
+      at(4, "agent_resumed", "2026-08-25T09:40:00Z"),
+      at(5, "agent_idle", "2026-08-25T09:45:00Z"),
+      at(6, "agent_active", "2026-08-25T09:50:00Z"),
+    ];
+    expect(workingSince(started, entries)).toBe("2026-08-25T09:50:00Z");
+    // The panel hands the rows newest first by default.
+    expect(workingSince(started, [...entries].reverse())).toBe("2026-08-25T09:50:00Z");
+  });
+
+  it("falls back to the run's start while its events are still to arrive", () => {
+    expect(workingSince(started, [])).toBe("2026-08-25T09:00:00Z");
+    expect(workingSince(run("build", 1, "running"), [])).toBeNull();
   });
 });
 
@@ -1619,5 +1698,43 @@ describe("redo (decision 76)", () => {
       ["plan#1", 100, "set_aside", [2, 1]],
     ]);
     expect(cancelledRetries(entries).get(3)).toBe("redone by operator");
+  });
+});
+
+describe("a conflicting pull request's rows", () => {
+  it("words the mergeability states", () => {
+    const label = (state: string, base_ref: string | null) =>
+      factsFor(ev(1, "gate_mergeability", { state, base_ref })).label;
+    expect(label("conflicting", "main")).toBe("Pull request conflicts with main");
+    expect(label("behind", null)).toBe("Pull request is behind its target");
+    expect(label("clean", "main")).toBe("Pull request can merge again");
+  });
+
+  it("says who asked for a fix, and who started a send-back", () => {
+    expect(factsFor(ev(1, "conflict_fix_requested", { requested_by: "a@b.c" })).primary).toBe(
+      "by a@b.c",
+    );
+    const sent = (extra: Record<string, unknown>) =>
+      factsFor(ev(2, "gate_conflict_sent_back", { target_step: "build", ...extra })).primary;
+    expect(sent({ request_id: null })).toBe("to build, started by the gate");
+    expect(sent({ request_id: 4, requested_by: "a@b.c" })).toBe("to build, by a@b.c");
+  });
+
+  it.each([
+    ["mergeable", "the pull request can already merge"],
+    ["already_merged", "the pull request was already merged"],
+    ["no_pull_request", "the gate has no open pull request"],
+    ["no_fix_step", "this lane has no step that can fix it"],
+    ["newer_attempt", "the gate had already moved on"],
+    ["unsafe_branch", "the branch name has characters an agent cannot use on a command line"],
+  ])("words a refusal for %s", (reason, words) => {
+    const facts = factsFor(ev(1, "conflict_fix_refused", { reason }));
+    expect(`${facts.label}: ${facts.primary}.`).toBe(`Conflict fix not started: ${words}.`);
+  });
+
+  it("names a conflict fix entry", () => {
+    expect(
+      factsFor(ev(1, "step_entered", { reason: "conflict_fix", from_step: "spec_gate" })).primary,
+    ).toBe("conflict fix, sent back from spec_gate");
   });
 });

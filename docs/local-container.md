@@ -185,6 +185,18 @@ eMudhra certificates. Each build ignores the E2B layer cache.
 After a build, add its slug to the project's `runtime_allowlist` (decision 25). To remove an old
 template, first set every runtime to a new build. Then delete the template in E2B.
 
+To let runtimes use one E2B key that the deployment holds, set the managed key in `.env`.
+[`setup.md`](setup.md#a-managed-sandbox-key) gives the procedure. The container does not
+start when you set the key and `FACTORIAL_RUNTIME__OFFERED` has an `@local_cli` entry.
+
+| Variable | Default | Value |
+|---|---|---|
+| `FACTORIAL_RUNTIME__E2B__MANAGED__API_KEY` | none | The E2B key. It is a secret. The feature is off when it is not set |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__TEMPLATES` | none | JSON with one `<name>:<build id>` pin for each CLI family, for example `{"claude": "<name>:<build id>", "codex": "<name>:<build id>"}` |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__ORG_LIMIT` | 2 | The number of active runs that one organization can have at the same time. `0` is allowed |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__POOL_LIMIT` | 8 | The number of active runs that all organizations can have at the same time. The least value is 1 |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__ORG_LIMITS` | none | JSON from an organization slug to its limit. `0` turns that organization off |
+
 ---
 
 ## Step 2: know where the GitHub credentials go
@@ -454,6 +466,7 @@ docker compose logs app
 | `FACTORIAL_MASTER_KEY is not valid base64` or `must decode to 32 bytes` | If no secret is stored yet, make a new key with `openssl rand -base64 32`. Otherwise, set the key that the secrets were stored with |
 | `settings do not load` | A value in `.env` has the wrong form. The message names it |
 | `FACTORIAL_RUNTIME__E2B__DEPLOYMENT is empty` | `FACTORIAL_RUNTIME__OFFERED` has an `@e2b` entry. Set the deployment name in `.env` to a name that no other copy of factorial uses, or remove each `@e2b` entry |
+| `FACTORIAL_RUNTIME__E2B__MANAGED__API_KEY` with a host offer | Remove each `@local_cli` entry from `FACTORIAL_RUNTIME__OFFERED`, or remove the managed key |
 | `is in the services' environment` | Remove that variable from the compose file or the `docker run` command. Put a `FACTORIAL_` setting in `.env`. Do not give an AWS credential to the container |
 
 Correct `.env`, then start the containers again:

@@ -9,6 +9,7 @@ from enum import StrEnum
 from sqlalchemy import BigInteger, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.adapters.merges import MergeRefused
 from orchestrator.config import GateStep, expand
 from orchestrator.db.models import (
     Event,
@@ -22,7 +23,6 @@ from orchestrator.events.previews import pending_change_request
 from orchestrator.github import (
     CHANGE_REQUEST_MARKER,
     LABEL_BLOCKED,
-    MergeRefused,
     PullRequestState,
 )
 from orchestrator.github.state import RepoPermission, ReviewVerdict
@@ -30,6 +30,13 @@ from orchestrator.predicates import Unmet
 from orchestrator.predicates.words import need
 from orchestrator.worker.exits import _exit
 from orchestrator.worker.failures import template_summary
+from orchestrator.worker.gate_conflicts import (
+    forget_mergeability,
+    handle_conflict,
+    last_mergeability,
+    refuse_pending_as_merged,
+    refused_merge_note,
+)
 from orchestrator.worker.reviewers import (
     GateReviewers,
     Ignored,
@@ -165,6 +172,13 @@ async def _gate_step(tick: _Tick, step: GateStep) -> None:
         if pull_request is not None and (pull_request.state == "open" or pull_request.merged)
         else Weighed()
     )
+
+    # After the dashboard's change request, which is a reviewer's word on the work itself; before
+    # the approval, because a head that cannot merge would only have its merge refused every poll.
+    # A CLEAN or UNKNOWN pull request falls through to the arms below unchanged.
+    if step.gate.on_approve.merge and await handle_conflict(tick, step, latest, pull_request):
+        return
+
     if pull_request is not None and approvals.counted:
         # Approval wins even when the PR also carries an outstanding changes-requested review from
         # a different approver. A login's latest review is one verdict, so `approvals` and
@@ -283,12 +297,16 @@ async def _approve(
             # what was approved or refuses — never a push that landed after the approval.
             merged_sha = await projector.merge_pr(pull_request.number, sha=pull_request.head_sha)
         except MergeRefused as refusal:
-            await _merge_refused(tick, step, run, pull_request, approver, refusal)
+            if await _merge_refused(tick, step, run, pull_request, approver, refusal):
+                # Only news: the same refusal every tick (a check still running) would otherwise
+                # cost a forge read on each.
+                forget_mergeability(tick, run)
             return
 
     run.status = StepRunStatus.APPROVED
     run.decided_by = approver
     run.ended_at = tick.now
+    forget_mergeability(tick, run)
     await tick.emit(
         EventType.GATE_APPROVED,
         run=run,
@@ -300,6 +318,7 @@ async def _approve(
         qualified_as=qualification.basis,
         permission=qualification.permission,
     )
+    await refuse_pending_as_merged(tick, step, run)
     extra = await _pr_values(tick, None, pull_request)
     await _advance(tick, step, run, step.gate.on_approve, extra=extra)
 
@@ -311,13 +330,15 @@ async def _merge_refused(
     pull_request: PullRequestState,
     approver: str,
     refusal: MergeRefused,
-) -> None:
-    """GitHub declined the merge an approval asked for: keep waiting, and say why once.
+) -> bool:
+    """The forge declined the merge an approval asked for: keep waiting, and say why once. True
+    when the refusal is news: its reason or the head differs from the last one on this run.
 
     Raising instead would fail the tick every poll and quarantine the ticket (decision 31) for
-    what is a state of the pull request — a check still running, a CODEOWNERS review missing, a
-    branch behind its base. Each of those clears outside the loop, so the merge is tried again
-    every tick, and only a refusal that differs from the last one on this run is announced.
+    what is a state of the pull request: a check still running, a CODEOWNERS review missing, a
+    conflict. The merge is tried again every tick, and only a refusal that differs from the last
+    one on this run is announced. A head last read as conflicting or behind its base does not
+    clear by itself, so its comment names the fix instead of promising the merge.
     """
     last = await tick.session.scalar(
         select(Event.details)
@@ -330,7 +351,7 @@ async def _merge_refused(
         and last.get("head_sha") == pull_request.head_sha
         and last.get("reason") == refusal.message
     ):
-        return
+        return False
     await tick.emit(
         EventType.GATE_MERGE_REFUSED,
         run=run,
@@ -342,10 +363,16 @@ async def _merge_refused(
         status=refusal.status,
         reason=refusal.message,
     )
-    tick.plan.comments.append(
-        f"Approved by `{approver}`, but GitHub refused to merge {pull_request.url}: "
-        f"{refusal.message}\n\nFactorial merges it as soon as GitHub allows."
+    host = tick.host().forge.display.name
+    state = await last_mergeability(tick.session, run, pull_request.head_sha)
+    after = refused_merge_note(tick, step, pull_request, state) or (
+        f"Factorial merges it as soon as {host} allows."
     )
+    tick.plan.comments.append(
+        f"Approved by `{approver}`, but {host} refused to merge {pull_request.url}: "
+        f"{refusal.message}\n\n{after}"
+    )
+    return True
 
 
 async def _hold_closed(
@@ -473,6 +500,7 @@ async def _reject(
 ) -> None:
     run.status = StepRunStatus.REJECTED
     run.ended_at = tick.now
+    forget_mergeability(tick, run)
     await tick.emit(
         EventType.GATE_REJECTED,
         run=run,

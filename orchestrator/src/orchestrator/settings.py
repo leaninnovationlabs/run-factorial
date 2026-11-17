@@ -25,6 +25,7 @@ from pydantic import (
     BeforeValidator,
     Field,
     SecretStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -73,6 +74,8 @@ class WorkerSettings(BaseModel):
     #: `quarantine_after`. A delivery that names a ticket wakes that ticket alone, and one about
     #: an issue that is no ticket yet asks admission about that issue alone, both outside the gap.
     min_pass_gap_seconds: float = Field(default=30.0, ge=0)
+    #: A gate re-reads a pull request's mergeability at most this often.
+    gate_mergeability_recheck_seconds: float = Field(default=120.0, ge=0)
     #: Must span everything from `worker.loop.tick`'s `acquire_leases` through the blocking
     #: `adapter.spawn()` call (decision 41). `_start_attempt`'s pre-spawn renewal does not extend
     #: the horizon for the spawn in flight: Postgres's `now()` is the enclosing transaction's start
@@ -185,12 +188,52 @@ class CodexCliSettings(BaseModel):
     subscription_auth_file: Path | None = None
 
 
+class ManagedSandbox(BaseModel):
+    """The E2B team this deployment lends to runtimes marked `sandbox_key: managed`."""
+
+    api_key: SecretStr | None = None
+    #: The family's build, `<name>:<build id>`, in the managed key's team. Spelled with the
+    #: family literal here because `factorial.runtimes` imports this module.
+    templates: dict[Literal["codex", "claude"], str] = Field(default_factory=dict)
+    #: Active runs one organization may have at a time, and the whole pool's ceiling. A session
+    #: waiting for a person does not count (`worker.sandbox_limit`).
+    org_limit: int = Field(default=2, ge=0)
+    pool_limit: int = Field(default=8, ge=1)
+    #: Per-organization override by slug; 0 turns one organization off.
+    org_limits: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
+
+    @field_validator("api_key", "templates", "org_limits", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object, info: ValidationInfo) -> object:
+        # `.env.example` ships `KEY=` lines; an empty string is neither a key nor a JSON map.
+        if value != "":
+            return value
+        return None if info.field_name == "api_key" else {}
+
+    @field_validator("templates")
+    @classmethod
+    def _builds(cls, value: dict[str, str]) -> dict[str, str]:
+        from orchestrator.factorial.runtimes import TEMPLATE_BUILD_RE
+
+        for family, build in value.items():
+            if not TEMPLATE_BUILD_RE.fullmatch(build):
+                raise ValueError(
+                    f"template {build!r} for {family} is not `<name>:<build id>`, "
+                    "the pin the builder prints"
+                )
+        return value
+
+    def limit_for(self, org_slug: str) -> int:
+        return self.org_limits.get(org_slug, self.org_limit)
+
+
 class E2bSettings(BaseModel):
     """The E2B substrate (tech-stack decision 25), shared by `claude_e2b` and `codex_e2b`.
 
     What the deployment supplies: where the mirrors live, its own name, and the default
     template size. The team a sandbox runs in — its key and its template — is each E2B runtime's
-    own (`E2B_API_KEY`, `details.template`). No key is ever read from here, and the API process
+    own (`E2B_API_KEY`, `details.template`). No key is read from here except the `managed` block's,
+    which a runtime marked `sandbox_key: managed` uses in place of its own. The API process
     needs none for transcripts: it reads the mirror under `state_root`, which it must share with
     the worker.
     """
@@ -208,6 +251,7 @@ class E2bSettings(BaseModel):
     egress: list[str] = Field(default_factory=list)
     #: How long a finished run's mirror is kept.
     retain_days: int = Field(default=30, ge=1)
+    managed: ManagedSandbox = Field(default_factory=ManagedSandbox)
 
     @field_validator("state_root", mode="before")
     @classmethod
@@ -752,6 +796,23 @@ class Settings(BaseSettings):
         )
 
     @property
+    def managed_offers(self) -> frozenset[str]:
+        """The offers the managed sandbox key covers: it is set, the type's family has a build,
+        the type takes an API key, and the deployment offers it."""
+        from orchestrator.factorial.runtimes import family
+
+        managed = self.runtime.e2b.managed
+        if managed.api_key is None:
+            return frozenset()
+        return frozenset(
+            offer
+            for offer in self.offers
+            if offer.endswith("@e2b")
+            and offer.startswith(("claude_api@", "codex_api@"))
+            and family(offer.split("@")[0]) in managed.templates
+        )
+
+    @property
     def terminal_origin(self) -> str:
         """Where the dashboard dials the terminal gateway: `terminal.public_url` when set. Unset,
         a dashboard on a loopback host, as under `make dev` and `make up`, dials the gateway's own
@@ -783,6 +844,19 @@ class Settings(BaseSettings):
     @classmethod
     def _split_origins(cls, value: object) -> object:
         return _split_list(value)
+
+    @model_validator(mode="after")
+    def _managed_key_stays_off_the_host(self) -> Settings:
+        """Every `FACTORIAL_*` setting lands in `/app/.env`, which a host agent can read."""
+        if self.runtime.e2b.managed.api_key is not None and any(
+            offer.endswith("@local_cli") for offer in self.offers
+        ):
+            raise ValueError(
+                "FACTORIAL_RUNTIME__E2B__MANAGED__API_KEY needs FACTORIAL_RUNTIME__OFFERED to "
+                "list sandbox offers only: an agent that runs on the host can read the "
+                "deployment's settings, and with them the key"
+            )
+        return self
 
     @model_validator(mode="after")
     def _assistant_offers_something(self) -> Settings:

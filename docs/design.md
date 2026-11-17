@@ -421,7 +421,9 @@ that mixed layout. Migration is one `git mv` an operator makes deliberately.
     `onReject.rerunStep` is an agent step also offers the dashboard's Request changes (§7.8),
     which sends work back exactly as a GitHub rejection does. A pull request closed without a
     merge is not a rejection: the gate holds, says so on the ticket, and waits for the pull
-    request to reopen, a Redo, or an exit (tech-stack.md decision 79).
+    request to reopen, a Redo, or an exit (tech-stack.md decision 79). A gate that merges also
+    reads whether its open pull request conflicts with, or is behind, its target, and can send it
+    to an agent to fix (see "A conflict fix at a merging gate" below).
   - **action steps:** an `action` name from the closed action registry (`orchestrator.actions`),
     dispatched outside the runtime adapter seam rather than to a substrate — no `agent`, no
     `workspace`, no prompt. `onSuccess` / `onFailure` projections work the same as an agent
@@ -458,6 +460,65 @@ that mixed layout. Migration is one `git mv` an operator makes deliberately.
     whoever must act next. `{ticket_owner}` always refers to the assignee at admission
     (recorded in the state DB), so it stays stable across reassignment.
 - `terminal` — final projection (`factorial:done`, close issue).
+
+**A conflict fix at a merging gate.** A pull request that waits at a gate can stop merging
+because other work reached its target. A gate with `onApprove.merge: true` reads the pull
+request's mergeability on each tick. When it changes to conflicting or behind, the gate records
+`gate_mergeability` once for that head and comments once on the ticket. A person's Fix conflicts
+or Update branch button (`POST /api/step-runs/{id}/conflict-fix`), or, for a conflict only, the
+gate's own `onConflict` setting, then sends the ticket back to an agent step. A branch that is
+only behind its target never starts a fix by itself: an automatic start would run an agent on
+every merge to the target, and each run would discard an approval already given. Its
+comment asks a person to press Update branch. This is never a
+`gate_rejected`, and rejection figures leave it out. The step is the gate's
+`onConflict.rerunStep`; else its `onReject.rerunStep` when an agent runs it; else the
+`onReject.rerunStep` of the nearest earlier gate; else there is none and the button is refused.
+
+The fix run is a fresh session. Its checkout starts, detached, at the pull request's head. The
+orchestrator replaces the step's instructions with its own: merge the target into the checkout,
+resolve the conflicts, run the tests and push with `git push origin HEAD:<head branch>`. It is the
+one place the orchestrator writes an agent's instructions, because the job is the same in every
+lane and must work on tickets already pinned to older configuration. The agent's runtime, model,
+skills, MCP servers and system prompt stay, and the run gets no inputs. Where the step has an
+`onStart` comment, the orchestrator posts its own in its place, which says that an agent merges
+the target in. The agent never rebases or force-pushes. The step's own postconditions are not asked. The run is accepted when the pull
+request is open, its head moved and it merges cleanly. An unknown answer from the forge is no
+verdict, and the run waits. A fix that still conflicts fails and retries on the step's retry
+policy, counted from the send-back. If a person merged or closed the pull request meanwhile, the
+run completes and the gate's own rules for a merged or closed pull request decide. Each attempt
+reads the pull request before it starts, before the step's preconditions: when it is merged or
+closed, or its head moved and it merges cleanly, no run starts and the ticket goes back to the
+gate. A moved head can be a person's push or an earlier attempt's that ended before acceptance,
+so one comment on the pull request says the branch changed and asks the approver to read the new
+commits. A moved head the forge has not judged yet starts nothing until it has.
+
+After acceptance the ticket goes straight back to the same gate, and the steps between the fixing
+step and the gate do not run again. One comment on the pull request tells the approver that an
+agent resolved the merge and that the lane's test and review steps did not run again. The
+automatic start stops after 3 in a row at one gate; the button has no limit. On a forge whose
+approvals are not bound to a commit (GitLab's native approvals), the gate never starts a fix by
+itself, whether or not an approval counts at that moment: an approval given while an unattended
+fix ran would count on its merge. There `onConflict` only names the fixing step, the gate's
+comment asks a person to press the button, and the button is the only start. So an unattended
+fix cannot lead to a merge nobody reviewed.
+
+Limits:
+
+- The App holds no `workflows: write` (§7.2). When the merge brings in a workflow-file change, the
+  forge can refuse the agent's push. The fix then fails and escalates, and a person merges by hand.
+  The ticket then goes back to its gate by itself on the next tick, or, when the fix had already
+  escalated to Blocked, when the person removes the blocked label. In a live test GitHub accepted
+  such a push, where the workflow change was already a commit in the repository.
+- The agent writes the two branch names on a command line, and Git allows `;`, `$` and quotes in
+  a name. For a name with such characters the gate starts no fix and refuses the button
+  (`unsafe_branch`); its comment asks a person to merge by hand.
+- GitHub reports "behind" only where the target requires an up-to-date branch, and it does so
+  with or without an approval. A person then presses Update branch; the fix moves the head, and
+  an approval given before it no longer counts.
+- A fix skips the steps between the fixing step and the gate. CI on the push and the person's
+  new approval review the resolution.
+- GitLab keeps a native approval across a push unless the project resets approvals on push
+  (`setup.md`).
 
 ## 5. Event log
 
@@ -595,8 +656,11 @@ before it; a pending completion gets `completion_refused{reason: redone}` and a 
 a gate it ends `step_changes_refused{reason: redone}`. `step_retry_requested{step, attempt,
 next_attempt}` is the dashboard's Retry: the next attempt's `step_started` answers it, or
 `step_retry_refused{request_id, reason}` with `stale`, `gate`, `not_escalated`, `off_the_floor`,
-`preconditions_unmet` (with `unmet`), `spawn_refused` (the runtime refused; the ticket is blocked)
-or `spawn_failed` (the substrate failed, with `detail`; the ticket is as it was); a redo, a
+`preconditions_unmet` (with `unmet`), `spawn_refused` (the runtime refused; the ticket is blocked),
+`spawn_failed` (the substrate failed, with `detail`; the ticket is as it was), `unavailable` (the
+forge could not be read for 2 minutes), `sandbox_limit` (the managed key's limit is reached; the
+ticket is as it was) or `conflict_fixed` (a conflict fix's pull request needs none now; the ticket
+went back to its gate); a redo, a
 restart or an exit answers it too. `completion_requested{step, attempt, allow_unmet,
 seen_failures}` is Force complete: `step_accepted_on_request{request_id, from_status}` answers it
 when the postconditions hold, `step_forced{request_id, failures, from_status}` when a person
@@ -644,7 +708,9 @@ agent-chosen part.
 The library is code in the orchestrator; config can only reference it. New predicates are added
 by code change, keeping conditions auditable. One acceptance check sits beside the library rather
 than in it, because no config can name it: a rework is not accepted while the pull request its
-gate rejected is open at the commit `gate_rejected{head_sha}` records (§2.4).
+gate rejected is open at the commit `gate_rejected{head_sha}` records (§2.4). Mergeability is
+another fact outside the library: no config reads it as a condition. A merging gate reads it, and
+a conflict-fix run is accepted on it (§4).
 
 ## 7. Security model
 
@@ -742,6 +808,24 @@ the *default* an agent gets when its manifest asks for nothing, not the only pro
    was made with, item 6's check cannot apply, and "never `workflows: write`" (§7.2) and the
    author-cannot-approve rule (§7.3) hold only if the token was made that way. The person who
    chooses it accepts that, and the page says so beside the choice.
+
+8. **A deployment may provide one sandbox key** (tech-stack.md decision 97). The key is one
+   setting, a secret like the master key. A runtime row marks itself `sandbox_key: managed`
+   and stores no key, and one resolver reads the key at the moment of use. The key never
+   appears in an API response, an event, a log line, a run's secrets or a sandbox, and the
+   model key stays the customer's own. The app refuses to start with the key set beside a host
+   offer, because an agent on the host can read the deployment's settings.
+
+   Organizations on the key do not have separate sandbox accounts. Their sandboxes run in one E2B
+   project, and E2B has no restricted keys, so the key can list, open and read every sandbox
+   in it. Each sandbox holds that organization's checkout, receives the run's model key and
+   repository token when it starts, and a paused one is kept 7 days. Separation rests on
+   every lookup starting from a run of the caller's own organization, not on the key. A
+   deployment that wants real separation gives each organization its own E2B key. The limit
+   on active runs at one time is a count the worker takes before a run starts; a session
+   waiting for a person does not count. It is exact in one worker, soft in the gap of
+   tech-stack.md decision 40, and gates new runs only, so the sandboxes alive can exceed it:
+   E2B's own limits are the hard stop.
 
 ### 7.2 Why `workflows: write` is withheld
 
@@ -1718,9 +1802,19 @@ tools, which read and propose.
 8. **Untrusted text stays marked.** Tool outputs keep the MCP server's `Untrusted` marking. The
    system prompt carries rule 8 of the MCP instructions. The model cannot navigate without a
    click.
+   What a person points at on the dashboard is the same kind of text, read off the page by their
+   browser: an issue's title, an agent's output, a line of a config file. A message carries it
+   between two markers with a line that says it is data, a marker inside it is taken out, and
+   what stands outside the markers is checked against the dashboard's routes, its named controls
+   and the shape of a config path (`assistant/prompt.py`).
 9. **Never in the chat:** gate approval or merge, secrets, permits and allowlists, runtimes,
    labels, tokens, the terminal, and Redo, a continuing Retry and Force complete — the list of
    §7.16 item 6. The Settings credential is never readable back.
+10. **An attached file is a person's upload.** Its bytes decide what it is, an image of four
+    types or a small text file, and nothing else is taken (`assistant/attachments.py`). The name
+    is shown and never used as a path. No route serves the bytes back. A text file reaches the
+    model as data between the markers, like any text written by others, and an image reaches the
+    model's provider as the message does.
 
 Seven costs are accepted:
 
@@ -1743,7 +1837,8 @@ Seven costs are accepted:
    those estimates. On a subscription the estimate is at API prices and does not track the
    plan's own limits. Codex reports no cost, so no budget limits a Codex conversation.
 7. **Conversations store quoted issue text** until the person deletes the conversation, and for
-   at most 30 days after its last activity.
+   at most 30 days after its last activity. What a person pointed at and the files they attached
+   are stored with it and go with it.
 
 ### 7.19 Accounts, organizations and who may act in one
 

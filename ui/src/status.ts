@@ -262,14 +262,17 @@ export const LABEL_VARIANTS = {
  * run's outcome goes through this, so none of them draws it as a success, nor a set-aside run as
  * where the ticket stands.
  */
-export type RunShown = StepRunStatus | "forced" | "set_aside";
+export type RunShown = StepRunStatus | "forced" | "set_aside" | "conflict_sent_back";
 
 export function runShown(run: {
   status: StepRunStatus;
   forced_by?: string | null;
   superseded_at?: string | null;
+  conflict_send_back?: boolean;
 }): RunShown {
   if (run.superseded_at) return "set_aside";
+  // The wire says `rejected`; a conflict send-back is the gate's own, never a reviewer's decision.
+  if (run.conflict_send_back) return "conflict_sent_back";
   return run.forced_by ? "forced" : run.status;
 }
 
@@ -287,6 +290,7 @@ export const RUN_LABELS: Record<RunShown, string> = {
   rejected: "Rejected",
   forced: "Forced",
   set_aside: "Set aside",
+  conflict_sent_back: "Sent back for a conflict fix",
 };
 
 /**

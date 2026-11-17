@@ -30,7 +30,18 @@ import {
 } from "react";
 import type { StepRun, TimelineEntry } from "../../api/types";
 import type { ForgeHost } from "../../forge";
-import { Button, Code, cx, EmptyState, JumpRail, statusFacts, useScrollSpy } from "../ui";
+import { formatElapsed } from "../../format";
+import { ROLE_DOT } from "../../status";
+import {
+  Button,
+  Code,
+  cx,
+  EmptyState,
+  JumpRail,
+  statusFacts,
+  useScrollSpy,
+  WorkingDots,
+} from "../ui";
 import {
   type ActivityOrder,
   type ActivitySegment,
@@ -41,6 +52,7 @@ import {
   type LongContent,
   type Spawn,
   statusDot,
+  workingSince,
 } from "./activity";
 import { EventRow } from "./EventRow";
 import type { ForceCompleteProps } from "./force";
@@ -100,6 +112,9 @@ export interface ActivityPanelProps {
   /** What that block's step will run on, from the pinned config. Null for a step that runs on no
    *  runtime, such as a gate. */
   startingRuntime?: Spawn | null;
+  /** The block whose agent is at work now, if any (`isWorking`). Its live end says so, because
+   *  an agent writes nothing to the log between its start and its end. */
+  workingKey?: string | null;
   /** A new value takes the region to its latest event: the top newest first, the foot oldest
    *  first. */
   toLatest?: number | null;
@@ -128,6 +143,7 @@ export function ActivityPanel({
   waitingOn,
   startingKey,
   startingRuntime,
+  workingKey,
   toLatest = null,
   focused = false,
   message,
@@ -276,6 +292,10 @@ export function ActivityPanel({
           const folded = Boolean(segment.run?.superseded_at) && !unfolded.has(segment.key);
           const shown = shownBy.get(segment.key) ?? segment.entries;
           const hidden = segment.entries.length - shown.length;
+          // At the live end of the block, whichever end of it the order reads first.
+          const working = segment.key === workingKey && segment.run && (
+            <WorkingRow since={workingSince(segment.run, segment.entries)} />
+          );
           return (
             <section key={segment.key} ref={(el) => setNodeRef(segment.key, el)}>
               <SegmentHeader
@@ -296,7 +316,9 @@ export function ActivityPanel({
                 startingRuntime={startingRuntime}
               />
               {message?.key === segment.key && message.content}
-              {segment.entries.length === 0 ? (
+              {working && shown.length === 0 ? (
+                <ol>{working}</ol>
+              ) : segment.entries.length === 0 ? (
                 <p className="px-4 py-2 text-body-sm text-subtlest">
                   No events recorded for this attempt yet.
                 </p>
@@ -311,6 +333,7 @@ export function ActivityPanel({
                 </div>
               ) : (
                 <ol>
+                  {order === "newest" && working}
                   {shown.map((entry) => (
                     <EventRow
                       key={entry.id}
@@ -323,6 +346,7 @@ export function ActivityPanel({
                       onOpenText={(content) => onOpenText(content, subtitleFor(segment))}
                     />
                   ))}
+                  {order === "oldest" && working}
                 </ol>
               )}
               <WaitingOn waiting={waitingOn?.(segment) ?? null} />
@@ -333,6 +357,42 @@ export function ActivityPanel({
         <div aria-hidden style={{ height: "70%" }} />
       </div>
     </div>
+  );
+}
+
+/**
+ * The agent at work, as the newest line of its block.
+ *
+ * An agent writes to the log when it starts and when it ends, and nothing between, so a block
+ * that has stopped growing reads as stalled however busy its agent is. This line is what says
+ * otherwise. It sits in the event rows' columns, its label where theirs are and its time where
+ * theirs are, but its time is how long the agent has been at it, and it keeps its own second hand
+ * the way a retry's countdown does (`RetryDue`). What the agent is doing is in its terminal.
+ */
+function WorkingRow({ since }: { since: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+
+  return (
+    <li data-working className="flex items-center gap-3 px-4 py-1.5 text-body">
+      <span
+        aria-hidden
+        className={cx("mx-0.5 size-1.5 shrink-0 rounded-full", ROLE_DOT.information)}
+      />
+      <span className="shrink-0 text-default">Agent working</span>
+      <span className="min-w-0 flex-1">
+        <WorkingDots />
+      </span>
+      {since !== null && (
+        <span className="ml-auto shrink-0 text-body-sm text-subtlest tabular-nums">
+          for {formatElapsed((now - new Date(since).getTime()) / 1000)}
+        </span>
+      )}
+    </li>
   );
 }
 

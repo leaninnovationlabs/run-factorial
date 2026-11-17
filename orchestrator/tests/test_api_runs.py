@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.adapters.state import BranchState, IssueState, SnapshotState, StateSource
 from orchestrator.api.deps import RunObserver, run_observer_dependency, runtime_adapter_dependency
+from orchestrator.api.routes import runs as runs_routes
 from orchestrator.api.services import controls
 from orchestrator.api.services.actor import Actor
 from orchestrator.api.services.errors import Conflict, Forbidden, UpstreamFailed
@@ -649,6 +650,210 @@ async def test_a_change_request_names_the_reviewed_run_not_the_gate(
 
     assert response.status_code == 409
     assert "sends work back to spec_gate." in response.json()["detail"]
+
+
+async def _edit_pinned(session: AsyncSession, run: StepRun, edit: Any) -> None:
+    ticket = await session.get_one(Ticket, run.ticket_id)
+    version = await session.get_one(ProcessVersion, ticket.process_version_id)
+    raw = json.loads(json.dumps(version.content))
+    edit(raw)
+    version.content = raw
+    await session.flush()
+
+
+async def _conflict_events(session: AsyncSession, gate: StepRun) -> list[Event]:
+    return list(
+        (
+            await session.scalars(
+                select(Event).where(
+                    Event.type == "conflict_fix_requested", Event.step_run_id == gate.id
+                )
+            )
+        ).all()
+    )
+
+
+async def test_a_conflict_fix_is_recorded_once_against_the_waiting_gate(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    _, gate = await _waiting_for_review(async_session, without_preview=True)
+    url = f"/api/step-runs/{gate.id}/conflict-fix"
+    body = {"idempotency_key": "press-0001"}
+
+    async with client_for(build_app(_preview_settings(), async_session)) as client:
+        first = await client.post(url, json=body, headers=auth)
+        again = await client.post(url, json=body, headers=auth)
+        other = await client.post(url, json={"idempotency_key": "press-0002"}, headers=auth)
+
+    assert first.status_code == 202
+    assert first.json()["outcome"] == "pending"  # no worker behind this API
+    assert again.json()["request_id"] == first.json()["request_id"]
+    assert other.status_code == 409
+    assert other.json()["code"] == "conflict_fix_pending"
+    [event] = await _conflict_events(async_session, gate)
+    assert event.details["requested_by"] == "api-token"
+    assert event.details["idempotency_key"] == "press-0001"
+
+
+@pytest.mark.parametrize(
+    ("why", "sentence"),
+    [
+        ("not_a_gate", "plan isn't a gate, so it has no pull request to fix."),
+        ("not_waiting", "spec_gate isn't waiting for review."),
+        ("no_merge", "spec_gate doesn't merge a pull request."),
+        ("no_fix_step", "This lane has no agent step to send spec_gate's work to."),
+    ],
+)
+async def test_a_conflict_fix_is_refused_where_it_could_never_apply(
+    async_session: AsyncSession, auth: dict[str, str], why: str, sentence: str
+) -> None:
+    plan, gate = await _waiting_for_review(async_session, without_preview=True)
+    target = gate
+    if why == "not_a_gate":
+        target = plan
+    elif why == "not_waiting":
+        gate.status = StepRunStatus.APPROVED
+    elif why == "no_merge":
+        await _edit_pinned(
+            async_session,
+            gate,
+            lambda raw: raw["steps"][1]["gate"]["onApprove"].update(merge=False),
+        )
+    else:
+        await _edit_pinned(
+            async_session, gate, lambda raw: raw["steps"][1]["gate"].pop("onReject")
+        )
+    await async_session.flush()
+
+    async with client_for(build_app(_preview_settings(), async_session)) as client:
+        response = await client.post(
+            f"/api/step-runs/{target.id}/conflict-fix",
+            json={"idempotency_key": "press-0003"},
+            headers=auth,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == sentence
+    assert await _conflict_events(async_session, gate) == []
+
+
+async def test_a_conflict_fix_is_refused_when_the_gate_ends_before_the_lock(
+    async_session: AsyncSession, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tick approves and merges the gate between the route's first read and its row lock: no
+    request may be left on a run nothing will ever answer."""
+    _, gate = await _waiting_for_review(async_session, without_preview=True)
+    first_read = runs_routes.conflict_fix_by_key
+
+    async def approved_meanwhile(session: AsyncSession, *args: Any) -> Any:
+        # Behind the identity map's back, as another transaction's commit would be.
+        await session.execute(
+            update(StepRun)
+            .where(StepRun.id == gate.id)
+            .values(status=StepRunStatus.APPROVED)
+            .execution_options(synchronize_session=False)
+        )
+        return await first_read(session, *args)
+
+    monkeypatch.setattr(runs_routes, "conflict_fix_by_key", approved_meanwhile)
+
+    async with client_for(build_app(_preview_settings(), async_session)) as client:
+        response = await client.post(
+            f"/api/step-runs/{gate.id}/conflict-fix",
+            json={"idempotency_key": "press-0005"},
+            headers=auth,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "spec_gate isn't waiting for review."
+    assert await _conflict_events(async_session, gate) == []
+
+
+async def test_a_conflict_fix_needs_signing_in(async_session: AsyncSession) -> None:
+    _, gate = await _waiting_for_review(async_session, without_preview=True)
+
+    async with client_for(build_app(_preview_settings(), async_session)) as client:
+        response = await client.post(
+            f"/api/step-runs/{gate.id}/conflict-fix", json={"idempotency_key": "press-0004"}
+        )
+
+    assert response.status_code == 401
+
+
+async def _gate_entry(
+    session: AsyncSession, auth: dict[str, str], gate: StepRun
+) -> dict[str, Any]:
+    async with client_for(build_app(_preview_settings(), session)) as client:
+        response = await client.get(f"/api/tickets/{gate.ticket_id}", headers=auth)
+    assert response.status_code == 200
+    [entry] = [run for run in response.json()["step_runs"] if run["id"] == gate.id]
+    return entry
+
+
+async def _reading(session: AsyncSession, gate: StepRun, state: str) -> None:
+    ticket = await session.get_one(Ticket, gate.ticket_id)
+    await append(
+        session,
+        type=EventType.GATE_MERGEABILITY,
+        project_id=ticket.project_id,
+        ticket_id=ticket.id,
+        step_run_id=gate.id,
+        step=gate.step_name,
+        attempt=gate.attempt,
+        pr_number=7,
+        head_sha="a" * 40,
+        base_ref="main",
+        state=state,
+    )
+    await session.flush()
+
+
+async def test_a_waiting_gate_reports_its_pull_requests_last_mergeability(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    _, gate = await _waiting_for_review(async_session, without_preview=True)
+
+    bare = await _gate_entry(async_session, auth, gate)
+    await _reading(async_session, gate, "conflicting")
+    conflicting = await _gate_entry(async_session, auth, gate)
+    await _reading(async_session, gate, "clean")
+    clean = await _gate_entry(async_session, auth, gate)
+
+    assert (bare["mergeability"], bare["base_ref"], bare["can_fix_conflict"]) == (None, None, True)
+    assert (conflicting["mergeability"], conflicting["base_ref"]) == ("conflicting", "main")
+    assert clean["mergeability"] is None
+
+
+async def test_a_conflict_send_back_does_not_read_as_a_rejection_and_a_pending_fix_shows(
+    async_session: AsyncSession, auth: dict[str, str]
+) -> None:
+    _, gate = await _waiting_for_review(async_session, without_preview=True)
+    ticket = await async_session.get_one(Ticket, gate.ticket_id)
+    async with client_for(build_app(_preview_settings(), async_session)) as client:
+        await client.post(
+            f"/api/step-runs/{gate.id}/conflict-fix",
+            json={"idempotency_key": "press-0005"},
+            headers=auth,
+        )
+    pending = await _gate_entry(async_session, auth, gate)
+    gate.status = StepRunStatus.REJECTED
+    await append(
+        async_session,
+        type=EventType.GATE_CONFLICT_SENT_BACK,
+        project_id=ticket.project_id,
+        ticket_id=ticket.id,
+        step_run_id=gate.id,
+        step=gate.step_name,
+        attempt=gate.attempt,
+        target_step="plan",
+    )
+    await async_session.flush()
+    sent_back = await _gate_entry(async_session, auth, gate)
+
+    assert pending["conflict_fix_pending"] is True
+    assert pending["conflict_send_back"] is False
+    assert sent_back["conflict_send_back"] is True
+    assert sent_back["conflict_fix_pending"] is False
 
 
 # --------------------------------------------------------------------------- runtime-served

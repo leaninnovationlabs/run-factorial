@@ -1423,6 +1423,24 @@
     opacity: 0.28;
   }
 }
+@keyframes working-wave {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-0.25rem);
+    opacity: 1;
+  }
+}
+@keyframes working-fade {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 @keyframes settle-in {
   from {
     opacity: 0;
@@ -1806,6 +1824,10 @@ button. Irreversible action → <code class="rounded-xs bg-neutral px-1 py-px fo
 and offer Undo in a flag.</li>
 <li><strong>Reading surfaces and edit forms open in a <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">Drawer</code></strong>: modal, slides in from the right, dims
 the page, never shifts the layout.</li>
+<li><strong>The assistant&#x27;s conversation is the one exception.</strong> It has two more frames, and neither is
+modal: a column docked at the right edge of the page, which makes the page narrower, and a
+small window that floats over the bottom right corner of the page (decision 63). Do not use
+either for a different surface.</li>
 <li><strong>Overlays use the layer stack</strong> (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">layers.ts</code>). Escape closes only the top layer. A modal layer
 makes everything under it <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">inert</code>, which contains focus without a Tab trap. Do not build a
 second overlay mechanism, and do not add a headless component library (deferred in
@@ -1816,12 +1838,21 @@ button is the control and the right-click is a shortcut to it. <code class="roun
 name: ADS has no menu at a pointer. It uses the <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">DropdownMenu</code> surface, layer and menu list.
 A menu item may carry an <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">icon</code> before its label, and a group&#x27;s name is the heading over its
 items (&quot;Add new&quot;).</li>
+<li><strong>One menu is on every element: the assistant&#x27;s.</strong> A right-click anywhere opens a menu named
+Assistant, which takes the thing under the pointer into a conversation (decision 63). It has no
+button of its own, because the assistant is always told the page a message came from: the
+right-click only says which thing. The menu key of the keyboard opens the same menu. The
+browser&#x27;s menu stays in a text field, in the terminal, in the conversation, and with Shift. A
+new <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">ContextMenu</code> on a page must add the assistant&#x27;s entries to its own (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">usePointEntries</code>),
+because it takes the right-click from this one.</li>
 <li><strong>A question that belongs where the person pressed opens in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">PopupAt</code></strong>: the popup&#x27;s surface
 at a point, with no button of its own. The config explorer asks for a new file&#x27;s name there.</li>
 <li><strong>Figures that do not need room in a row go behind an icon in a <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">HoverCard</code></strong>: a run&#x27;s model,
 duration, tokens and cost on its attempt&#x27;s header. A mouse on the icon, keyboard focus or a
 press opens the card, and a press is how a phone opens it. The card describes the icon and
-never takes the focus, so it holds text only. <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">HoverCard</code> is not an ADS name: ADS has no card
+never takes the focus, so it holds text only. An <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">interactive</code> card is the exception: it can
+hold a link, and a press moves the focus into it so that a keyboard gets to the link. The
+assistant&#x27;s chips use it. <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">HoverCard</code> is not an ADS name: ADS has no card
 that opens on hover. It uses the layer stack and a popup&#x27;s surface.</li>
 <li><strong>Action feedback</strong> goes through <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">useActionFeedback</code> / <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">showFlag</code>. A slow action says so after
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">SLOW_AFTER_MS</code>.</li>
@@ -1851,7 +1882,7 @@ the column heads. A table without <code class="rounded-xs bg-neutral px-1 py-px 
 activity panel is nearly the height of the window. The Output drawer shows one section at a
 time.</li>
 <li><strong>A drawer</strong> fills the window. The assistant&#x27;s page (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">bleed</code> in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">routes.tsx</code>) goes to the edges
-of the window.</li>
+of the window. The assistant&#x27;s docked column and floating window do not exist on a phone.</li>
 <li><strong>A field</strong> is 16px on a phone, because iOS Safari zooms into a smaller field when it gets the
 focus.</li>
 <li><strong>Insets:</strong> the tab bar and a drawer&#x27;s footer keep clear of the home indicator
@@ -1870,10 +1901,12 @@ Forced colours keep the ring. A control clipped by its container adds
 <li><strong>Contrast:</strong> text 4.5:1 and a control&#x27;s edge 3:1 in both themes, checked by <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">foundations.test.ts</code>.
 <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">prefers-contrast: more</code> swaps in the ADS increased-contrast values.</li>
 <li><strong>Motion:</strong> a looping animation beats three times and stops (WCAG 2.2.2), and stops under
-reduced motion (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">prefersReducedMotion()</code> in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">components/ui/motion.ts</code>). Reuse the beats in
-<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion.css</code>. Default transitions are <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">transition-colors</code> (150ms, eased out). A button eases every
-change, gets smaller a little when you press it (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion-safe:active:scale-97</code>), and its spinner
-comes in with <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">animate-settle-in</code>.</li>
+reduced motion (<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">prefersReducedMotion()</code> in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">components/ui/motion.ts</code>). A sign that work
+continues is the exception: the process graph&#x27;s running step and <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">WorkingDots</code> loop while the
+work runs, because a sign that stops looks stalled. Under reduced motion, the dots fade in place
+and do not move. Reuse the beats in <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion.css</code>. Default transitions are <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">transition-colors</code>
+(150ms, eased out). A button eases every change, gets smaller a little when you press it
+(<code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">motion-safe:active:scale-97</code>), and its spinner comes in with <code class="rounded-xs bg-neutral px-1 py-px font-mono text-code break-words">animate-settle-in</code>.</li>
 <li><strong>Shortcuts:</strong> never a single character (WCAG 2.1.4). Search is ⌘K / Ctrl+K. A focus trap needs a
 way out: the terminal releases on Ctrl+] (WCAG 2.1.2).</li>
 <li><strong>Status is never colour alone:</strong> a lozenge carries a word, a chart carries a legend and a table

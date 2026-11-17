@@ -61,7 +61,15 @@ from orchestrator.github.connection import project_bot_login
 from orchestrator.github.contents import Comparison
 from orchestrator.github.observer import RepoListings
 from orchestrator.github.pool import pool
-from orchestrator.settings import Settings, TerminalSettings, WorkspaceSettings, get_settings
+from orchestrator.github.state import Mergeability
+from orchestrator.settings import (
+    ManagedSandbox,
+    Settings,
+    TerminalSettings,
+    WorkerSettings,
+    WorkspaceSettings,
+    get_settings,
+)
 from orchestrator.worker.attachments import MediaFactory
 from orchestrator.worker.runtime_adapters import (
     RuntimeAdapters,
@@ -71,6 +79,7 @@ from orchestrator.worker.runtime_adapters import (
     spawned_kind,
     workspace_key,
 )
+from orchestrator.worker.sandbox_limit import SandboxStarts
 from runtime.contract import RuntimeAdapter
 
 __all__ = [
@@ -127,6 +136,7 @@ AgentSource = Callable[
 
 _TERMINAL_DEFAULTS = TerminalSettings()
 _WORKSPACE_DEFAULTS = WorkspaceSettings()
+_WORKER_DEFAULTS = WorkerSettings()
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +298,9 @@ class ReconcileDeps:
     #: `runtime:`. Injected beside `resolve_agent` for the same reason: it is the tick's own unit
     #: of work that reads.
     load_runtime: Callable[[AsyncSession, int, str], Awaitable[Runtime | None]] | None = None
+    #: `settings.runtime.e2b.managed`: the team a runtime marked `sandbox_key: managed` runs
+    #: in. Unset, such a runtime resolves no key and spawns nothing.
+    managed_sandbox: ManagedSandbox = field(default_factory=ManagedSandbox)
     #: `step_run.id -> the kind its spawn recorded`. A run's kind never changes, so the event
     #: log is read once per run per process, not on every poll.
     spawned_kinds: dict[int, str] = field(default_factory=dict)
@@ -315,6 +328,22 @@ class ReconcileDeps:
     #: `ticket.id` → the `STEP_ENTERED` id `note_next_step_waiting` already judged. Process
     #: memory, like `parked_rechecks`: a steady waiting tick pays one read, not three.
     next_step_waiting_seen: dict[int, int] = field(default_factory=dict)
+    #: `ticket.id` → `(STEP_ENTERED id, step, scope, limit, attempt)` `note_sandbox_limit_waiting`
+    #: last said. Process memory, as above.
+    sandbox_limit_seen: dict[int, tuple[int, str, str, int, int]] = field(
+        default_factory=dict
+    )
+    #: The managed-key starts this process let through whose transaction has not ended
+    #: (`worker.sandbox_limit`). One per deps: one worker process, one count.
+    sandbox_starts: SandboxStarts = field(default_factory=SandboxStarts)
+    #: Gate `step_run.id` -> `(head sha, mergeability, when read)`
+    #: (`gate_conflicts.gate_mergeability`). Process memory: it only spares forge reads, and the
+    #: event log, not this, says what was recorded.
+    mergeability_seen: dict[int, tuple[str, Mergeability, datetime]] = field(default_factory=dict)
+    #: `settings.worker.gate_mergeability_recheck_seconds`.
+    mergeability_recheck: timedelta = timedelta(
+        seconds=_WORKER_DEFAULTS.gate_mergeability_recheck_seconds
+    )
     sessions: SessionPolicy = field(default_factory=SessionPolicy)
 
     async def github_for(self, session: AsyncSession, project: Project) -> ProjectGitHub | None:
@@ -384,7 +413,10 @@ class ReconcileDeps:
         if row is None:
             raise RuntimeRefused("this run's runtime was deleted")
         return self.runtime_adapters.for_runtime(
-            row, kind, held_key=await workspace_key(session, row), repoint=True
+            row,
+            kind,
+            team=await workspace_key(session, row, self.managed_sandbox),
+            repoint=True,
         )
 
     async def _spawned_kind(self, session: AsyncSession, run: StepRun) -> str | None:
@@ -437,8 +469,10 @@ def production_deps(settings: Settings | None = None) -> ReconcileDeps:
         resolve_github=github_for,
         runtime_adapters=RuntimeAdapters(registry_build(partial(adapter_options, resolved))),
         load_runtime=load_runtime_by_slug,
+        managed_sandbox=resolved.runtime.e2b.managed,
         now=utc_now,
         resolve_agent=resolve,
+        mergeability_recheck=timedelta(seconds=resolved.worker.gate_mergeability_recheck_seconds),
         sessions=SessionPolicy.from_settings(resolved),
     )
 

@@ -58,6 +58,7 @@ RefusalCode = Literal[
     # Restart refused: the ticket already runs its process's current version.
     "already_current",
     "change_request_pending",
+    "conflict_fix_pending",
     # The idempotency key was already used for another run.
     "key_reused",
     # The run never ran on a runtime, so it has no transcript.

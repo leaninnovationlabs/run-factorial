@@ -786,6 +786,10 @@ class RunSpec(_Frozen):
 
     agent: str = Field(min_length=1, description="manifest folder name == process.yaml `agent:`")
     ticket: str = Field(min_length=1, description="external ticket key, for correlation only")
+    #: The slug of the organization the run belongs to, for the substrate's own labelling: a
+    #: sandbox account shared by several organizations shows whose each sandbox is. Never read
+    #: back to find a run.
+    organization: str | None = None
     workspace: Workspace
     #: Fetched by the orchestrator at the agent's pinned sha — the substrate is handed text, not
     #: told to go read files, so what ran is exactly what was pinned.

@@ -27,8 +27,10 @@ import type {
   AssistantSettingsOut,
   BoardResponse,
   ChangeRequestResult,
+  ChatAttachmentIn,
   ChatConversation,
   ChatItems,
+  ChatPointed,
   CompletionResult,
   ConfigAdoption,
   ConfigBranchResult,
@@ -38,6 +40,7 @@ import type {
   ConfigFileContent,
   ConfigFiles,
   ConfigPreview,
+  ConflictFixResult,
   CredentialTest,
   DefaultBranchConfig,
   DraftCheck,
@@ -727,6 +730,13 @@ export const api = {
       idempotency_key: idempotencyKey,
     }),
 
+  /** A REQUEST for an agent to fix a waiting gate's conflicting or behind pull request. The key
+   *  is kept through a failed send, so a retried press answers with the first request. */
+  requestConflictFix: (stepRunId: number, idempotencyKey: string) =>
+    send<ConflictFixResult>("POST", `/api/step-runs/${stepRunId}/conflict-fix`, {
+      idempotency_key: idempotencyKey,
+    }),
+
   /** A REQUEST to check the run's postconditions now and accept it when they hold (decision 78).
    *  `pending` while an earlier one for this run is unanswered; `getCompletion` polls the answer. */
   requestCompletion: (
@@ -894,7 +904,15 @@ export const api = {
 
   /** 202 with the queued turn. A refusal's `code` says which: `turn_live`, `not_configured`,
    *  `assistant_unavailable` or `daily_budget`. */
-  sendAssistantMessage: (conversationId: number, body: { text: string; page: string | null }) =>
+  sendAssistantMessage: (
+    conversationId: number,
+    body: {
+      text: string;
+      page: string | null;
+      context?: ChatPointed[];
+      attachments?: ChatAttachmentIn[];
+    },
+  ) =>
     request<{ turn_id: number }>(`/api/assistant/conversations/${conversationId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),

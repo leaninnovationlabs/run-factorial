@@ -89,6 +89,7 @@ from orchestrator.settings import (
     AuthSettings,
     E2bSettings,
     GitLabSettings,
+    ManagedSandbox,
     RuntimeSettings,
     Settings,
 )
@@ -115,7 +116,12 @@ def make_settings(
     api_token: str = TOKEN,
     auth: AuthSettings | None = None,
     gitlab: GitLabSettings | None = None,
+    managed: ManagedSandbox | None = None,
 ) -> Settings:
+    """`managed` narrows the offers to the sandbox ones, which a managed key requires."""
+    offered = sorted(ALL_OFFERS)
+    if managed is not None:
+        offered = [offer for offer in offered if offer.endswith("@e2b")]
     return Settings(
         database_url="postgresql+asyncpg://unused:unused@localhost:1/unused",
         api_token=SecretStr(api_token),
@@ -124,7 +130,8 @@ def make_settings(
         # Every pair, as a test of logins, Bedrock or readiness creates any type; the default is
         # the API-key types, which the settings tests assert.
         runtime=RuntimeSettings(
-            e2b=E2bSettings(deployment="factorial-test"), offered=sorted(ALL_OFFERS)
+            e2b=E2bSettings(deployment="factorial-test", managed=managed or ManagedSandbox()),
+            offered=offered,
         ),
         # Every assistant sign-in too, for the same reason; the default is the two API keys.
         assistant=AssistantProcessSettings(offered=sorted(ALL_ASSISTANT_OFFERS)),

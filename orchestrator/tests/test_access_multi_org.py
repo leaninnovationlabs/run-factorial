@@ -40,7 +40,9 @@ from orchestrator.db.models import (
     OrganizationInvite,
     OrganizationMember,
     OrganizationRemoval,
+    ProcessVersion,
     Role,
+    Runtime,
     StepKind,
     StepRun,
     StepRunStatus,
@@ -62,6 +64,7 @@ from tests.api_harness import (
     seed_ticket,
 )
 from tests.members import viewer_role
+from tests.reconcile_world import _process
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio(loop_scope="session")]
 
@@ -282,6 +285,7 @@ async def test_a_member_reads_project_config_but_no_other_settings(
         "credential_updated_at",
         "ready_to_send",
         "refusal",
+        "accepts_images",
     }
     # Readiness and labels read GitHub, which this harness does not answer; 403 is what matters.
     assert all(code != 403 for code in admitted.values()), admitted
@@ -373,6 +377,59 @@ async def test_a_role_without_tickets_terminal_cannot_open_a_terminal_or_a_sessi
     assert "tickets:terminal" in mint.json()["detail"]
     # The member holds `tickets:terminal` since revision 0038.
     assert member_mint.status_code != 403
+
+
+async def test_no_route_opens_a_sandbox_by_a_callers_identifier(
+    people: People, async_session: AsyncSession
+) -> None:
+    """A member of Beta names Acme's run and runtime: every route that reaches a sandbox or its
+    transcript answers 404. Acme's owner gets past the access check on each one, so the 404 is
+    the organization fence's and not a missing resource's."""
+    app = build_app(_settings(), async_session)
+    project = await seed_project(async_session, organization_id=people.acme.id)
+    ticket = await seed_ticket(async_session, project, step="plan")
+    version = await async_session.get(ProcessVersion, ticket.process_version_id)
+    assert version is not None
+    # A process the preview and outputs routes can read, so the owner's answer is theirs.
+    version.content = _process("proc").model_dump(mode="json", by_alias=True)
+    run = StepRun(
+        ticket_id=ticket.id,
+        step_name="plan",
+        kind=StepKind.AGENT,
+        attempt=1,
+        status=StepRunStatus.RUNNING,
+        runtime_run_id="run-of-acme",
+        started_at=datetime.now(UTC),
+    )
+    async_session.add(run)
+    runtime_id = await async_session.scalar(
+        select(Runtime.id).where(Runtime.organization_id == people.acme.id)
+    )
+    assert runtime_id is not None
+    await async_session.commit()
+    runs = f"/api/step-runs/{run.id}"
+    runtime = f"/api/runtimes/{runtime_id}"
+    # What Acme's owner gets: a success, or a refusal made after the access check passed.
+    owners_answer = {
+        ("GET", f"{runs}/activity"): 503,  # the run's runtime holds no transcript here
+        ("GET", f"{runs}/terminal"): 200,
+        ("POST", f"{runs}/terminal-ticket"): 409,  # the terminal is switched off
+        ("POST", f"{runs}/inspect"): 409,  # the terminal is switched off
+        ("GET", f"{runs}/preview"): 200,
+        ("GET", f"{runs}/outputs"): 200,
+        ("GET", runtime): 200,
+        ("GET", f"{runtime}/templates"): 409,  # the runtime runs on the host
+    }
+
+    async def ask(user: AppUser) -> dict[tuple[str, str], int]:
+        async with _as(app, user) as client:
+            return {
+                (method, path): (await client.request(method, path)).status_code
+                for method, path in owners_answer
+            }
+
+    assert await ask(people.beta_owner) == dict.fromkeys(owners_answer, 404)
+    assert await ask(people.owner) == owners_answer
 
 
 async def test_a_token_without_projects_read_cannot_read_a_project_s_config(

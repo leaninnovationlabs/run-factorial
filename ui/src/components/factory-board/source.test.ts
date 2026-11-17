@@ -39,6 +39,7 @@ describe("toBoard", () => {
       quarantined: false,
       latestRunStatus: null,
       parkReason: null,
+      sandboxWaiting: false,
       runs: 3,
       attempt: 1,
       costUsd: 4.25,
@@ -56,6 +57,16 @@ describe("toBoard", () => {
       done_days: 7,
     });
     expect(nodes[0]?.quarantined).toBe(true);
+  });
+
+  it("flags a ticket that waits for a sandbox", () => {
+    const wait = { scope: "pool" as const, limit: 3, running: 3, runtime: "r", runtime_id: 1 };
+    const { nodes } = toBoard({
+      projects: [SANDBOX],
+      tickets: [wire({ sandbox_wait: wait })],
+      done_days: 7,
+    });
+    expect(nodes[0]?.sandboxWaiting).toBe(true);
   });
 
   it("reads an un-quarantined ticket as false", () => {

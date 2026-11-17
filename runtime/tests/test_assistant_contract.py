@@ -7,9 +7,13 @@ import pytest
 from fake_toolbox import FakeToolbox
 from pydantic import SecretStr, TypeAdapter, ValidationError
 
-from runtime.assistant.adapters import create_backend
+from runtime.assistant.adapters import TAKES_IMAGES, create_backend
+from runtime.assistant.adapters.bedrock_responses import BedrockResponsesBackend
+from runtime.assistant.adapters.claude_sdk import ClaudeSdkBackend
+from runtime.assistant.adapters.codex_cli.backend import CodexCliBackend
 from runtime.assistant.contract import (
     ChatEvent,
+    ChatImage,
     ChatToolbox,
     ChatTurnSpec,
     TextDelta,
@@ -87,3 +91,35 @@ def test_a_toolbox_satisfies_the_protocol_and_its_outcome_is_frozen() -> None:
         outcome.ok = False  # type: ignore[misc]
     with pytest.raises(ValidationError):
         ToolOutcome(ok=True, text="x", structured={})  # type: ignore[call-arg]
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"pixels-that-must-not-leak"
+
+
+def test_an_image_is_dumped_and_printed_as_its_size_never_its_bytes() -> None:
+    spec = _spec(images=(ChatImage(name="image-1", media_type="image/png", content=PNG),))
+    assert spec.model_dump()["images"] == (
+        {"name": "image-1", "media_type": "image/png", "content": len(PNG)},
+    )
+    assert "pixels-that-must-not-leak" not in repr(spec)
+    assert "pixels-that-must-not-leak" not in spec.model_dump_json()
+
+
+def test_an_image_s_name_is_one_the_adapter_can_write_as_a_file() -> None:
+    for name in ("../etc/passwd", "a b.png", "", "Image-1"):
+        with pytest.raises(ValidationError):
+            ChatImage(name=name, media_type="image/png", content=PNG)
+    with pytest.raises(ValidationError):
+        ChatImage(name="image-1", media_type="image/svg+xml", content=PNG)  # type: ignore[arg-type]
+
+
+def test_the_table_of_backends_that_take_images_is_each_class_s_own_word() -> None:
+    """The API refuses an image for a backend that takes none, and reads this table to do it
+    without loading a vendor module. The classes are the authority."""
+    classes = {
+        "claude_sdk": ClaudeSdkBackend,
+        "codex_cli": CodexCliBackend,
+        "bedrock_responses": BedrockResponsesBackend,
+    }
+    assert {kind for kind, backend in classes.items() if backend.supports_images} == TAKES_IMAGES
+    assert sorted(TAKES_IMAGES) == ["claude_sdk", "codex_cli"]

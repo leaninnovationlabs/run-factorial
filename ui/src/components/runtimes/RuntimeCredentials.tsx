@@ -17,11 +17,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
+import { useOrganizationDetail } from "../../api/organizationQueries";
 import {
   keys,
   useDeleteRuntimeCredential,
   usePutRuntimeCredential,
   useRuntimeLoginStatus,
+  useRuntimeOptions,
   useRuntimeTemplates,
   useStartRuntimeLogin,
   useTestRuntimeCredential,
@@ -36,7 +38,7 @@ import type {
   RuntimeLoginState,
   RuntimeTemplateBuild,
 } from "../../api/types";
-import { formatRelative } from "../../format";
+import { formatRelative, NO_VALUE } from "../../format";
 import {
   Button,
   Code,
@@ -56,6 +58,7 @@ import {
   TextField,
   useDismissible,
 } from "../ui";
+import { managedKeyMeta, offerKey, runCount } from "./runtimeChoice";
 import {
   buildVerdict,
   type CredentialForm as CredentialCopy,
@@ -74,9 +77,26 @@ import {
   typeAvailable,
 } from "./runtimes";
 
+/** What an own-key runtime's group offers: a move to the Factorial-managed key, when the
+ *  deployment covers its offer and its organization may use the key. */
+function useManagedOffer(runtime: Runtime): { covered: boolean; limit: number | null } {
+  const options = useRuntimeOptions();
+  const limit = useOrganizationDetail().data?.managed_sandbox_limit ?? null;
+  const covered =
+    options.data?.managed_sandbox.includes(offerKey(runtime.type, "e2b")) === true &&
+    limit !== null &&
+    limit > 0;
+  return { covered, limit };
+}
+
 export function Credentials({ runtime }: { runtime: Runtime }) {
   const e2b = isolationOf(runtime.details) === "e2b";
-  const read = new Set([credentialNameFor(runtime.type), ...(e2b ? [E2B_CREDENTIAL] : [])]);
+  const managed = e2b && runtime.sandbox_key === "managed";
+  const offer = useManagedOffer(runtime);
+  const read = new Set([
+    credentialNameFor(runtime.type),
+    ...(e2b && !managed ? [E2B_CREDENTIAL] : []),
+  ]);
   const unread = runtime.credentials.filter((credential) => !read.has(credential.name));
   const copy = credentialFormFor(runtime.type);
 
@@ -101,15 +121,32 @@ export function Credentials({ runtime }: { runtime: Runtime }) {
       {e2b && (
         <Group
           title="Cloud sandbox"
-          note="Sandboxes run in the team this key belongs to, from a template built in that team."
+          note={
+            managed
+              ? "Sandboxes run in Factorial's sandbox account, from a template Factorial provides."
+              : "Sandboxes run in the team this key belongs to, from a template built in that team."
+          }
         >
-          <SecretRow
-            runtime={runtime}
-            name={E2B_CREDENTIAL}
-            copy={E2B_KEY_FORM}
-            id="field-credential-e2b"
-          />
-          <TemplateRow runtime={runtime} />
+          {managed ? (
+            <>
+              <ManagedKeyRow runtime={runtime} limit={offer.limit} />
+              <ManagedTemplateRow runtime={runtime} />
+            </>
+          ) : (
+            <>
+              <SecretRow
+                runtime={runtime}
+                name={E2B_CREDENTIAL}
+                copy={E2B_KEY_FORM}
+                id="field-credential-e2b"
+                extra={
+                  offer.covered &&
+                  offer.limit !== null && <UseManagedKey runtime={runtime} limit={offer.limit} />
+                }
+              />
+              <TemplateRow runtime={runtime} />
+            </>
+          )}
         </Group>
       )}
 
@@ -282,11 +319,14 @@ function SecretRow({
   name,
   copy,
   id = "field-credential",
+  extra,
 }: {
   runtime: Runtime;
   name: string;
   copy: CredentialCopy;
   id?: string;
+  /** One more action beside the row's own. */
+  extra?: ReactNode;
 }) {
   const held = stored(runtime, name);
   const [replacing, setReplacing] = useState(false);
@@ -300,15 +340,19 @@ function SecretRow({
         </>
       }
       actions={
-        held &&
-        !replacing && (
+        (held && !replacing) || extra ? (
           <>
-            <Button spacing="compact" onClick={() => setReplacing(true)}>
-              Replace
-            </Button>
-            <RemoveCredential runtimeId={runtime.id} name={name} />
+            {held && !replacing && (
+              <>
+                <Button spacing="compact" onClick={() => setReplacing(true)}>
+                  Replace
+                </Button>
+                <RemoveCredential runtimeId={runtime.id} name={name} />
+              </>
+            )}
+            {extra}
           </>
-        )
+        ) : undefined
       }
     >
       {(!held || replacing) && (
@@ -394,6 +438,89 @@ function SecretForm({
         </>
       )}
     </Form>
+  );
+}
+
+/** A runtime on the Factorial-managed key holds no key. Storing its own is the move off it: the
+ *  API flips the runtime in the same request, so the row reuses the key form. */
+function ManagedKeyRow({ runtime, limit }: { runtime: Runtime; limit: number | null }) {
+  const [storing, setStoring] = useState(false);
+  return (
+    <Row
+      title="Sandbox key"
+      status={<Lozenge appearance="neutral">Managed</Lozenge>}
+      meta={managedKeyMeta(limit)}
+      actions={
+        !storing && (
+          <Button spacing="compact" onClick={() => setStoring(true)}>
+            Use your own key
+          </Button>
+        )
+      }
+    >
+      {runtime.sandbox_gap && (
+        <SectionMessage appearance="warning" title="No sandbox can start">
+          {runtime.sandbox_gap}
+        </SectionMessage>
+      )}
+      {storing && (
+        <SecretForm
+          runtime={runtime}
+          name={E2B_CREDENTIAL}
+          copy={E2B_KEY_FORM}
+          id="field-credential-e2b"
+          onCancel={() => setStoring(false)}
+          onSaved={() => setStoring(false)}
+        />
+      )}
+    </Row>
+  );
+}
+
+function ManagedTemplateRow({ runtime }: { runtime: Runtime }) {
+  return (
+    <Row
+      title="Sandbox template"
+      meta={runtime.template ? <Code>{runtime.template}</Code> : NO_VALUE}
+    />
+  );
+}
+
+/** A PATCH replaces `details`, and the API refuses a template on this move, so every other key
+ *  the runtime holds is sent back. */
+function managedDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const { template: _template, ...kept } = details;
+  return { ...kept, isolation: "e2b", sandbox_key: "managed" };
+}
+
+function UseManagedKey({ runtime, limit }: { runtime: Runtime; limit: number }) {
+  const update = useUpdateRuntime(runtime.id);
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <Button spacing="compact" onClick={() => setConfirming(true)}>
+        Use the Factorial-managed key
+      </Button>
+      {confirming && (
+        <ConfirmDialog
+          title="Use the Factorial-managed key?"
+          consequence={`The runtime's own sandbox key and its template are removed. Sandboxes then run in Factorial's sandbox account, up to ${runCount(limit)} at a time for this organization.`}
+          confirmLabel="Use the managed key"
+          isPending={update.isPending}
+          error={update.error}
+          onCancel={() => {
+            update.reset();
+            setConfirming(false);
+          }}
+          onConfirm={() =>
+            update.mutate(
+              { details: managedDetails(runtime.details) },
+              { onSuccess: () => setConfirming(false) },
+            )
+          }
+        />
+      )}
+    </>
   );
 }
 

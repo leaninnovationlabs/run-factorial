@@ -87,3 +87,4 @@ export {
 export { Select, type SelectEntry, type SelectOption, TextArea, TextField } from "./TextField";
 export { AnchoredTooltip, Tooltip } from "./Tooltip";
 export { VisuallyHidden } from "./VisuallyHidden";
+export { WorkingDots } from "./WorkingDots";

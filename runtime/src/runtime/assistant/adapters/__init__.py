@@ -7,12 +7,18 @@ kind that needs it is actually asked for.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 from runtime.assistant.contract import ChatBackend
 from runtime.contract import AdapterUnavailable
 
-__all__ = ["create_backend"]
+__all__ = ["TAKES_IMAGES", "create_backend"]
+
+#: The kinds whose backend takes an image in a turn (`ChatBackend.supports_images`), so that the
+#: API can refuse an image for one that does not without loading a vendor module. A test pins
+#: this to the classes. `bedrock_responses` is out until an image is verified against Bedrock;
+#: which sign-ins of the others are handed one is the orchestrator's to say.
+TAKES_IMAGES: Final[frozenset[str]] = frozenset({"claude_sdk", "codex_cli"})
 
 
 def _claude_sdk(**options: Any) -> ChatBackend:

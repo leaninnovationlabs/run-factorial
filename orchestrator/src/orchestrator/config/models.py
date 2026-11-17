@@ -543,6 +543,14 @@ class GateReject(Outcome):
     inputs: tuple[InputRef, ...] = ()
 
 
+class GateConflict(Outcome):
+    """`gate.onConflict` — the agent step that fixes a pull request the gate cannot merge because
+    it conflicts with its target branch. Adds no graph edge: the gate acts on it, the graph
+    does not."""
+
+    rerun_step: str = Field(min_length=1)
+
+
 class Gate(_CamelBase):
     """Every gate control lives here: what is gated, and what happens (design.md §4)."""
 
@@ -555,6 +563,7 @@ class Gate(_CamelBase):
     waiting: Outcome | None = None
     on_approve: GateApprove
     on_reject: GateReject | None = None
+    on_conflict: GateConflict | None = None
 
 
 class GateStep(_CamelBase):
@@ -663,6 +672,26 @@ class ProcessConfig(_CamelBase):
         target = self.find_step(gate.gate.on_reject.rerun_step)
         return target if isinstance(target, AgentStep) else None
 
+    def conflict_fix_step(self, gate_name: str) -> AgentStep | None:
+        """The agent step that fixes a conflicting pull request at `gate_name`: the gate's
+        `onConflict.rerunStep`, else its `onReject.rerunStep`, else the `onReject.rerunStep` of
+        the nearest earlier gate, each only when an agent runs it. A gate that merges often has
+        no `onReject` of its own, while the work it merges came from an earlier step."""
+        index = next((i for i, s in enumerate(self.steps) if s.name == gate_name), None)
+        if index is None or not isinstance(self.steps[index], GateStep):
+            return None
+        gate = self.steps[index]
+        assert isinstance(gate, GateStep)
+        if gate.gate.on_conflict is not None:
+            target = self.find_step(gate.gate.on_conflict.rerun_step)
+            return target if isinstance(target, AgentStep) else None
+        for step in (gate, *reversed(self.steps[:index])):
+            if isinstance(step, GateStep) and step.gate.on_reject is not None:
+                target = self.find_step(step.gate.on_reject.rerun_step)
+                if isinstance(target, AgentStep):
+                    return target
+        return None
+
     def step(self, name: str) -> AgentStep | GateStep | ActionStep | CheckStep:
         found = self.find_step(name)
         if found is None:
@@ -710,6 +739,18 @@ class ProcessConfig(_CamelBase):
                 if rerun not in by_name:
                     problems.append(
                         f"Step {step.name!r}: gate.onReject.rerunStep {rerun!r} is not a step."
+                    )
+            if isinstance(step, GateStep) and step.gate.on_conflict is not None:
+                conflict = step.gate.on_conflict.rerun_step
+                if not step.gate.on_approve.merge:
+                    problems.append(
+                        f"Step {step.name!r}: gate.onConflict needs gate.onApprove.merge: true. "
+                        "A gate that does not merge has no merge to conflict."
+                    )
+                if not isinstance(by_name.get(conflict), AgentStep):
+                    problems.append(
+                        f"Step {step.name!r}: gate.onConflict.rerunStep {conflict!r} is not an "
+                        "agent step."
                     )
             preview = None if isinstance(step, GateStep) else step.preview
             if preview is not None and preview.review_gate is not None:

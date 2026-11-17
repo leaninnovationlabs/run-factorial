@@ -89,6 +89,7 @@ export function nodeTones(
     status: string;
     forced_by?: string | null;
     superseded_at?: string | null;
+    conflict_send_back?: boolean;
   }>,
   ticket?:
     | (Pick<TicketDetail, "status" | "current_step"> & Partial<Pick<TicketDetail, "park_reason">>)

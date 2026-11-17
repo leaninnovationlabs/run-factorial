@@ -11,9 +11,8 @@ import { Link } from "react-router-dom";
 import { useRuntimes } from "../api/queries";
 import {
   credentialState,
-  ISOLATION_LABELS,
-  isolationOf,
   RUNTIME_TYPE_LABELS,
+  sandboxLabelOf,
 } from "../components/runtimes/runtimes";
 import {
   Code,
@@ -100,7 +99,7 @@ export function RuntimesPage() {
                 ),
                 slug: <Slug slug={runtime.slug} />,
                 type: <Tag>{RUNTIME_TYPE_LABELS[runtime.type]}</Tag>,
-                sandbox: ISOLATION_LABELS[isolationOf(runtime.details)],
+                sandbox: sandboxLabelOf(runtime),
                 connected: runtime.connected_projects,
                 credential: (
                   <Lozenge appearance={connected ? "success" : "neutral"}>

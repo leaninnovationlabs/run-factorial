@@ -231,6 +231,9 @@ async def _reconcile_leased(
                         )
                         _clear_failures(ticket)
             finally:
+                # Once the transaction has ended its run is committed or gone, and the count
+                # sees what is true.
+                deps.sandbox_starts.release(ticket_id)
                 # After the commit or rollback, so no lock is held while a cancel blocks, and
                 # before the release below, so no other pass launches while it does.
                 await launches.settle(scope)
@@ -513,12 +516,12 @@ def _reapers(settings: Settings, now: Callable[[], datetime]) -> Reapers | None:
 
     The E2B ones when this deployment keeps E2B mirrors and names itself: first one without a
     key, which only prunes the mirrors and so cannot fail on a team; then one per E2B team:
-    every key a runtime holds, and a key replaced or removed in this process's life for
-    `workspace.retention` and `RETIRED_TEAM_SLACK` after. Either E2B kind reaps both harnesses:
-    sandboxes are fenced by deployment, not by harness. Then one per host kind with a
-    `local_root`, each reading only its own runs' state, as the two may share a root. A host
-    root has no deployment fence: it belongs to one deployment, whose keep set is the only one
-    its reaper hears."""
+    every key a runtime holds, the managed key while it is set, and a key replaced or removed
+    in this process's life for `workspace.retention` and `RETIRED_TEAM_SLACK` after. Either E2B
+    kind reaps both harnesses: sandboxes are fenced by deployment, not by harness. Then one per
+    host kind with a `local_root`, each reading only its own runs' state, as the two may share a
+    root. A host root has no deployment fence: it belongs to one deployment, whose keep set is
+    the only one its reaper hears."""
     hosts: list[WorkspaceReaper] = [
         adapter for adapter in _host_adapters(settings) if isinstance(adapter, WorkspaceReaper)
     ]
@@ -537,7 +540,7 @@ def _reapers(settings: Settings, now: Callable[[], datetime]) -> Reapers | None:
 
     async def reapers(session: AsyncSession) -> list[WorkspaceReaper]:
         at = now()
-        held = {key.get_secret_value() for key in await workspace_keys(session)}
+        held = {key.get_secret_value() for key in await workspace_keys(session, e2b.managed)}
         last_held.update(dict.fromkeys(held, at))
         for key, seen in list(last_held.items()):
             if at - seen > held_for:

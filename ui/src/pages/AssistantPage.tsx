@@ -12,12 +12,5 @@ import { usePageTitle } from "../components/ui";
 export function AssistantPage() {
   const session = useAssistantSession();
   usePageTitle(["Assistant"]);
-  return (
-    <AssistantChat
-      conversationId={session.conversationId}
-      onConversation={session.onConversation}
-      scrollTop={session.scrollTop}
-      contextPage={session.contextPage}
-    />
-  );
+  return <AssistantChat session={session} />;
 }

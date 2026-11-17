@@ -28,11 +28,12 @@ async function render(
   payload: Record<string, unknown>,
   turnId: number | null = 9,
   permissions?: string[],
+  asked = ASKED,
 ) {
   const onRetry = vi.fn();
   const item = chatItem(12, 12, "notice", payload, { turn_id: turnId });
   const mounted = await mountInAssistant(
-    <Notice item={item} items={[ASKED, item]} onRetry={onRetry} />,
+    <Notice item={item} items={[asked, item]} onRetry={onRetry} />,
     { permissions },
   );
   view = mounted.view;
@@ -47,7 +48,7 @@ describe("Notice", () => {
     });
     expect(root.textContent).toContain("The model is rate limited. Wait, then retry.");
     await click(byText(root, "button", "Retry"));
-    expect(onRetry).toHaveBeenCalledExactlyOnceWith("which tickets are blocked?", "/overview");
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith("which tickets are blocked?", "/overview", []);
   });
 
   test("a turn the assistant lost to a restart can be sent again", async () => {
@@ -90,5 +91,44 @@ describe("Notice", () => {
       null,
     );
     expect(root.querySelector("a, button")).toBeNull();
+  });
+
+  test("Retry sends what was pointed at again with the words, and works for a message of chips alone", async () => {
+    const pointed = { label: "Ticket 212", text: "Blocked at build", page: "/tickets/212" };
+    const { root, onRetry } = await render(
+      { text: "The assistant restarted. Send your message again." },
+      9,
+      undefined,
+      chatItem(
+        10,
+        10,
+        "user_text",
+        { text: "", page: "/tickets/212", context: [pointed] },
+        { turn_id: 9 },
+      ),
+    );
+    await click(byText(root, "button", "Retry"));
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith("", "/tickets/212", [pointed]);
+  });
+
+  test("a message that carried files has no Retry, since their bytes are not kept in the browser, and says what to do", async () => {
+    const { root } = await render(
+      { text: "The assistant restarted. Send your message again." },
+      9,
+      undefined,
+      chatItem(
+        10,
+        10,
+        "user_text",
+        {
+          text: "Why did it time out?",
+          page: "/tickets/212",
+          attachments: [{ name: "worker.log", media_type: "text/plain", size: 9 }],
+        },
+        { turn_id: 9 },
+      ),
+    );
+    expect(byText(root, "button", "Retry")).toBeNull();
+    expect(root.textContent).toContain("attach the files again");
   });
 });

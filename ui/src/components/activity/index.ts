@@ -6,6 +6,7 @@ export {
   attemptKeyForNode,
   gatePullNumber,
   heldAt,
+  isWorking,
   type LongContent,
   type Spawn,
   segmentsFrom,

@@ -29,6 +29,8 @@ const ENTERED_BY = {
   retry: { label: "Retry", marker: " retry" },
   restart: { label: "Restart", marker: "" },
   redo: { label: "Redo", marker: " redo" },
+  conflict_fix: { label: "Conflict fix", marker: " conflict fix" },
+  conflict_fixed: { label: "Conflict fixed", marker: "" },
 } as const;
 
 const marker = (segment: StepSegment) =>

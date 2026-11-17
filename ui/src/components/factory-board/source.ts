@@ -31,6 +31,7 @@ export function toBoard(response: OverviewResponse): {
       quarantined: t.quarantined_at !== null,
       latestRunStatus: t.latest_run_status,
       parkReason: t.park_reason,
+      sandboxWaiting: t.sandbox_wait != null,
       runs: t.runs,
       attempt: t.attempt,
       // A Decimal string on the wire so it keeps its scale. Left as one it would sort lexically

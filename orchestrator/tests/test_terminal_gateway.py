@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import pytest
 import uvicorn
+from pydantic import SecretStr
 from sqlalchemy import cast, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.types import Text
@@ -33,6 +34,7 @@ from websockets.typing import Origin, Subprotocol
 from orchestrator.access.decision import organization_of
 from orchestrator.api import sessions
 from orchestrator.api.auth import BEARER_PRINCIPAL
+from orchestrator.api.services.organizations import default_organization_id
 from orchestrator.api.sessions import (
     SESSION_COOKIE,
     TICKET_PROTOCOL,
@@ -45,19 +47,27 @@ from orchestrator.db.models import (
     AppUser,
     Event,
     OrganizationMember,
+    Runtime,
     StepRun,
     StepRunStatus,
     Ticket,
 )
 from orchestrator.events import EventType
-from orchestrator.events.terminals import READ_ONLY_MOVED, READ_ONLY_VIEW
-from orchestrator.settings import APP_PREFIX, AuthSettings, Settings, TerminalSettings
+from orchestrator.events.terminals import READ_ONLY_MOVED, READ_ONLY_VIEW, TerminalRun
+from orchestrator.secrets import store
+from orchestrator.settings import (
+    APP_PREFIX,
+    AuthSettings,
+    ManagedSandbox,
+    Settings,
+    TerminalSettings,
+)
 from orchestrator.terminal.app import WS_PROTOCOL, SubstrateRelays, create_app
 from orchestrator.terminal.audit import ViewerAudit
 from orchestrator.terminal.connection import Gateway, Timing, Viewer
 from orchestrator.terminal.protocol import SEAT_IDLE, CloseCode
 from runtime.contract import TerminalTarget
-from runtime.terminal import TMUX_LOCKDOWN
+from runtime.terminal import TMUX_LOCKDOWN, HostTmuxRelay
 from tests.api_harness import TOKEN, build_app, client_for, make_settings
 from tests.members import ensure_member, viewer_role
 from tests.terminal_rows import record, seed_run
@@ -1610,3 +1620,40 @@ async def test_the_ticket_route_refuses_no_credential_and_a_switched_off_termina
 
     assert response.status_code == (401 if case == "no credential" else 409)
     assert "ticket" not in response.json()
+
+
+async def test_a_managed_runtimes_sandbox_is_reached_with_the_managed_key(
+    maker: async_sessionmaker[AsyncSession], master_key: None
+) -> None:
+    """Never the stale key the row still stores: that names another team."""
+    dialed: list[str] = []
+    relays = SubstrateRelays(
+        host=HostTmuxRelay(),
+        e2b=lambda key: dialed.append(key) or HostTmuxRelay(),
+        managed=ManagedSandbox(api_key=SecretStr("e2b_managed_pool")),
+    )
+    async with maker() as session:
+        row = Runtime(
+            organization_id=await default_organization_id(session),
+            slug=f"rt-{uuid4().hex[:10]}",
+            name="managed",
+            type="claude_api",
+            details={"isolation": "e2b", "sandbox_key": "managed"},
+        )
+        session.add(row)
+        await session.flush()
+        await store.put_for_runtime(session, row.id, "E2B_API_KEY", "e2b_stale_own_key")
+        run = TerminalRun(
+            step_run_id=1,
+            project_id=1,
+            ticket_id=1,
+            step="develop",
+            attempt=1,
+            status=StepRunStatus.RUNNING,
+            runtime_id=row.id,
+        )
+        target = TerminalTarget(substrate="e2b", socket="/tmp/s", session=SESSION, sandbox_id="x")
+
+        await relays.relay_for(session, run, target)
+
+    assert dialed == ["e2b_managed_pool"]

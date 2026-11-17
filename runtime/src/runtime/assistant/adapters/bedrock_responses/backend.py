@@ -105,6 +105,7 @@ class BedrockResponsesBackend:
     supports_resume: ClassVar[bool] = False
     supports_cancel: ClassVar[bool] = True
     supports_effort: ClassVar[bool] = False
+    supports_images: ClassVar[bool] = False
 
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport

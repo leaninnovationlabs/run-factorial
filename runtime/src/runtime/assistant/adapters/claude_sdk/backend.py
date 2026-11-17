@@ -14,6 +14,7 @@ The turn's tools run in this process, through the SDK's in-process server
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import shutil
@@ -23,7 +24,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Final, cast
+from typing import Any, ClassVar, Final, cast
 
 import claude_agent_sdk
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, Message, ResultMessage
@@ -82,6 +83,7 @@ class ClaudeSdkBackend:
     supports_resume: ClassVar[bool] = True
     supports_cancel: ClassVar[bool] = True
     supports_effort: ClassVar[bool] = True
+    supports_images: ClassVar[bool] = True
 
     def __init__(self, work_root: Path) -> None:
         self._work_root = Path(work_root)
@@ -166,7 +168,7 @@ class ClaudeSdkBackend:
             if live.cancelled:
                 yield TurnDone(stop=TurnStop.CANCELLED)
                 return
-            await client.query(spec.message)
+            await client.query(_asked(spec))
             # An async generator at runtime, typed only as an iterator.
             replies = cast(AsyncGenerator[Message], client.receive_response())
             async with aclosing(replies) as messages:
@@ -201,6 +203,34 @@ class ClaudeSdkBackend:
         live.cancelled = True
         if live.connected and live.client is not None:
             await _interrupt(live.client)
+
+
+def _asked(spec: ChatTurnSpec) -> str | AsyncIterator[dict[str, Any]]:
+    """What the turn asks the CLI: the message, or with images one structured message whose
+    content is the words and then each image as a base64 block."""
+    if not spec.images:
+        return spec.message
+    content: list[dict[str, Any]] = [{"type": "text", "text": spec.message}]
+    content.extend(
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64.b64encode(image.content).decode(),
+            },
+        }
+        for image in spec.images
+    )
+
+    async def one() -> AsyncIterator[dict[str, Any]]:
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": content},
+            "parent_tool_use_id": None,
+        }
+
+    return one()
 
 
 def _fresh_start(spec: ChatTurnSpec) -> ChatTurnSpec:

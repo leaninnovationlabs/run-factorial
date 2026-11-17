@@ -18,8 +18,10 @@
 import { type MutableRefObject, useLayoutEffect, useRef, useState } from "react";
 import type { ChatItem, ChatTurn, ProposalPayload } from "../../api/types";
 import { atFoot } from "../activity/follow";
-import { EmptyState, VisuallyHidden } from "../ui";
+import { cx, EmptyState, VisuallyHidden } from "../ui";
 import { AssistantAvatar, PersonAvatar } from "./Avatar";
+import type { Pointed } from "./draft";
+import { useBodyText } from "./frames";
 import { AssistantText } from "./items/AssistantText";
 import { ChartCard } from "./items/ChartCard";
 import { EditorDraftChip } from "./items/EditorDraftChip";
@@ -28,10 +30,11 @@ import { ProposalCard } from "./items/ProposalCard";
 import { ShowMeChip } from "./items/ShowMeChip";
 import { ToolGroup } from "./items/ToolGroup";
 import { namesCard } from "./items/ToolLine";
+import { FileChips, filesIn, PointedChips, pointedIn } from "./PointedChips";
 import { TypingIndicator } from "./TypingIndicator";
 import { isLive } from "./useConversationStream";
 
-type Retry = (text: string, page: string) => void;
+type Retry = (text: string, page: string, pointed: Pointed[]) => void;
 
 type Part = { tools: false; item: ChatItem } | { tools: true; key: number; calls: ChatItem[] };
 
@@ -127,14 +130,22 @@ function Item({
   }
 }
 
-function Said({ item }: { item: ChatItem }) {
+function Said({ item, dense }: { item: ChatItem; dense: boolean }) {
+  const body = useBodyText();
+  const said = text(item);
   return (
     <div data-speaker="person" className="flex items-start justify-end gap-2">
-      <p className="max-w-[85%] min-w-0 rounded-lg bg-neutral px-3 py-2 text-body break-words whitespace-pre-wrap text-default">
-        <VisuallyHidden>You said </VisuallyHidden>
-        {text(item)}
-      </p>
-      <PersonAvatar />
+      <div className="flex max-w-[85%] min-w-0 flex-col gap-2 rounded-lg bg-neutral px-3 py-2">
+        <FileChips files={filesIn(item.payload)} />
+        <PointedChips pointed={pointedIn(item.payload)} />
+        {said && (
+          <p className={cx("break-words whitespace-pre-wrap text-default", body)}>
+            <VisuallyHidden>You said </VisuallyHidden>
+            {said}
+          </p>
+        )}
+      </div>
+      {!dense && <PersonAvatar />}
     </div>
   );
 }
@@ -144,6 +155,8 @@ export function ItemStream({
   turn,
   onRetry,
   scrollTop,
+  wide = false,
+  dense = false,
 }: {
   items: ChatItem[];
   turn: ChatTurn | null;
@@ -151,6 +164,10 @@ export function ItemStream({
   /** Where the reader left the stream, kept across the Drawer closing; null for its foot, which
    *  is where they return to however much has arrived since. */
   scrollTop: MutableRefObject<number | null>;
+  /** The whole of the frame's width, for the Drawer at its full width; otherwise a reading width. */
+  wide?: boolean;
+  /** A frame beside the page: no avatars, since a bubble on the right already says who spoke. */
+  dense?: boolean;
 }) {
   const log = useRef<HTMLDivElement>(null);
   /** The place to return to, held until the items are drawn: the Drawer mounts before its
@@ -210,13 +227,13 @@ export function ItemStream({
         />
       ) : (
         // A reading width down the middle: the page is the whole window wide.
-        <div className="mx-auto flex max-w-4xl flex-col gap-3">
+        <div className={cx("mx-auto flex flex-col gap-3", !wide && "max-w-4xl")}>
           {blocks.map((block, at) =>
             block.person ? (
-              <Said key={block.item.id} item={block.item} />
+              <Said key={block.item.id} item={block.item} dense={dense} />
             ) : (
               <div key={block.key} data-speaker="assistant" className="flex items-start gap-2">
-                <AssistantAvatar />
+                {!dense && <AssistantAvatar />}
                 <div className="flex min-w-0 flex-1 flex-col gap-3">
                   {block.parts.length > 0 && (
                     <VisuallyHidden>Factorial Assistant said</VisuallyHidden>

@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from typing import Final, Literal, cast
 
 from pydantic import SecretStr
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.access import Permission
@@ -36,6 +36,7 @@ from orchestrator.api.services.assistant_settings import (
     host_bedrock_refused,
     load_assistant_settings,
 )
+from orchestrator.assistant.attachments import IMAGE_TYPES, TEXT_TYPE
 from orchestrator.assistant.config import AssistantSettings
 from orchestrator.assistant.credential import CredentialFetch, SettingsChanged
 from orchestrator.assistant.github_token import (
@@ -52,13 +53,19 @@ from orchestrator.assistant.items import (
     notify_items,
     update_item,
 )
-from orchestrator.assistant.prompt import system_prompt, turn_message
+from orchestrator.assistant.prompt import (
+    HISTORY_FILE_CHARS,
+    history_message,
+    system_prompt,
+    turn_message,
+)
 from orchestrator.assistant.state_store import PostgresStateStore
 from orchestrator.assistant.toolbox import TurnToolbox
 from orchestrator.assistant.turns import NOT_SET_UP, RESTART_NOTICE, finish_turn, renew_lease
-from orchestrator.assistant.vocabulary import BACKENDS, HOST_ROLE_MODE
+from orchestrator.assistant.vocabulary import BACKENDS, HOST_ROLE_MODE, takes_images
 from orchestrator.db.base import JsonDict
 from orchestrator.db.models import (
+    ChatAttachment,
     ChatConversation,
     ChatItem,
     ChatItemKind,
@@ -68,16 +75,20 @@ from orchestrator.db.models import (
     ChatTurnTrigger,
     CostSource,
     Organization,
+    Project,
+    Ticket,
 )
 from orchestrator.db.session import SessionScope
 from orchestrator.factorial.bedrock_token import BedrockMintError, mint_bearer
 from orchestrator.logs import note
+from orchestrator.mcp_server.chat.routes import route_for
 from orchestrator.mcp_server.chat.scope import ChatScope
 from orchestrator.mcp_server.context import McpDeps
 from orchestrator.settings import Settings
 from runtime.assistant.contract import (
     ChatBackend,
     ChatEvent,
+    ChatImage,
     ChatTurnSpec,
     HistoryItem,
     TextDelta,
@@ -91,7 +102,7 @@ from runtime.assistant.contract import (
     TurnStop,
     Usage,
 )
-from runtime.contract import AdapterUnavailable
+from runtime.contract import AdapterUnavailable, AttachmentMediaType
 
 __all__ = ["LIMIT_NOTICE", "RunnerDeps", "Wakes", "run_turn"]
 
@@ -294,6 +305,13 @@ async def _prepare(turn_id: int, deps: RunnerDeps, owner: str) -> _Prepared | No
         process = deps.settings()
         wall_clock = timedelta(seconds=process.assistant.turn_wall_clock_seconds)
         turn.model = assistant.model
+        message, images = await _asked(
+            session,
+            turn,
+            conversation.organization_id,
+            takes_images=backend.supports_images
+            and takes_images(assistant.backend, assistant.auth_mode),
+        )
         spec = ChatTurnSpec(
             turn_id=str(turn.id),
             conversation_id=str(conversation.id),
@@ -303,7 +321,8 @@ async def _prepare(turn_id: int, deps: RunnerDeps, owner: str) -> _Prepared | No
             auth_mode=cast(Literal["api_key", "subscription", "bedrock"], assistant.auth_mode),
             credential=credential,
             system_prompt=system_prompt(),
-            message=await _message(session, turn),
+            message=message,
+            images=images,
             history=await _history(session, turn),
             resume_session=(
                 conversation.backend_session_id
@@ -365,12 +384,16 @@ async def _fail_config(
     )
 
 
-async def _message(session: AsyncSession, turn: ChatTurn) -> str:
+async def _asked(
+    session: AsyncSession, turn: ChatTurn, organization_id: int, *, takes_images: bool
+) -> tuple[str, tuple[ChatImage, ...]]:
     """The person's message, after every decision the model has not heard: a decline or an
-    expiry queues no turn of its own."""
+    expiry queues no turn of its own. With it, the images they attached, for a backend that
+    takes them; one that takes none has its model told what it cannot see."""
     decisions = await _decisions(session, turn)
     if turn.trigger == ChatTurnTrigger.APPROVAL:
-        return "\n".join(decisions) or "The person decided a proposal; its card shows the outcome."
+        told = "\n".join(decisions) or "The person decided a proposal; its card shows the outcome."
+        return told, ()
     sent = (
         await session.scalars(
             select(ChatItem)
@@ -382,8 +405,57 @@ async def _message(session: AsyncSession, turn: ChatTurn) -> str:
             .limit(1)
         )
     ).one()
-    said = turn_message(str(sent.payload.get("text", "")), sent.payload.get("page"))
-    return "\n".join([*decisions, said])
+    attached = (
+        await session.scalars(
+            select(ChatAttachment)
+            .where(ChatAttachment.item_id == sent.id)
+            .order_by(ChatAttachment.id)
+        )
+    ).all()
+    pictures = [file for file in attached if file.media_type in IMAGE_TYPES]
+    page = sent.payload.get("page")
+    context = sent.payload.get("context")
+    said = turn_message(
+        str(sent.payload.get("text", "")),
+        page,
+        context=context if isinstance(context, list) else (),
+        project_id=await _ticket_project(session, page, organization_id),
+        files=[
+            (file.name, file.content.decode("utf-8", "replace"))
+            for file in attached
+            if file.media_type == TEXT_TYPE
+        ],
+        images=[file.name for file in pictures],
+        images_seen=takes_images,
+    )
+    images = tuple(
+        ChatImage(
+            name=f"image-{number}",
+            media_type=cast(AttachmentMediaType, file.media_type),
+            content=file.content,
+        )
+        for number, file in enumerate(pictures, start=1)
+    )
+    return "\n".join([*decisions, said]), images if takes_images else ()
+
+
+async def _ticket_project(session: AsyncSession, page: object, organization_id: int) -> int | None:
+    """The project of the ticket whose page the message came from, in the conversation's own
+    organization: the page's address names only the ticket."""
+    if not isinstance(page, str) or route_for(page) != "/tickets/:ticketId":
+        return None
+    number = page.rsplit("/", 1)[1]
+    # The route takes any run of digits; a row's id is a 64-bit number.
+    if len(number) > 18:
+        return None
+    return await session.scalar(
+        select(Ticket.project_id)
+        .join(Project, Project.id == Ticket.project_id)
+        .where(
+            Ticket.id == int(number),
+            Project.organization_id == organization_id,
+        )
+    )
 
 
 async def _decisions(session: AsyncSession, turn: ChatTurn) -> list[str]:
@@ -436,10 +508,29 @@ async def _history(session: AsyncSession, turn: ChatTurn) -> tuple[HistoryItem, 
             .limit(HISTORY)
         )
     ).all()
+    # Only as much of each text file as the history tells: a character is four bytes at most.
+    files: dict[int, list[tuple[str, str]]] = {}
+    for item_id, name, head in await session.execute(
+        select(
+            ChatAttachment.item_id,
+            ChatAttachment.name,
+            func.substring(ChatAttachment.content, 1, 4 * HISTORY_FILE_CHARS + 4),
+        )
+        .where(
+            ChatAttachment.item_id.in_([item.id for item in earlier]),
+            ChatAttachment.media_type == TEXT_TYPE,
+        )
+        .order_by(ChatAttachment.id)
+    ):
+        files.setdefault(item_id, []).append((name, bytes(head).decode("utf-8", "ignore")))
     return tuple(
         HistoryItem(
             role="user" if item.kind == ChatItemKind.USER_TEXT else "assistant",
-            text=str(item.payload.get("text", "")),
+            text=(
+                history_message(item.payload, files=files.get(item.id, ()))
+                if item.kind == ChatItemKind.USER_TEXT
+                else str(item.payload.get("text", ""))
+            ),
         )
         for item in reversed(earlier)
     )

@@ -7,6 +7,7 @@ import { keys, LIVE_MS, retryUnlessClientError } from "./keys";
 import type {
   ChangeRequestResult,
   CompletionResult,
+  ConflictFixResult,
   RequestResult,
   RunPreview,
   TerminalInfo,
@@ -302,6 +303,29 @@ export const useRequestChanges = (ticketId: number) =>
       feedback: string;
       idempotencyKey: string;
     }): Promise<ChangeRequestResult> => api.requestChanges(stepRunId, feedback, idempotencyKey),
+  );
+
+/**
+ * `onAnswer` hears the API's answer as it arrives. A mutate-level `onSuccess` fires only after
+ * the hook's own, which waits for the page to refetch, so an answer shown from there appears late.
+ */
+export const useRequestConflictFix = (
+  ticketId: number,
+  onAnswer: (result: ConflictFixResult) => void,
+) =>
+  useTicketRequest(
+    ticketId,
+    async ({
+      stepRunId,
+      idempotencyKey,
+    }: {
+      stepRunId: number;
+      idempotencyKey: string;
+    }): Promise<ConflictFixResult> => {
+      const result = await api.requestConflictFix(stepRunId, idempotencyKey);
+      onAnswer(result);
+      return result;
+    },
   );
 
 export const useInterruptRun = (ticketId: number) =>

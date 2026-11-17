@@ -23,9 +23,21 @@ import { parseSse } from "./sse";
 const FIRST_WAIT_MS = 1000;
 const LONGEST_WAIT_MS = 15_000;
 
-type Stream = { items: ChatItem[]; turn: ChatTurn | null; connected: boolean; gone: boolean };
+export type Stream = {
+  items: ChatItem[];
+  turn: ChatTurn | null;
+  connected: boolean;
+  gone: boolean;
+  /** The conversation has been read: until then, no items does not mean nothing was said. */
+  loaded: boolean;
+};
 
-const NOTHING: Stream = { items: [], turn: null, connected: false, gone: false };
+/** A conversation that has been read and holds nothing: the one a new chat would be. */
+export function isBlank(stream: Stream): boolean {
+  return stream.loaded && stream.items.length === 0 && !isLive(stream.turn);
+}
+
+const NOTHING: Stream = { items: [], turn: null, connected: false, gone: false, loaded: false };
 
 const REFUSED = new Set([401, 403, 404]);
 
@@ -92,6 +104,7 @@ export function useConversationStream(conversationId: number | null): Stream {
         if (signal.aborted) return;
         take(seed.items);
         setTurn(seed.turn);
+        update((stream) => ({ ...stream, loaded: true }));
       } catch (error) {
         if (refused(error)) return giveUp();
         // The stream sends the same rows; any other failed first read only means waiting for it.

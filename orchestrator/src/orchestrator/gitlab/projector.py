@@ -6,12 +6,27 @@ does not change when the forge does.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
-from typing import Literal
+from typing import Final, Literal
 
+from orchestrator.adapters.merges import MergeRefused, refusal_message
 from orchestrator.gitlab.client import GitLabClient, GitLabError, quote_project
 
 __all__ = ["GitLabProjector"]
+
+
+#: The merge endpoint's answers for "not now": not mergeable (405, 406), the head moved off
+#: `sha` (409), or the request is invalid as it stands (422). Every other failure is
+#: infrastructure.
+_MERGE_REFUSALS: Final = frozenset({405, 406, 409, 422})
+
+def _refusal_message(exc: GitLabError) -> str:
+    try:
+        body = json.loads(exc.body or "")
+    except ValueError:
+        body = None
+    return refusal_message(exc.status_code, body)
 
 
 class GitLabProjector:
@@ -88,11 +103,16 @@ class GitLabProjector:
             payload[key] = commit_title
         if sha:
             payload["sha"] = sha
-        result = await self._client.request(
-            "PUT",
-            f"/projects/{self._pid}/merge_requests/{pr_number}/merge",
-            json=payload,
-        )
+        try:
+            result = await self._client.request(
+                "PUT",
+                f"/projects/{self._pid}/merge_requests/{pr_number}/merge",
+                json=payload,
+            )
+        except GitLabError as exc:
+            if exc.status_code not in _MERGE_REFUSALS:
+                raise
+            raise MergeRefused(exc.status_code, _refusal_message(exc)) from exc
         if isinstance(result, dict) and isinstance(result.get("merge_commit_sha"), str):
             return result["merge_commit_sha"]
         if isinstance(result, dict) and isinstance(result.get("sha"), str):

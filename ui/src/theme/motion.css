@@ -3,8 +3,9 @@
  * and "you are here" dimming and back. The board and the process graph both play them, from this
  * one definition, so the same gesture keeps the same tempo wherever it appears. Each user plays a
  * beat three times and stops (WCAG 2.2.2) — except the process graph's running step, which beats
- * while it runs (`flow.css`) — and drops it under reduced motion; each corner sets its
- * own `--reticle-x` / `-y` diagonal sign, and each picture sets `--reticle-reach`.
+ * while it runs (`flow.css`), as the working dots below do — and drops it under reduced motion;
+ * each corner sets its own `--reticle-x` / `-y` diagonal sign, and each picture sets
+ * `--reticle-reach`.
  */
 
 @keyframes reticle-pulse {
@@ -27,6 +28,32 @@
   }
   50% {
     opacity: 0.28;
+  }
+}
+
+/* An agent at work (`WorkingDots`): each dot rises in turn, for as long as the work goes on, as
+   the process graph's running step beats while it runs. Under reduced motion the dots dim and
+   brighten in place instead (`working-fade`), so they still read as live without moving. */
+@keyframes working-wave {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-0.25rem);
+    opacity: 1;
+  }
+}
+
+@keyframes working-fade {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

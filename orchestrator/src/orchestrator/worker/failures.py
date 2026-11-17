@@ -26,6 +26,7 @@ from orchestrator.github import (
     LABEL_BLOCKED,
 )
 from orchestrator.worker.inputs import release_run_credential
+from orchestrator.worker.rework import conflict_window
 from orchestrator.worker.tick_context import _apply_outcome, _ordinal, _retry_policy, _Tick
 from runtime.contract import (
     SpawnError,
@@ -216,7 +217,8 @@ async def _retry_or_escalate(
     max_attempts = retry.max_attempts if retry is not None else 1
     # The generation's own count: a restart grants the whole budget again (decision 67), while
     # the attempt number keeps counting for the event log.
-    tried = await _ordinal(tick.session, run)
+    fix = await conflict_window(tick, step) if isinstance(step, AgentStep) else None
+    tried = await _ordinal(tick.session, run, since=fix.run.ended_at if fix is not None else None)
     if not permanent and retry is not None and tried < max_attempts:
         # No sleeping: the due time is recorded in the event and recomputed from `ended_at` on the
         # tick that acts on it, so a worker restart cannot lose a scheduled retry.

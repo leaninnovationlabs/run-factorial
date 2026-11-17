@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 from urllib.parse import quote
 
 from orchestrator.adapters.split import SourceForge, SourceTracker, views_from_source
@@ -19,6 +19,7 @@ from orchestrator.adapters.state import (
     CheckRunState,
     CommentState,
     IssueState,
+    Mergeability,
     PullRequestState,
     RepoPermission,
     ReviewState,
@@ -31,6 +32,13 @@ from orchestrator.gitlab.client import GitLabClient, GitLabError, quote_project
 from runtime.gitlab_delivery import gitlab_delivery_author
 
 __all__ = ["GitLabStateSource", "gitlab_views", "list_issues", "repo_issue"]
+
+#: What `merge_status` says, where GitLab before 15.6 sends no `detailed_merge_status`. Every
+#: other value, `checking`, `unchecked` and `cannot_be_merged_recheck` among them, is UNKNOWN.
+_LEGACY_MERGE_STATUS: Final[dict[object, Mergeability]] = {
+    "can_be_merged": Mergeability.CLEAN,
+    "cannot_be_merged": Mergeability.CONFLICTING,
+}
 
 
 def _labels(raw: Any) -> frozenset[str]:
@@ -91,6 +99,10 @@ def gitlab_views(source: StateSource, *, bot_login: str = "") -> tuple[SourceTra
 
 
 class GitLabStateSource(StateSource):
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return False
+
     def __init__(self, client: GitLabClient, repo: str, issue_number: int) -> None:
         self._client = client
         self._repo = repo
@@ -196,6 +208,22 @@ class GitLabStateSource(StateSource):
         head_sha = await self._mr_head_sha(number)
         native = await self._fetch_native_approvals(number)
         return _gitlab_gate_verdict(verdict, head_sha, native)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        payload = await self._client.get(f"/projects/{self._pid}/merge_requests/{number}")
+        if not isinstance(payload, dict):
+            return Mergeability.UNKNOWN
+        detailed = payload.get("detailed_merge_status")
+        if payload.get("has_conflicts") is True or detailed == "conflict":
+            return Mergeability.CONFLICTING
+        if detailed is None:
+            # GitLab before 15.6 sends only `merge_status`, which cannot tell "behind".
+            return _LEGACY_MERGE_STATUS.get(payload.get("merge_status"), Mergeability.UNKNOWN)
+        if detailed == "need_rebase":
+            return Mergeability.BEHIND
+        if detailed in ("checking", "unchecked", "preparing"):
+            return Mergeability.UNKNOWN
+        return Mergeability.CLEAN
 
     async def _mr_head_sha(self, number: int) -> str | None:
         for pull in await self._mrs.get():

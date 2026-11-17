@@ -11,7 +11,7 @@ from tests.scaffold_lanes import STACKED, UNSTACKED
 
 def test_agent_entry_carries_its_variants():
     entry = catalog.entries()[("agent", "plan-agent")]
-    assert entry.version == 9
+    assert entry.version == 10
     assert "stacked" in entry.variants
 
 

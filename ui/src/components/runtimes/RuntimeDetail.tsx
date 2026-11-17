@@ -35,7 +35,7 @@ import {
 import { Credentials } from "./RuntimeCredentials";
 import { RuntimeMetadata } from "./RuntimeMetadata";
 import { axesOf, axisLabels, offerKey } from "./runtimeChoice";
-import { bedrockModelOf, bedrockRegionOf, ISOLATION_LABELS, isolationOf } from "./runtimes";
+import { bedrockModelOf, bedrockRegionOf, isolationOf, sandboxLabelOf } from "./runtimes";
 
 export function RuntimeDetail({ runtime }: { runtime: Runtime }) {
   return (
@@ -178,7 +178,7 @@ function Details({ runtime }: { runtime: Runtime }) {
         <dd className="text-default">{labels.auth}</dd>
         <dt className="text-subtle">Sandbox</dt>
         <dd className="flex flex-wrap items-center gap-2 text-default">
-          {ISOLATION_LABELS[isolation]}
+          {sandboxLabelOf(runtime)}
           {options.data && !options.data.offered.includes(offerKey(runtime.type, isolation)) && (
             <Lozenge>No longer offered</Lozenge>
           )}

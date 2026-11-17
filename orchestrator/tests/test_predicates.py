@@ -28,6 +28,7 @@ from orchestrator.github.state import (
     CheckRunState,
     CommentState,
     IssueState,
+    Mergeability,
     PullRequestState,
     RepoPermission,
     ReviewState,
@@ -205,6 +206,14 @@ class CountingState:
         self.calls["pr_review_verdict"] += 1
         self.verdict_numbers.append(number)
         return await self._inner.pr_review_verdict(number)
+
+    async def pr_mergeability(self, number: int) -> Mergeability:
+        self.calls["pr_mergeability"] += 1
+        return await self._inner.pr_mergeability(number)
+
+    @property
+    def approvals_bound_to_head(self) -> bool:
+        return self._inner.approvals_bound_to_head
 
     async def repo_permission(self, login: str) -> RepoPermission:
         self.calls["repo_permission"] += 1

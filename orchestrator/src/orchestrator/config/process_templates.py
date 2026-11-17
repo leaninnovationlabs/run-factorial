@@ -10,12 +10,13 @@ them to the `factorial` branch. Each folder ships as package data beside the sca
 `scaffold/templates/process-templates/<key>/processes/process-<lane>.yaml`, because the image
 carries no `docs/`.
 
-`simple` is the lanes of docs/samples/factorial-simple. `superpowers` is the one lane of
-docs/samples/factorial-superpowers, whose design and plan a person approves in the dashboard.
-Both serve GitHub and GitLab: a process file names no forge, and their agents' prompts name both
-`gh` and `glab`. The tests hold each template's parsed content equal to its sample's, and hold a
-first commit of each template, on either forge, to every path its sample folder has, with the
-sample's text.
+`simple` is the `primary` lane of docs/samples/factorial-simple. That sample keeps a second
+lane, `simple`, with a test step: it is the commented reference for the format and no template
+ships it. `superpowers` is the one lane of docs/samples/factorial-superpowers, whose design and
+plan a person approves in the dashboard. Both serve GitHub and GitLab: a process file names no
+forge, and their agents' prompts name both `gh` and `glab`. The tests hold each template's
+parsed content equal to its sample's, and hold a first commit of each template, on either
+forge, to the paths its sample folder has for that lane, with the sample's text.
 
 The shells are what the editor fills a new agent, skill, MCP server or process from: one folder
 per kind under `scaffold/templates/shells/`, with `__NAME__` where the name the operator types
@@ -87,8 +88,8 @@ PROCESS_TEMPLATES: tuple[ProcessTemplate, ...] = (
         key="simple",
         title="Simple template",
         description=(
-            "Two lanes: simple plans, builds and tests each ticket; primary skips the test step "
-            "for a repo with no test suite to run. A person reviews the spec and the code."
+            "One lane: an agent turns each ticket into a spec, and another builds it. A person "
+            "reviews the spec and the code, each at its own pull request."
         ),
     ),
     ProcessTemplate(

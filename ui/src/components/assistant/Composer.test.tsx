@@ -8,6 +8,7 @@ import { ApiError } from "../../api/client";
 import type { ChatTurn } from "../../api/types";
 import { click, type Mounted, mount, press, settle, type } from "../../testDom";
 import { Composer } from "./Composer";
+import type { Draft } from "./draft";
 import { chatTurn } from "./testFakes";
 
 let view: Mounted | null = null;
@@ -18,7 +19,8 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-const onSend = vi.fn(async (_text: string) => true);
+const onSend = vi.fn(async (_draft: Draft) => true);
+const said = (text: string): Draft => ({ text, pointed: [], files: [] });
 const onStop = vi.fn(async (_turnId: number): Promise<unknown> => undefined);
 
 function composer(turn: ChatTurn | null, { isBlocked = false, error = null as unknown } = {}) {
@@ -50,7 +52,7 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
     await press("Enter", field ?? document);
     await settle();
-    expect(onSend).toHaveBeenCalledExactlyOnceWith("which tickets are blocked?");
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(said("which tickets are blocked?"));
     expect(field?.value).toBe("");
   });
 
@@ -66,7 +68,7 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
     await press("Enter", input);
     await settle();
-    expect(onSend).toHaveBeenCalledExactlyOnceWith("first\n\nsecond");
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(said("first\n\nsecond"));
   });
 
   test("Enter while an IME is composing does not send", async () => {
@@ -93,7 +95,7 @@ describe("Composer", () => {
     await type(field, "hello");
     await click(send);
     await settle();
-    expect(onSend).toHaveBeenCalledExactlyOnceWith("hello");
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(said("hello"));
     expect(root.textContent).toContain(
       "Factorial Assistant can make mistakes. Check important results.",
     );
@@ -111,6 +113,212 @@ describe("Composer", () => {
     await act(async () => answer(true));
     expect(button("Send")?.getAttribute("aria-busy")).toBeNull();
     expect(field?.value).toBe("");
+  });
+
+  test("a draft held outside it is the one it draws, and each change goes back there", async () => {
+    const onDraft = vi.fn();
+    view = await mount(
+      <Composer
+        turn={null}
+        isBlocked={false}
+        error={null}
+        draft={said("half a thought")}
+        onDraft={onDraft}
+        onSend={onSend}
+        onStop={onStop}
+      />,
+    );
+    const field = view.container.querySelector("textarea");
+    expect(field?.value).toBe("half a thought");
+    await type(field, "half a thought, finished");
+    expect(onDraft).toHaveBeenLastCalledWith(said("half a thought, finished"));
+  });
+
+  async function pick(input: HTMLInputElement | null, files: File[]) {
+    Object.defineProperty(input, "files", { configurable: true, value: files });
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  }
+  const fileChips = (root: ParentNode) =>
+    [...root.querySelectorAll("[data-file-chip]")].map((chip) => chip.textContent);
+
+  test("the paperclip's files wait as chips, go with the message, and each can be taken out", async () => {
+    const { root, field, button } = await render();
+    expect(button("Attach a file")).not.toBeNull();
+    const input = root.querySelector<HTMLInputElement>('input[type="file"]');
+    await pick(input, [
+      new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      new File(["timed out"], "worker.log", { type: "text/plain" }),
+    ]);
+    expect(fileChips(root)).toEqual(["shot.png", "worker.log"]);
+    await click(button("Remove worker.log"));
+    expect(fileChips(root)).toEqual(["shot.png"]);
+    await press("Enter", field ?? document);
+    await settle();
+    expect(onSend).toHaveBeenCalledExactlyOnceWith({
+      text: "",
+      pointed: [],
+      files: [{ name: "shot.png", size: 3, isImage: true, data: btoa("\x01\x02\x03") }],
+    });
+    expect(fileChips(root)).toEqual([]);
+  });
+
+  test("a pasted picture is attached, and pasted words are left to the field", async () => {
+    const { root, field } = await render();
+    const paste = (files: File[]) => {
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: { files, getData: () => "" } });
+      return event;
+    };
+    const withFile = paste([new File([new Uint8Array([9])], "image.png", { type: "image/png" })]);
+    await act(async () => {
+      field?.dispatchEvent(withFile);
+    });
+    await settle();
+    expect(withFile.defaultPrevented).toBe(true);
+    expect(fileChips(root)).toEqual(["image.png"]);
+    const words = paste([]);
+    await act(async () => {
+      field?.dispatchEvent(words);
+    });
+    expect(words.defaultPrevented).toBe(false);
+  });
+
+  test("a file the assistant cannot take says why, and the sentence goes with the next good one", async () => {
+    view = await mount(
+      <Composer
+        turn={null}
+        isBlocked={false}
+        error={null}
+        acceptsImages={false}
+        onSend={onSend}
+        onStop={onStop}
+      />,
+    );
+    const root = view.container;
+    const input = root.querySelector<HTMLInputElement>('input[type="file"]');
+    await pick(input, [new File([new Uint8Array([1])], "shot.png", { type: "image/png" })]);
+    expect(fileChips(root)).toEqual([]);
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("takes no images");
+    await pick(input, [new File(["ok"], "worker.log", { type: "text/plain" })]);
+    expect(fileChips(root)).toEqual(["worker.log"]);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  test("in a frame beside the page it is one row with a short prompt and no line under it", async () => {
+    view = await mount(
+      <Composer
+        turn={null}
+        isBlocked={false}
+        error={null}
+        compact
+        onSend={onSend}
+        onStop={onStop}
+      />,
+    );
+    const field = view.container.querySelector("textarea");
+    expect(field?.getAttribute("rows")).toBe("1");
+    expect(field?.getAttribute("placeholder")).toBe("Reply");
+    expect(view.container.textContent).not.toContain("can make mistakes");
+    await type(field, "one\ntwo\nthree");
+    expect(field?.getAttribute("rows")).toBe("3");
+  });
+
+  test("what joins the draft while a send is on its way is still there when the send lands", async () => {
+    let land: (taken: boolean) => void = () => {};
+    onSend.mockReset().mockImplementation(() => new Promise<boolean>((taken) => (land = taken)));
+    onStop.mockReset();
+    let held: Draft = said("first");
+    const hold = (next: Draft | ((was: Draft) => Draft)) => {
+      held = typeof next === "function" ? next(held) : next;
+    };
+    const drawn = () => (
+      <Composer
+        turn={null}
+        isBlocked={false}
+        error={null}
+        draft={held}
+        onDraft={hold}
+        onSend={onSend}
+        onStop={onStop}
+      />
+    );
+    view = await mount(drawn());
+    await press("Enter", view.container.querySelector("textarea") ?? document);
+    // Pointed at from the page while the request is out.
+    const pointed = { label: "Ticket 212", text: "Blocked", page: "/tickets/212" };
+    held = { ...held, pointed: [pointed] };
+    await view.rerender(drawn());
+    await act(async () => {
+      land(true);
+    });
+    await settle();
+    expect(held).toEqual({ text: "", pointed: [pointed], files: [] });
+  });
+
+  test("words written while a file is being read are kept beside it", async () => {
+    let held: Draft = said("");
+    const hold = (next: Draft | ((was: Draft) => Draft)) => {
+      held = typeof next === "function" ? next(held) : next;
+    };
+    const drawn = () => (
+      <Composer
+        turn={null}
+        isBlocked={false}
+        error={null}
+        draft={held}
+        onDraft={hold}
+        onSend={onSend}
+        onStop={onStop}
+      />
+    );
+    view = await mount(drawn());
+    let read: (bytes: ArrayBuffer) => void = () => {};
+    const slow = new File([new Uint8Array([1])], "shot.png", { type: "image/png" });
+    slow.arrayBuffer = () => new Promise<ArrayBuffer>((bytes) => (read = bytes));
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input, "files", { configurable: true, value: [slow] });
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    held = { ...held, text: "written meanwhile" };
+    await view.rerender(drawn());
+    await act(async () => {
+      read(new Uint8Array([1]).buffer);
+    });
+    await settle();
+    expect(held.text).toBe("written meanwhile");
+    expect(held.files.map((file) => file.name)).toEqual(["shot.png"]);
+  });
+
+  test("a refused send keeps the files too", async () => {
+    const { root, field } = await render();
+    onSend.mockResolvedValue(false);
+    await pick(root.querySelector<HTMLInputElement>('input[type="file"]'), [
+      new File(["timed out"], "worker.log", { type: "text/plain" }),
+    ]);
+    await press("Enter", field ?? document);
+    await settle();
+    expect(fileChips(root)).toEqual(["worker.log"]);
+  });
+
+  test("a paste that carries words is words, even when a picture of them comes with it", async () => {
+    const { root, field } = await render();
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [new File([new Uint8Array([9])], "cells.png", { type: "image/png" })],
+        getData: (kind: string) => (kind === "text/plain" ? "a\tb" : ""),
+      },
+    });
+    await act(async () => {
+      field?.dispatchEvent(event);
+    });
+    await settle();
+    expect(event.defaultPrevented).toBe(false);
+    expect(fileChips(root)).toEqual([]);
   });
 
   test("a refused send keeps the text and says why", async () => {

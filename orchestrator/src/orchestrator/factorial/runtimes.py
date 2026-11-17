@@ -74,6 +74,7 @@ __all__ = [
     "parse_runtime_metadata",
     "registry_kind_for",
     "requires_stored_credential",
+    "sandbox_key_of",
     "template_of",
 ]
 
@@ -160,6 +161,18 @@ class _Details(BaseModel):
     #: The template build an E2B runtime boots. Templates are private to the E2B team that built
     #: them, so the pin belongs with the workspace's key, on the runtime.
     template: str | None = None
+    #: Whose E2B team a sandbox runs in: the runtime's own key, or the deployment's managed one.
+    sandbox_key: Literal["own", "managed"] = "own"
+
+    @model_validator(mode="after")
+    def _managed_key_is_the_deployments(self) -> _Details:
+        if self.sandbox_key != "managed":
+            return self
+        if self.isolation != "e2b":
+            raise ValueError("sandbox_key managed is set only on a runtime whose isolation is e2b")
+        if self.template is not None:
+            raise ValueError("a managed sandbox key takes its template from the deployment")
+        return self
 
     @model_validator(mode="after")
     def _template_is_an_e2b_build(self) -> _Details:
@@ -309,6 +322,11 @@ def template_of(details: Mapping[str, object] | None) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def sandbox_key_of(details: Mapping[str, object] | None) -> Literal["own", "managed"]:
+    """A stored row's sandbox key. A row written before the field existed holds its own."""
+    return "managed" if (details or {}).get("sandbox_key") == "managed" else "own"
+
+
 def isolation_of(details: Mapping[str, object] | None) -> Isolation:
     """A stored row's isolation. A row written before the field existed runs on the host; one
     naming an isolation this code does not know is refused, never quietly run on the host."""
@@ -396,11 +414,13 @@ def parse_offers(entries: Iterable[str]) -> frozenset[str]:
     return frozenset(offers)
 
 
-def create_credential_names(rt: str, isolation: Isolation) -> frozenset[str]:
+def create_credential_names(
+    rt: str, isolation: Isolation, *, managed: bool = False
+) -> frozenset[str]:
     """The credentials a create may carry: the type's own, unless the host mints it, and the
-    sandbox key in a sandbox."""
+    sandbox key in a sandbox unless the deployment's managed key stands in for it."""
     names = set() if is_platform_minted(rt) else {credential_name_for(rt)}
-    if isolation == "e2b":
+    if isolation == "e2b" and not managed:
         names.add(E2B_CREDENTIAL)
     return frozenset(names)
 

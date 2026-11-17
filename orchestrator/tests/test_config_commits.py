@@ -513,13 +513,13 @@ async def test_the_simple_template_commits_the_whole_sample_folder(
     async_session: AsyncSession,
 ) -> None:
     """A repo never synced: its seeded branch holds only the seed's README. One commit of the
-    editor's template, every file ticked, leaves the sample folder's tree — its MCP server as an
-    inert example — and syncs clean with nothing set up outside the repo."""
+    editor's template, every file ticked, leaves the sample folder's tree for that lane — its MCP
+    server as an inert example — and syncs clean with nothing set up outside the repo."""
     readme = ".factorial/README.md"
     app, api = app_with(async_session, extra={readme: "This branch holds the Factorial config.\n"})
     project = await project_in(async_session)
     # The editor's Runtime select writes the line the template leaves commented out.
-    [lane] = [lane for lane in PROCESS_TEMPLATES[0].lanes if lane.key == "simple"]
+    [lane] = PROCESS_TEMPLATES[0].lanes
     content = lane.text.replace("# runtime: claude-api", f"runtime: {TEST_RUNTIME}")
     files = _selected_files(_proposal_for(content))
     response = await _post(app, project, {"content": content, "files": files})
@@ -527,16 +527,13 @@ async def test_the_simple_template_commits_the_whole_sample_folder(
     body = response.json()
     assert body["sync_error"] is None
     assert body["sync"]["agent_warnings"] == []
-    # The sample's other lanes are files of their own, which their own commits write.
-    other_lanes = {
-        f"processes/process-{other.key}.yaml"
-        for other in PROCESS_TEMPLATES[0].lanes
-        if other.key != lane.key
-    }
+    # The sample's `simple` lane has no template. A commit of that lane writes its file, and the
+    # test agent only it names.
+    reference_only = ("processes/process-simple.yaml", "agents/test-agent/")
     sample = {
         f".factorial/{path.relative_to(SAMPLE).as_posix()}"
         for path in SAMPLE.rglob("*")
-        if path.is_file() and path.relative_to(SAMPLE).as_posix() not in other_lanes
+        if path.is_file() and not path.relative_to(SAMPLE).as_posix().startswith(reference_only)
     }
     server = ".factorial/mcp/product-docs.yaml"
     assert set(api.written) | {readme} == sample - {server} | {f"{server}.example"}
@@ -664,7 +661,7 @@ async def test_preview_and_commit_agree_on_gitlab_paths(async_session: AsyncSess
         )
     )
     await async_session.flush()
-    [lane] = [lane for lane in PROCESS_TEMPLATES[0].lanes if lane.key == "simple"]
+    [lane] = PROCESS_TEMPLATES[0].lanes
     content = lane.text.replace("# runtime: claude-api", f"runtime: {TEST_RUNTIME}")
     async with authed_client_for(app) as client:
         preview = await client.post(

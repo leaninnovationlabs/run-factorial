@@ -23,6 +23,7 @@ import { StatTile } from "./StatTile";
 import { EmptyState, Skeleton, SkeletonRows, Spinner } from "./states";
 import { SegmentedControl, Tab, TabList, TabPanel, Tabs } from "./Tabs";
 import { Tooltip } from "./Tooltip";
+import { WorkingDots } from "./WorkingDots";
 
 const YAML = `specVersion: factorial/v1
 kind: Process
@@ -98,6 +99,10 @@ export function States() {
       </Row>
       <Row label="skeleton">
         <Skeleton width="12rem" />
+      </Row>
+      <Row label="working">
+        <WorkingDots />
+        <span className="text-body text-default">Agent working</span>
       </Row>
       <SkeletonRows rows={2} columns={4} />
       <EmptyState

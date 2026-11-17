@@ -105,7 +105,7 @@ async def test_plan_agent_resolves_with_prompts_and_both_skill_scopes() -> None:
     agent = await source.load_agent(REPO, ".factorial/agents/plan-agent/agent.yaml", SHA)
 
     assert (agent.name, agent.repo, agent.commit_sha) == ("plan-agent", REPO, SHA)
-    assert agent.manifest.model == "claude-sonnet-5-5"
+    assert agent.manifest.model == "claude-opus-5-5"
     # Contents, not paths — and never an empty string standing in for a missing file.
     assert agent.system_prompt == disk("agents/plan-agent/system-prompt.md")
     assert agent.instructions == disk("agents/plan-agent/instructions.md")

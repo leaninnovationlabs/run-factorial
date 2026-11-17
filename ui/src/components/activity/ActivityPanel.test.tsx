@@ -19,7 +19,13 @@ import { run as fixtureRun } from "../../pages/TicketPage.fixture";
 import { ROLE_BOLD, ROLE_SUBTLE, ROLE_TEXT } from "../../status";
 import { byText, click, mount, pointerDown } from "../../testDom";
 import { ActivityPanel, type Waiting } from "./ActivityPanel";
-import { type ActivityOrder, type ActivitySegment, type Held, segmentsFrom } from "./activity";
+import {
+  type ActivityOrder,
+  type ActivitySegment,
+  type Held,
+  segmentsFrom,
+  sortSegments,
+} from "./activity";
 import type { RetryOffer } from "./retry";
 import { type OutputOpeners, RunFigures } from "./SegmentHeader";
 
@@ -254,6 +260,87 @@ describe("ActivityPanel, Focused", () => {
   it("counts on the rail the rows the log shows", () => {
     expect(shown(true)).toMatch(/>2 events<.*>0 events</s);
     expect(shown(false)).toMatch(/>5 events<.*>2 events</s);
+  });
+});
+
+describe("ActivityPanel while an agent works", () => {
+  const LOG = [
+    ev(1, "step_started", { step: "build", attempt: 1, kind: "agent" }),
+    ev(2, "agent_spawned", { step: "build", attempt: 1, agent: "builder", run_id: "r-1" }),
+    ev(3, "preview_failed", { step: "build", attempt: 1, reason: "the dev server exited" }),
+  ];
+  const RUNS = [run("build", 1, "running", "agent")];
+  const panelAt = (
+    order: ActivityOrder,
+    {
+      workingKey = "build#1",
+      focused = false,
+      log = LOG,
+    }: { workingKey?: string | null; focused?: boolean; log?: TimelineEntry[] } = {},
+  ): string => {
+    const logged = segmentsFrom(log, RUNS);
+    return renderToString(
+      <ActivityPanel
+        segments={order === "oldest" ? logged : sortSegments(logged, order)}
+        order={order}
+        repo={REPO}
+        activeKey={null}
+        onActiveKeyChange={() => {}}
+        runtimeFor={() => undefined}
+        onOpenText={() => {}}
+        held={null}
+        workingKey={workingKey}
+        focused={focused}
+      />,
+    ).replace(/<!-- -->/g, "");
+  };
+  /** The block's rows, as their labels in the order they are drawn. */
+  const labels = (html: string) =>
+    [...html.matchAll(/<span class="shrink-0 text-(?:default|subtle)">([^<]+)</g)].map((m) => m[1]);
+
+  it("ends the block with the agent at work, read oldest first", () => {
+    expect(labels(panelAt("oldest"))).toEqual([
+      "Step started",
+      "Agent started",
+      "Preview failed",
+      "Agent working",
+    ]);
+  });
+
+  it("starts the block with it, read newest first", () => {
+    expect(labels(panelAt("newest"))[0]).toBe("Agent working");
+  });
+
+  it("draws the dots for the eye alone, and says the rest in words", () => {
+    const html = panelAt("oldest");
+    expect(html).toMatch(/<span aria-hidden="true" data-working-dots/);
+    expect(row(html, "Agent working")).toContain("Agent working");
+  });
+
+  it("stays when Focused hides the block's other rows, some or all of them", () => {
+    expect(labels(panelAt("oldest", { focused: true }))).toEqual([
+      "Preview failed",
+      "Agent working",
+    ]);
+    // A running agent's block is often nothing but routine rows.
+    const routine = LOG.slice(0, 2);
+    expect(labels(panelAt("oldest", { focused: true, log: routine }))).toEqual(["Agent working"]);
+    expect(labels(panelAt("oldest", { log: [] }))).toEqual(["Agent working"]);
+    expect(panelAt("oldest", { log: [] })).not.toContain("No events recorded");
+  });
+
+  it("is drawn only on the block the caller names", () => {
+    expect(panelAt("oldest", { workingKey: null })).not.toContain("Agent working");
+  });
+
+  it("says how long the agent has been at it since it was set working", () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-08-25T09:04:05Z"));
+    try {
+      // `ev` writes every row at 09:00:00, the spawn among them.
+      expect(row(panelAt("oldest"), "Agent working")).toContain("for 4m 5s");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

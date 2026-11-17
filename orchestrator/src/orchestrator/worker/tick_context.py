@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -50,10 +50,14 @@ from orchestrator.github import (
 from orchestrator.logs import keep, note
 from orchestrator.predicates import EvalContext, Unmet
 from orchestrator.worker.context import Projector, ReconcileDeps
+from orchestrator.worker.sandbox_limit import LimitReached
 from runtime.contract import (
     RunStatus,
     RuntimeAdapter,
 )
+
+if TYPE_CHECKING:
+    from orchestrator.worker.rework import ConflictFix
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +264,12 @@ class _Tick:
     #: The pass's launch registry (decision 87); None where nothing settles it, as in tests that
     #: call `reconcile_ticket` directly.
     launches: Launches | None = None
+    #: What held this tick's start at the managed key's limit (`_start_attempt`), for a Retry to
+    #: tell from a lost race.
+    held_by_limit: LimitReached | None = None
+    #: `rework.conflict_window`'s answers by step name. Emptied wherever the ticket changes step
+    #: or generation: the window is read off the gate's runs, which those change.
+    conflict_windows: dict[str, ConflictFix | None] = field(default_factory=dict)
 
     def host(self) -> Bindings:
         """The tracker/forge pair this tick observed through."""
@@ -381,11 +391,12 @@ async def _next_attempt(session: AsyncSession, ticket_id: int, step_name: str) -
     return (highest or 0) + 1
 
 
-async def _ordinal(session: AsyncSession, run: StepRun) -> int:
+async def _ordinal(session: AsyncSession, run: StepRun, *, since: datetime | None = None) -> int:
     """`run`'s place among the current runs at its step, from 1: what a retry budget counts,
     since a restart or a redo grants the whole budget again while the attempt number keeps
-    counting."""
-    count = await session.scalar(
+    counting. With `since`, only the runs started then or later count: a conflict fix's budget
+    starts at the send-back."""
+    query = (
         select(func.count())
         .select_from(StepRun)
         .where(
@@ -395,7 +406,9 @@ async def _ordinal(session: AsyncSession, run: StepRun) -> int:
             StepRun.attempt <= run.attempt,
         )
     )
-    return int(count or 0)
+    if since is not None:
+        query = query.where(StepRun.started_at >= since)
+    return int(await session.scalar(query) or 0)
 
 
 async def _entered_by(session: AsyncSession, run: StepRun) -> str:
@@ -458,8 +471,16 @@ async def _insert_run(tick: _Tick, run: StepRun) -> bool:
 #: Why the ticket moved onto a step. `reject_rerun` is worth telling apart from `next`: it is the
 #: one case where the graph jumps BACKWARD, and a reader who cannot see that reads a repeated step
 #: as a retry rather than as rework a human asked for. `db.models.EnteredBy` carries the same
-#: five words onto the run, plus `retry`.
-EnterReason = Literal["next", "reject_rerun", "admission", "restart", "redo"]
+#: words onto the run, plus `retry`.
+EnterReason = Literal[
+    "next",
+    "reject_rerun",
+    "admission",
+    "restart",
+    "redo",
+    "conflict_fix",
+    "conflict_fixed",
+]
 
 
 async def _enter_step(
@@ -573,6 +594,7 @@ async def _move_to(tick: _Tick, step: str, *, from_step: str, reason: EnterReaso
     )
     tick.ticket.current_step = step
     tick.ticket.status = TicketStatus.RUNNING
+    tick.conflict_windows.clear()
     note(step=step, step_run_id=None, attempt=None)
 
 

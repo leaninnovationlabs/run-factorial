@@ -75,8 +75,10 @@ from orchestrator.factorial.runtimes import (
     is_subscription,
     isolation_of,
     requires_stored_credential,
+    sandbox_key_of,
     template_of,
 )
+from orchestrator.factorial.sandbox_team import managed_gap, sandbox_team
 from orchestrator.github import (
     GH_TOKEN_KEY,
     LABEL_BLOCKED,
@@ -94,6 +96,7 @@ from orchestrator.github.connection import has_connection
 from orchestrator.github.state import AsyncKeyedMemo
 from orchestrator.predicates.globs import matches_ref
 from orchestrator.secrets import store
+from orchestrator.settings import ManagedSandbox
 from orchestrator.worker.selection import process_label
 
 __all__ = [
@@ -582,6 +585,8 @@ async def runtime_items(
     configs: Mapping[str, ProcessConfig],
     runtimes: Mapping[str, Runtime],
     settings: Mapping[str, object],
+    *,
+    managed: ManagedSandbox,
 ) -> list[ReadinessItem]:
     """Whether the Runtime each lane names can still run its agents — one row per lane that names
     one, attributed to that lane. No row at all for a lane that names none: the deployment
@@ -605,7 +610,9 @@ async def runtime_items(
         slug = configs[key].runtime
         if slug is None:
             continue
-        items.append(await _runtime_item(session, key, slug, runtimes.get(slug), settings))
+        items.append(
+            await _runtime_item(session, key, slug, runtimes.get(slug), settings, managed)
+        )
     return items
 
 
@@ -615,6 +622,7 @@ async def _runtime_item(
     slug: str,
     row: Runtime | None,
     settings: Mapping[str, object],
+    managed: ManagedSandbox,
 ) -> ReadinessItem:
     """One lane's Runtime verdict. `process` names the lane on every row — see `runtime_items`."""
     if row is None:
@@ -664,7 +672,34 @@ async def _runtime_item(
             "refused.",
         )
     held = await store.list_names_for_runtime(session, row.id)
-    if isolation == "e2b" and (missing := _e2b_workspace_gap(row, held)):
+    if isolation == "e2b" and sandbox_key_of(row.details) == "managed":
+        # What the spawn would refuse: covered, a managed runtime lacks neither key nor template.
+        team = await sandbox_team(session, row, managed)
+        if (gap := managed_gap(team, slug)) is not None:
+            return ReadinessItem(
+                key="runtime",
+                process=process_key,
+                runtime_slug=slug,
+                state="blocked",
+                summary=f"{slug} · "
+                + (
+                    "Factorial-managed key not available"
+                    if team.api_key is None
+                    else "not covered by the Factorial-managed key"
+                ),
+                detail=f"{gap} Until then, process {process_key!r} cannot run.",
+            )
+        if managed.limit_for(row.organization_slug) == 0:
+            return ReadinessItem(
+                key="runtime",
+                process=process_key,
+                runtime_slug=slug,
+                state="blocked",
+                summary=f"{slug} · Factorial-managed key not available",
+                detail="The Factorial-managed key is not available to this organization. Store "
+                f"the runtime's own sandbox key. Until then, process {process_key!r} cannot run.",
+            )
+    elif isolation == "e2b" and (missing := _e2b_workspace_gap(row, held)):
         return ReadinessItem(
             key="runtime",
             process=process_key,

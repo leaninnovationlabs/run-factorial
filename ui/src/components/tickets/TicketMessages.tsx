@@ -1,8 +1,9 @@
 import { useTicketIssue } from "../../api/queries";
-import type { TicketDetail } from "../../api/types";
+import type { StepRun, TicketDetail } from "../../api/types";
 import { type ForgeHost, forgeName, issueHref, pullHref, pullNoun } from "../../forge";
 import type { TicketCondition } from "../../status";
 import { Code, cx, SectionMessage } from "../ui";
+import { GateConflict } from "./GateConflict";
 
 /**
  * What the ticket's state asks of the reader, each as one message with its way forward: a
@@ -25,6 +26,7 @@ export function TicketMessages({
   onRequeue,
   onOpenTerminal,
   review,
+  gateRun = null,
   gateClosed = false,
   onCloseAndExit,
   awaitingReview = null,
@@ -50,6 +52,8 @@ export function TicketMessages({
     onRedo?: () => void;
     redoStep?: string;
   } | null;
+  /** The waiting gate run, whose pull request may conflict with or lag its target. */
+  gateRun?: StepRun | null;
   /** The gate's pull request closed without a merge, so the gate holds (decision 79). */
   gateClosed?: boolean;
   /** Arms the header's Close and exit, so there is one confirmation. */
@@ -90,6 +94,27 @@ export function TicketMessages({
       <SectionMessage key="failing" appearance="warning" title="Couldn't check the ticket">
         Factorial couldn't read this ticket's latest state. It keeps trying, and you don't need to
         do anything yet.
+      </SectionMessage>,
+    );
+  }
+  const wait = ticketWide ? ticket.sandbox_wait : null;
+  if (wait) {
+    const open =
+      wait.runtime_id === null
+        ? undefined
+        : [{ text: "Open the runtime", to: `/runtimes/${wait.runtime}` }];
+    const unavailable = wait.limit === 0;
+    messages.push(
+      <SectionMessage
+        key="sandbox"
+        appearance={unavailable ? "warning" : "information"}
+        actions={open}
+      >
+        {unavailable
+          ? "The Factorial-managed key is not available to this organization. Store your own sandbox key on the runtime."
+          : wait.scope === "pool"
+            ? "Waiting for a sandbox. The Factorial-managed key is at its limit for all organizations."
+            : `Waiting for a sandbox. The Factorial-managed key runs ${wait.limit} at a time.`}
       </SectionMessage>,
     );
   }
@@ -155,6 +180,7 @@ export function TicketMessages({
           {gatePr
             ? `${noun} #${gatePr} needs a person's decision before the ticket moves on.`
             : "This step needs a person's decision before the ticket moves on."}
+          {gateRun && <GateConflict ticketId={ticket.id} run={gateRun} />}
         </SectionMessage>,
       );
     }

@@ -17,15 +17,16 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, ClassVar, Final, Literal, Protocol, runtime_checkable
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_serializer, field_validator
 
-from runtime.contract import _Frozen
+from runtime.contract import AttachmentMediaType, _Frozen
 
 __all__ = [
     "MODEL_ALIASES",
     "BackendStateStore",
     "ChatBackend",
     "ChatEvent",
+    "ChatImage",
     "ChatToolbox",
     "ChatTurnSpec",
     "HistoryItem",
@@ -115,6 +116,22 @@ class HistoryItem(_Frozen):
     text: str
 
 
+class ChatImage(_Frozen):
+    """One image a person attached to their message, as bytes: where a backend puts it — a
+    content block, a file beside its config — is the backend's choice. `content` never serializes
+    and never prints, because a spec reaches logs and error payloads: a dump carries its size."""
+
+    #: The stem a backend that needs a file writes it under. Made by the orchestrator, never
+    #: taken from the name the person's file had.
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    media_type: AttachmentMediaType
+    content: bytes = Field(min_length=1, repr=False)
+
+    @field_serializer("content", when_used="always")
+    def _size_only(self, content: bytes) -> int:
+        return len(content)
+
+
 class ChatTurnSpec(_Frozen):
     """Everything one turn needs but its tools, which are objects and go to `ChatBackend.turn`
     beside the state store. The credential is `SecretStr`, so a logged spec never prints it."""
@@ -128,6 +145,9 @@ class ChatTurnSpec(_Frozen):
     system_prompt: str
     #: The person's text, with any page context already prepended as data.
     message: str
+    #: The images attached to the message. A backend whose `supports_images` is False is never
+    #: given one: the orchestrator refuses the send, and tells the model what it cannot see.
+    images: tuple[ChatImage, ...] = ()
     #: A neutral transcript, for a backend that keeps no session of its own.
     history: tuple[HistoryItem, ...] = ()
     #: The session a backend with `supports_resume` continues, as its last `Usage` reported it.
@@ -266,6 +286,9 @@ class ChatBackend(Protocol):
     supports_resume: ClassVar[bool]
     supports_cancel: ClassVar[bool]
     supports_effort: ClassVar[bool]
+    #: Takes `ChatTurnSpec.images`. `adapters.TAKES_IMAGES` says the same without loading the
+    #: backend's module.
+    supports_images: ClassVar[bool]
 
     async def preflight(self) -> None:
         """Raise `AdapterUnavailable` with the reason when this backend cannot run a turn."""

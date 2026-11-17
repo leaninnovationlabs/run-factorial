@@ -242,6 +242,7 @@
   --default-transition-duration: var(--ds-duration-short);
   --default-transition-timing-function: var(--ds-easing-out-practical);
   --animate-settle-in: settle-in var(--ds-duration-medium) var(--ds-easing-out-bold);
+  --animate-working-wave: working-wave 1.2s ease-in-out infinite;
 
   /* Page widths are ours (ADS publishes breakpoints but no page widths): data pages take the
      window; runtime pages keep today's 72rem; create forms today's 36rem. */

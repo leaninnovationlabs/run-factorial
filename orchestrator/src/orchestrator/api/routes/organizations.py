@@ -67,8 +67,12 @@ def _count(model: type[Project] | type[Runtime]) -> ColumnElement[int]:
 
 
 async def _out(
-    session: AsyncSession, *where: ColumnElement[bool], roles: dict[int, str | None] | None = None
+    session: AsyncSession,
+    settings: Settings,
+    *where: ColumnElement[bool],
+    roles: dict[int, str | None] | None = None,
 ) -> list[OrganizationOut]:
+    managed = settings.runtime.e2b.managed
     rows = await session.execute(
         select(Organization, _count(Project), _count(Runtime))
         .where(*where)
@@ -86,13 +90,16 @@ async def _out(
             created_at=organization.created_at,
             updated_at=organization.updated_at,
             role=(roles or {}).get(organization.id),
+            managed_sandbox_limit=(
+                None if managed.api_key is None else managed.limit_for(organization.slug)
+            ),
         )
         for organization, projects, runtimes in rows.all()
     ]
 
 
 async def _one(
-    session: AsyncSession, organization: Organization, caller: Caller
+    session: AsyncSession, settings: Settings, organization: Organization, caller: Caller
 ) -> OrganizationOut:
     member = (
         None
@@ -100,21 +107,25 @@ async def _one(
         else await decision.membership(session, organization_id=organization.id, email=caller.email)
     )
     role = member.role if member is not None else None
-    (out,) = await _out(session, Organization.id == organization.id, roles={organization.id: role})
+    (out,) = await _out(
+        session, settings, Organization.id == organization.id, roles={organization.id: role}
+    )
     return out
 
 
 @router.get("/orgs", response_model=list[OrganizationOut])
 @needs(SIGNED_IN)
-async def list_organizations(session: SessionDep, caller: CallerDep) -> list[OrganizationOut]:
+async def list_organizations(
+    session: SessionDep, settings: SettingsDep, caller: CallerDep
+) -> list[OrganizationOut]:
     # The dashboard's organization gate and switcher read this list, not `/auth/me`.
     if caller.operator:
-        return await _out(session)
+        return await _out(session, settings)
     reached = await membership.organizations_of(session, caller)
     if not reached:
         return []
     roles = {organization.id: role for organization, role in reached}
-    return await _out(session, Organization.id.in_(roles), roles=roles)
+    return await _out(session, settings, Organization.id.in_(roles), roles=roles)
 
 
 @router.post("/orgs", response_model=OrganizationOut, status_code=status.HTTP_201_CREATED)
@@ -130,7 +141,7 @@ async def create_organization(
         slug=body.slug,
         setup_token=bool(settings.auth.bootstrap_token.get_secret_value()),
     )
-    out = await _one(session, organization, caller)
+    out = await _one(session, settings, organization, caller)
     await session.commit()
     return out
 
@@ -138,9 +149,9 @@ async def create_organization(
 @router.get("/orgs/{org}", response_model=OrganizationDetail, dependencies=_IN_ORG)
 @needs(Permission.ORG_READ)
 async def get_organization(
-    session: SessionDep, organization: OrganizationDep, grant: GrantDep
+    session: SessionDep, settings: SettingsDep, organization: OrganizationDep, grant: GrantDep
 ) -> OrganizationDetail:
-    out = await _one(session, organization, grant.caller)
+    out = await _one(session, settings, organization, grant.caller)
     return OrganizationDetail(
         **out.model_dump(),
         settings=(
@@ -157,6 +168,7 @@ async def get_organization(
 async def rename_organization(
     body: OrganizationPatch,
     session: SessionDep,
+    settings: SettingsDep,
     organization: OrganizationDep,
     principal: PrincipalDep,
     caller: CallerDep,
@@ -164,7 +176,7 @@ async def rename_organization(
     organization.name = body.name
     organization.updated_by = principal
     await session.flush()
-    out = await _one(session, organization, caller)
+    out = await _one(session, settings, organization, caller)
     await session.commit()
     return out
 

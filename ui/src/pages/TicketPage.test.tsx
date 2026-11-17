@@ -664,6 +664,35 @@ describe("TicketPage", () => {
     expect(html).toContain("No events recorded for this attempt yet.");
   });
 
+  describe("an agent at work", () => {
+    // Attempt 2 of `plan` is running: the ticket's own state, the run's, and nothing else.
+    const working: TicketOver = {
+      current_step: "plan",
+      status: "running",
+      step_runs: [
+        run(1, "plan", 1, "failed", { runtime_run_id: "204-plan-agent-7f3a2c" }),
+        run(2, "plan", 2, "running", { runtime_run_id: "204-plan-agent-bb09c1" }),
+      ],
+    };
+
+    it("is said at the live end of its step while the ticket runs", () => {
+      expect(render([], working)).toContain("Agent working");
+    });
+
+    it("is not said once the ticket stopped after errors, though its run still reads running", () => {
+      const quarantined = { ...working, quarantined_at: "2026-08-25T10:20:00Z" };
+      expect(render([], quarantined)).not.toContain("Agent working");
+    });
+
+    it("is not said while the agent waits on a person", () => {
+      const idle = {
+        ...working,
+        step_runs: [run(2, "plan", 2, "idle", { runtime_run_id: "204-plan-agent-bb09c1" })],
+      };
+      expect(render([], idle)).not.toContain("Agent working");
+    });
+  });
+
   it("folds unbounded content behind buttons instead of inlining it", () => {
     const html = render();
     expect(button(html, "Terminal")).not.toBeNull();

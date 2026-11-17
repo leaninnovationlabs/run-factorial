@@ -1,12 +1,14 @@
 """The process templates the config editor offers.
 
-The contract under test: the editor offers the sample templates and nothing else. Each Simple
-lane parses to what docs/samples/factorial-simple's process of the same name parses to, the
-Superpowers lane to docs/samples/factorial-superpowers, and a first commit of each template's
-main lane into a repo with no config, on GitHub or on GitLab, writes every file its sample folder
-has but the other lanes', with the sample's text. Where the sample depends on something set up
-outside the repo — a Runtime, an MCP server — the template carries it commented out, and each
-such example works once it is turned on.
+The contract under test: the editor offers the sample templates and nothing else. The Simple
+template's one lane, `primary`, parses to what docs/samples/factorial-simple's process of the
+same name parses to, the Superpowers lane to docs/samples/factorial-superpowers, and a first
+commit of each template's lane into a repo with no config, on GitHub or on GitLab, writes every
+file its sample folder has for that lane, with the sample's text. The Simple sample keeps one
+lane no template ships, `simple`, as the reference for the format; a first commit of it writes
+the rest of that folder. Where the sample depends on something set up outside the repo — a
+Runtime, an MCP server — the template carries it commented out, and each such example works once
+it is turned on.
 """
 
 from __future__ import annotations
@@ -28,11 +30,7 @@ from orchestrator.config import (
 )
 from orchestrator.config.lint import lint_process
 from orchestrator.config.models import AgentStep, GateStep, McpRefs
-from orchestrator.config.process_templates import (
-    CONFIG_SHELLS,
-    PROCESS_TEMPLATES,
-    ProcessTemplate,
-)
+from orchestrator.config.process_templates import CONFIG_SHELLS, PROCESS_TEMPLATES
 from orchestrator.config.scaffold.assemble import assemble
 from orchestrator.config.scaffold.catalog import Forge
 from orchestrator.config.scaffold.propose import propose
@@ -40,8 +38,9 @@ from orchestrator.config.scaffold.validate import validate_bundle
 from tests.api_harness import authed_client_for, build_app, make_settings
 from tests.paths import SAMPLE, SAMPLE_PROCESS
 
-LANES = {lane.key: lane for lane in PROCESS_TEMPLATES[0].lanes}
-SIMPLE = LANES["simple"]
+SIMPLE_TEMPLATE = PROCESS_TEMPLATES[0]
+LANES = {lane.key: lane for lane in SIMPLE_TEMPLATE.lanes}
+PRIMARY = LANES["primary"]
 SUPERPOWERS = PROCESS_TEMPLATES[1]
 SUPERPOWERS_LANES = {lane.key: lane for lane in SUPERPOWERS.lanes}
 
@@ -75,18 +74,21 @@ def uncomment(text: str, key: str) -> str:
     return "".join(lines)
 
 
-def test_the_editor_offers_the_sample_templates_with_every_lane_they_have() -> None:
+def test_the_editor_offers_the_sample_templates_each_with_its_one_lane() -> None:
+    """The Simple sample's `simple` lane is the reference for the format, and no template
+    ships it."""
     assert [template.key for template in PROCESS_TEMPLATES] == ["simple", "superpowers"]
-    for template, root, expected in (
-        (PROCESS_TEMPLATES[0], SAMPLE, ["primary", "simple"]),
-        (SUPERPOWERS, SUPERPOWERS_SAMPLE, ["superpowers"]),
+    for template, root, expected, reference_only in (
+        (SIMPLE_TEMPLATE, SAMPLE, ["primary"], ["simple"]),
+        (SUPERPOWERS, SUPERPOWERS_SAMPLE, ["superpowers"], []),
     ):
         lanes = [lane.key for lane in template.lanes]
         sample_lanes = sorted(
             path.name.removeprefix("process-").removesuffix(".yaml")
             for path in (root / "processes").glob("process-*.yaml")
         )
-        assert lanes == sample_lanes == expected
+        assert lanes == expected
+        assert sample_lanes == sorted(expected + reference_only)
 
 
 def test_a_templates_lanes_are_the_process_files_in_its_folder(tmp_path, monkeypatch) -> None:
@@ -139,16 +141,33 @@ def test_each_template_lane_declares_its_own_name_and_lints_clean(lanes: dict, k
     assert lint_process(config) == []
 
 
+@pytest.mark.parametrize(
+    ("lanes", "key"),
+    [(lanes, key) for lanes, _, key in LANE_CASES],
+    ids=LANE_CASE_IDS,
+)
+def test_every_merging_gate_names_an_agent_step_to_fix_a_conflict(lanes: dict, key: str) -> None:
+    config = parse_named_process(lanes[key].text, key=key, origin="template")
+    merging = [
+        step.name
+        for step in config.steps
+        if isinstance(step, GateStep) and step.gate.on_approve.merge
+    ]
+    assert merging
+    for name in merging:
+        assert isinstance(config.conflict_fix_step(name), AgentStep), name
+
+
 def test_the_template_names_no_version() -> None:
     """A snapshot is identified by its commit; `version:` parses and decides nothing."""
-    assert "version" not in yaml.safe_load(SIMPLE.text)
+    assert "version" not in yaml.safe_load(PRIMARY.text)
 
 
 def test_every_gate_lets_anyone_with_write_decide() -> None:
     """The editor asks no questions, so a lane keeps its template's choice."""
     gates = [
         step
-        for step in parse_process(SIMPLE.text, origin="template").steps
+        for step in parse_process(PRIMARY.text, origin="template").steps
         if isinstance(step, GateStep)
     ]
     assert gates
@@ -159,7 +178,7 @@ def test_every_gate_lets_anyone_with_write_decide() -> None:
 def test_the_plan_step_shows_its_summary_and_spec_files_on_its_own_branch(which: str) -> None:
     """On from the first commit: nothing outside the repository is needed, and the plan agent
     declares the skill that writes the summary."""
-    text = SIMPLE.text if which == "template" else SAMPLE_PROCESS.read_text()
+    text = PRIMARY.text if which == "template" else SAMPLE_PROCESS.read_text()
     plan = parse_process(text, origin=which).step("plan")
     assert isinstance(plan, AgentStep)
     assert plan.preview is not None and plan.preview.page is None
@@ -176,22 +195,15 @@ def test_the_plan_step_shows_its_summary_and_spec_files_on_its_own_branch(which:
 def test_the_commented_app_preview_parses_once_turned_on(which: str) -> None:
     """An operator turns the build step's preview on by uncommenting it, so the block must be one
     the parser accepts as written."""
-    text = SIMPLE.text if which == "template" else SAMPLE_PROCESS.read_text()
+    text = PRIMARY.text if which == "template" else SAMPLE_PROCESS.read_text()
     build = parse_process(uncomment(text, "preview"), origin=which).step("build")
     assert isinstance(build, AgentStep)
     assert build.preview is not None and build.preview.services
 
 
-def main_lane(template: ProcessTemplate) -> str:
-    """The lane a first commit is tested with: Simple, or the only lane a template has."""
-    keys = [lane.key for lane in template.lanes]
-    return "simple" if "simple" in keys else keys[0]
-
-
-def first_commit(template: ProcessTemplate = PROCESS_TEMPLATES[0], forge: Forge = "github"):
-    """The template's main lane with every file ticked by default, into a repo with no config
-    yet, on a project whose issues live on `forge`."""
-    text = {lane.key: lane for lane in template.lanes}[main_lane(template)].text
+def first_commit(text: str = PRIMARY.text, forge: Forge = "github"):
+    """A lane with every file ticked by default, into a repo with no config yet, on a project
+    whose issues live on `forge`."""
     config = parse_process(text, origin="template")
     proposal = propose(config, forge=forge)
     selected = {
@@ -205,41 +217,56 @@ def first_commit(template: ProcessTemplate = PROCESS_TEMPLATES[0], forge: Forge 
 
 
 FORGES: tuple[Forge, ...] = ("github", "gitlab")
-SAMPLE_CASES = [
-    (template, root, forge)
-    for template, root in ((PROCESS_TEMPLATES[0], SAMPLE), (SUPERPOWERS, SUPERPOWERS_SAMPLE))
-    for forge in FORGES
-]
-SAMPLE_CASE_IDS = [f"{template.key}/{forge}" for template, _, forge in SAMPLE_CASES]
+#: Each lane a first commit is tested with, as (the text committed, its sample folder, the lane,
+#: the sample's files only another lane's commit writes). The Simple sample's `simple` lane has
+#: no template, so its own text is committed: that holds its `test-agent` to the catalog's.
+TEST_AGENT = frozenset(
+    f"agents/test-agent/{name}" for name in ("agent.yaml", "instructions.md", "system-prompt.md")
+)
+FIRST_COMMITS = {
+    "simple/primary": (PRIMARY.text, SAMPLE, "primary", TEST_AGENT),
+    "simple/reference": (SAMPLE_PROCESS.read_text(), SAMPLE, "simple", frozenset()),
+    "superpowers": (
+        SUPERPOWERS_LANES["superpowers"].text,
+        SUPERPOWERS_SAMPLE,
+        "superpowers",
+        frozenset(),
+    ),
+}
+SAMPLE_CASES = [(*case, forge) for case in FIRST_COMMITS.values() for forge in FORGES]
+SAMPLE_CASE_IDS = [f"{name}/{forge}" for name in FIRST_COMMITS for forge in FORGES]
 
 
-def sample_files(root: Path, template: ProcessTemplate) -> dict[str, Path]:
-    """The sample's files by the path a first commit writes them at. The other lanes are files
-    of their own, which their own commits write."""
+def sample_files(root: Path, lane: str, others: frozenset[str]) -> dict[str, Path]:
+    """The sample's files by the path a first commit of `lane` writes them at. The other lanes
+    are files of their own, which their own commits write, as are the files in `others`."""
     other_lanes = {
-        f"processes/process-{lane.key}.yaml"
-        for lane in template.lanes
-        if lane.key != main_lane(template)
+        path.relative_to(root).as_posix()
+        for path in (root / "processes").glob("process-*.yaml")
+        if path != sample_lane(lane, root=root)
     }
+    skipped = NOT_SCAFFOLDED | other_lanes | others
     return {
         f".factorial/{path.relative_to(root).as_posix()}": path
         for path in root.rglob("*")
-        if path.is_file() and path.relative_to(root).as_posix() not in NOT_SCAFFOLDED | other_lanes
+        if path.is_file() and path.relative_to(root).as_posix() not in skipped
     }
 
 
-@pytest.mark.parametrize(("template", "root", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
+@pytest.mark.parametrize(
+    ("text", "root", "lane", "others", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS
+)
 def test_a_first_commit_writes_the_whole_sample_folder(
-    template: ProcessTemplate, root: Path, forge: Forge
+    text: str, root: Path, lane: str, others: frozenset[str], forge: Forge
 ) -> None:
     """The sample folder's paths, every agent with real files rather than a stub, on either
     forge — and the MCP server the sample defines as an inert example, which nothing selects."""
-    bundle = first_commit(template, forge)
+    bundle = first_commit(text, forge)
     loaded = validate_bundle(bundle)
     assert bundle.stub_paths == frozenset()
     assert loaded.mcp_servers == {}
     assert all(agent.mcp == McpRefs() for agent in loaded.agents.values())
-    expected = set(sample_files(root, template))
+    expected = set(sample_files(root, lane, others))
     if MCP_SERVER in expected:
         expected = expected - {MCP_SERVER} | {MCP_EXAMPLE}
     assert set(bundle.files) == expected
@@ -263,15 +290,17 @@ def as_sample(path: str, body: str) -> tuple[str, str]:
     return path, body
 
 
-@pytest.mark.parametrize(("template", "root", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS)
+@pytest.mark.parametrize(
+    ("text", "root", "lane", "others", "forge"), SAMPLE_CASES, ids=SAMPLE_CASE_IDS
+)
 def test_first_commit_bodies_equal_the_sample(
-    template: ProcessTemplate, root: Path, forge: Forge
+    text: str, root: Path, lane: str, others: frozenset[str], forge: Forge
 ) -> None:
     """The samples are hand-kept copies of what a first commit writes, and drifted several
     releases behind before this test held them. Process files are compared parsed, above, since
     the sample's comments may say more."""
-    bundle = first_commit(template, forge)
-    sample = sample_files(root, template)
+    bundle = first_commit(text, forge)
+    sample = sample_files(root, lane, others)
     for path, body in bundle.files.items():
         if path.startswith(".factorial/processes/"):
             continue
@@ -310,7 +339,7 @@ async def test_the_templates_route_serves_the_whole_file() -> None:
     assert [template["key"] for template in templates] == ["simple", "superpowers"]
     assert all(template["title"] and template["description"] for template in templates)
     assert [(lane["key"], lane["yaml"]) for lane in templates[0]["lanes"]] == [
-        (key, LANES[key].text) for key in ("primary", "simple")
+        ("primary", PRIMARY.text)
     ]
 
 
@@ -318,11 +347,11 @@ def test_catalog_agents_are_the_manifests_a_first_commit_writes() -> None:
     from orchestrator.config import parse_agent
     from orchestrator.factorial.probe import catalog_agents
 
-    config = parse_named_process(SIMPLE.text, key=SIMPLE.key, origin="template")
+    config = parse_named_process(PRIMARY.text, key=PRIMARY.key, origin="template")
     proposal = propose(config)
     resolved = catalog_agents(config)
 
-    assert [agent.name for agent in resolved] == ["build-agent", "plan-agent", "test-agent"]
+    assert [agent.name for agent in resolved] == ["build-agent", "plan-agent"]
     for agent in resolved:
         body = proposal.files[f".factorial/agents/{agent.name}/agent.yaml"].body
         assert agent.reason is None
@@ -334,15 +363,11 @@ async def test_the_templates_route_carries_content_and_agents() -> None:
     async with authed_client_for(build_app(make_settings(), None)) as client:
         body = (await client.get("/api/process-templates")).json()
 
-    [simple] = [lane for lane in body["templates"][0]["lanes"] if lane["key"] == "simple"]
-    expected = parse_named_process(SIMPLE.text, key=SIMPLE.key, origin="t")
-    assert simple["content"] == expected.model_dump(mode="json", by_alias=True)
-    assert [agent["name"] for agent in simple["agents"]] == [
-        "build-agent",
-        "plan-agent",
-        "test-agent",
-    ]
-    assert all(agent["warning"] is None and agent["model"] for agent in simple["agents"])
+    [primary] = body["templates"][0]["lanes"]
+    expected = parse_named_process(PRIMARY.text, key=PRIMARY.key, origin="t")
+    assert primary["content"] == expected.model_dump(mode="json", by_alias=True)
+    assert [agent["name"] for agent in primary["agents"]] == ["build-agent", "plan-agent"]
+    assert all(agent["warning"] is None and agent["model"] for agent in primary["agents"])
 
 
 @pytest.mark.parametrize(

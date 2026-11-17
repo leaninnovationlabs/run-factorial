@@ -8,10 +8,11 @@ status/interrupt/cancel/resume reaches. `ReconcileDeps.adapter_for_run` is the o
 looks a run's adapter up, keyed off the persisted `step_run.runtime_id` and the kind the run's
 `agent_spawned` event recorded (`spawned_kind`), so editing a row never moves a live run.
 
-An E2B runtime is also its own E2B team (decision 25): its `E2B_API_KEY` credential and its
-`details.template`. The cached adapter is re-pointed at that team on every lookup that may
-spawn (`use_workspace`), never rebuilt, so a live run keeps the one instance that supervises
-it; the API refuses any change that would move a runtime's team while a run of it is live.
+An E2B runtime also names its E2B team (decision 25): its own `E2B_API_KEY` credential and
+`details.template`, or the deployment's managed key and template (`factorial.sandbox_team`).
+The cached adapter is re-pointed at that team on every lookup that may spawn
+(`use_workspace`), never rebuilt, so a live run keeps the one instance that supervises it; the
+API refuses any change that would move a runtime's team while a run of it is live.
 
 `RuntimeRefused` is a `RuntimeError` on purpose: that puts it in
 `failures._PERMANENT_CONFIG_ERRORS`, so a refusal fails the attempt visibly and escalates on the
@@ -31,15 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.db.models import Event, Runtime
 from orchestrator.events import EventType
 from orchestrator.factorial.runtimes import (
-    E2B_CREDENTIAL,
     NOT_IMPLEMENTED_TYPES,
     RuntimeDetailsInvalid,
     auth_mode_for,
     isolation_of,
     row_registry_kind,
-    template_of,
 )
-from orchestrator.secrets import store
+from orchestrator.factorial.sandbox_team import SandboxTeam, sandbox_team
+from orchestrator.settings import ManagedSandbox
 from runtime.adapters import create_adapter
 from runtime.contract import RuntimeAdapter
 
@@ -90,14 +90,14 @@ class RuntimeAdapters:
         row: Runtime,
         kind: str | None = None,
         *,
-        held_key: SecretStr | None = None,
+        team: SandboxTeam | None = None,
         repoint: bool = False,
     ) -> RuntimeAdapter:
         """The row's adapter; `kind`, when a run recorded one, pins the kind it spawned on.
 
         `repoint` is for the worker's lookups, which may spawn: an E2B adapter is pointed at
-        the row's team, `held_key` (`workspace_key`) being the key the row holds. A lookup that
-        only reads (the API's transcripts) leaves it alone."""
+        `team` (`workspace_key`), the row's team as it now resolves. A lookup that only reads
+        (the API's transcripts) leaves it alone."""
         if row.type in NOT_IMPLEMENTED_TYPES:
             raise RuntimeRefused(
                 f"the runtime {row.slug} is of type {row.type}, which Factorial can't run yet. "
@@ -108,7 +108,10 @@ class RuntimeAdapters:
         if adapter is None:
             adapter = self._by_key[(row.id, kind)] = self._build(row, kind)
         if repoint and isinstance(adapter, SandboxWorkspace):
-            adapter.use_workspace(api_key=held_key, template=template_of(row.details))
+            adapter.use_workspace(
+                api_key=team.api_key if team is not None else None,
+                template=team.template if team is not None else None,
+            )
         return adapter
 
 
@@ -160,25 +163,29 @@ async def load_runtime_by_slug(
     return (await session.execute(query)).scalar_one_or_none()
 
 
-async def workspace_key(session: AsyncSession, row: Runtime) -> SecretStr | None:
-    """The E2B key an E2B runtime holds, decrypted for its adapter and never for a run."""
+async def workspace_key(
+    session: AsyncSession, row: Runtime, managed: ManagedSandbox
+) -> SandboxTeam | None:
+    """The team an E2B runtime spawns into, its key decrypted for the adapter and never for a
+    run; None for a host runtime."""
     try:
         if isolation_of(row.details) != "e2b":
             return None
     except RuntimeDetailsInvalid:
         return None  # `for_runtime` refuses the row itself
-    return await store.get_for_runtime(session, row.id, E2B_CREDENTIAL)
+    return await sandbox_team(session, row, managed)
 
 
-async def workspace_keys(session: AsyncSession) -> list[SecretStr]:
-    """Every E2B key the runtimes hold, once each: the teams the reaper lists, beside the ones
-    it has seen retired."""
+async def workspace_keys(session: AsyncSession, managed: ManagedSandbox) -> list[SecretStr]:
+    """Every E2B key the runtimes hold, and the managed key whenever it is set, once each: the
+    teams the reaper lists, beside the ones it has seen retired. The managed pool is listed
+    with no managed runtime left, because its sandboxes outlive the last one."""
     rows = (
         await session.execute(select(Runtime).where(Runtime.details["isolation"].astext == "e2b"))
     ).scalars()
+    held = [(await sandbox_team(session, row, managed)).api_key for row in rows]
     keys: dict[str, SecretStr] = {}
-    for row in rows:
-        key = await store.get_for_runtime(session, row.id, E2B_CREDENTIAL)
+    for key in [*held, managed.api_key]:
         if key is not None:
             keys.setdefault(key.get_secret_value(), key)
     return list(keys.values())

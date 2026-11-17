@@ -16,7 +16,6 @@ import {
   credentialFormFor,
   credentialNameFor,
   credentialState,
-  ISOLATION_LABELS,
   isolationOf,
   METADATA_KEY_RE,
   metadataProblem,
@@ -25,6 +24,7 @@ import {
   requiresStoredCredential,
   SLUG_RE,
   SUBSCRIPTION_CREDENTIAL,
+  sandboxLabelOf,
   suggestSlug,
   typeAvailable,
 } from "./runtimes";
@@ -139,9 +139,15 @@ describe("credentialState", () => {
 });
 
 describe("isolation strategies", () => {
-  it("says what each one contains, in the label itself", () => {
-    expect(ISOLATION_LABELS.local_cli).toBe("On the host");
-    expect(ISOLATION_LABELS.e2b).toBe("Managed cloud sandbox");
+  it("names a runtime's sandbox by whose key a cloud sandbox runs on", () => {
+    expect(sandboxLabelOf({ details: {}, sandbox_key: "own" })).toBe("On the host");
+    expect(sandboxLabelOf({ details: { isolation: "e2b" }, sandbox_key: "own" })).toBe(
+      "E2B sandbox",
+    );
+    // "Managed cloud sandbox" named both, and read as Factorial's.
+    expect(sandboxLabelOf({ details: { isolation: "e2b" }, sandbox_key: "managed" })).toBe(
+      "Factorial-managed sandbox",
+    );
   });
 
   it("reads a row's isolation, and a row from before the field as the host", () => {

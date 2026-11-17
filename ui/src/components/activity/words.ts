@@ -31,6 +31,7 @@ export const HUMANISED: Record<string, string> = {
   retry_scheduled: "Retry scheduled",
   escalated: "Escalated",
   spawn_refused: "Spawn refused",
+  sandbox_limit_waiting: "Waiting for a sandbox",
   ticket_quarantined: "Stopped after errors",
   substrate_unavailable: "Sandbox service unavailable",
   ticket_requeued: "Requeued",
@@ -74,6 +75,10 @@ export const HUMANISED: Record<string, string> = {
   run_outputs_observed: "Outputs recorded",
   step_changes_requested: "Change request sent",
   step_changes_refused: "Change request refused",
+  gate_mergeability: "Pull request mergeability",
+  conflict_fix_requested: "Conflict fix requested",
+  conflict_fix_refused: "Conflict fix not started",
+  gate_conflict_sent_back: "Sent back for a conflict fix",
   completion_requested: "Force complete requested",
   completion_refused: "Not completed",
   step_accepted_on_request: "Accepted on request",
@@ -187,7 +192,7 @@ export const COMPLETION_REFUSALS: Record<string, string> = {
   unmet: "its expected results aren't met",
   changed: "the failures changed since you read them",
   unmoved: "the rework hasn't moved the pull request its gate rejected",
-  unavailable: "GitHub couldn't be read to check the expected results",
+  unavailable: "the forge couldn't be read to check the expected results",
   exited: "the ticket exited first",
   redone: "the step was redone",
 };
@@ -211,7 +216,9 @@ export const RETRY_REFUSALS: Record<string, string> = {
   preconditions_unmet: "the step can't start yet",
   spawn_refused: "the runtime can't run a session now",
   spawn_failed: "the runtime failed to start the attempt; the ticket is as it was",
-  unavailable: "GitHub couldn't be read to check the preconditions",
+  sandbox_limit: "No sandbox is free on the Factorial-managed key. Try again when one frees.",
+  unavailable: "The forge couldn't be read. Try again.",
+  conflict_fixed: "the pull request needs no fix now; the ticket went back to its gate",
 };
 
 /** Why a preview stopped, where the runtime records a code (`runtime.contract.PREVIEW_*`). Any
@@ -231,6 +238,16 @@ export function previewStop(reason: string): { said: string; more: string | null
   const more = rest.join("\n").trim();
   return { said, more: more || null };
 }
+
+/** Why a conflict fix was not started (`conflict_fix_refused`), as the clause after the label. */
+export const CONFLICT_FIX_REFUSALS: Record<string, string> = {
+  mergeable: "the pull request can already merge",
+  already_merged: "the pull request was already merged",
+  no_pull_request: "the gate has no open pull request",
+  no_fix_step: "this lane has no step that can fix it",
+  newer_attempt: "the gate had already moved on",
+  unsafe_branch: "the branch name has characters an agent cannot use on a command line",
+};
 
 /** A clause as a sentence: a capital first letter and a closing full stop. */
 export function asSentence(text: string): string {
